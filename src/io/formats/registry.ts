@@ -37,6 +37,10 @@ export function isSupportedModelExtension(ext: string): boolean {
   return !!cap?.enabled;
 }
 
+export function isDisabledSplatExtension(ext: string): boolean {
+  return ["splat", "spz", "sog"].includes(normalizeModelExt(ext));
+}
+
 export function isDirectModelExtension(ext: string): boolean {
   const cap = getFormatCapability(ext);
   return !!cap?.enabled && cap.strategy === "direct";

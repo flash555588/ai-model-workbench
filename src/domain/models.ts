@@ -78,6 +78,7 @@ export interface PluginState {
   agentDraft: string;
   agentPlan: AgentTaskPlan | null;
   modelPreview: ModelPreviewSummary | null;
+  selectedPart: ModelPartSummary | null;
 }
 
 // ── Per-Model Asset Profile ──────────────────────────────────────
@@ -112,6 +113,15 @@ export interface ModelPreviewSummary {
   materialCount: number;
   boundingSize: { x: number; y: number; z: number };
   rootName: string;
+}
+
+export interface ModelPartSummary {
+  name: string;
+  triangleCount: number;
+  vertexCount: number;
+  materialName: string | null;
+  boundingSize: { x: number; y: number; z: number };
+  center: { x: number; y: number; z: number };
 }
 
 // ── Asset Record ─────────────────────────────────────────────────

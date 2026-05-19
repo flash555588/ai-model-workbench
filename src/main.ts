@@ -403,6 +403,7 @@ export default class AI3DModelWorkbench extends Plugin {
         this.ps.store.setState({
           currentModelPath: null,
           modelPreview: null,
+          selectedPart: null,
         });
       }
 
@@ -410,6 +411,7 @@ export default class AI3DModelWorkbench extends Plugin {
       this.ps.store.setState({
         currentModelPath: file.path,
         modelPreview: null,
+        selectedPart: null,
       });
 
       // Open workbench if not already open

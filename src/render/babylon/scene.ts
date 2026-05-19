@@ -19,6 +19,7 @@ import type { Light } from "@babylonjs/core/Lights/light.js";
 import type { IShadowLight } from "@babylonjs/core/Lights/shadowLight.js";
 import type {
   ModelPreviewSummary,
+  ModelPartSummary,
   CameraConfig,
   LightConfig,
   SceneConfig,
@@ -73,6 +74,9 @@ export class BabylonModelPreview {
   private gizmoEnabled = false;
   private disassembly: DisassemblyController | null = null;
   private disassemblyEnabled = false;
+  private focusSelectionEnabled = false;
+  private focusedMesh: AbstractMesh | null = null;
+  private readonly originalMeshVisibility = new Map<number, number>();
   private bboxMesh: Mesh | null = null;
   private bboxEnabled = false;
   private currentQuality: "low" | "medium" | "high" = "high";
@@ -134,6 +138,8 @@ export class BabylonModelPreview {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblyEnabled = false;
+    this.clearFocusedMesh();
+    this.originalMeshVisibility.clear();
 
     const extLower = ext.toLowerCase().replace(".", "");
     this.loadedExt = extLower;
@@ -333,8 +339,11 @@ export class BabylonModelPreview {
     this.cleanupPicking = setupPicking(this.scene, (result) => {
       if (this.disassemblyEnabled) return;
       this._lastPickResult = result;
+      if (this.focusSelectionEnabled) {
+        this.setFocusedMesh(result.mesh);
+      }
       this._onPickCallbacks.forEach(cb => cb(result));
-    });
+    }, () => !this.focusSelectionEnabled);
     this.disassembly = new DisassemblyController(this.scene, this.camera, this.getRenderableMeshes(this.rootMesh));
 
     return this.computeSummary(this.rootMesh);
@@ -682,10 +691,24 @@ export class BabylonModelPreview {
     return this.bboxEnabled;
   }
 
+  toggleFocusSelection(): boolean {
+    this.focusSelectionEnabled = !this.focusSelectionEnabled;
+    if (!this.focusSelectionEnabled) {
+      this.clearFocusedMesh();
+    } else if (this._lastPickResult.mesh) {
+      this.setFocusedMesh(this._lastPickResult.mesh);
+    }
+    return this.focusSelectionEnabled;
+  }
+
   toggleDisassembly(): boolean {
     if (!this.rootMesh) return false;
     if (!this.disassembly) {
       this.disassembly = new DisassemblyController(this.scene, this.camera, this.getRenderableMeshes(this.rootMesh));
+    }
+    if (!this.disassemblyEnabled) {
+      this.focusSelectionEnabled = false;
+      this.clearFocusedMesh();
     }
     this.disassemblyEnabled = this.disassembly.toggle();
     return this.disassemblyEnabled;
@@ -708,6 +731,7 @@ export class BabylonModelPreview {
   resetView(): void {
     if (this.rootMesh) resetExplode(this.rootMesh);
     this.resetDisassembly();
+    this.clearFocusedMesh();
     this.camera.mode = 0; // perspective
     this.camera.alpha = this.initialCamera.alpha;
     this.camera.beta = this.initialCamera.beta;
@@ -768,6 +792,32 @@ export class BabylonModelPreview {
       lines.push("");
     }
 
+    return lines.join("\n");
+  }
+
+  getSelectedPartInfo(): ModelPartSummary | null {
+    const mesh = this.focusedMesh ?? this._lastPickResult.mesh;
+    const renderable = mesh ? this.findRenderableMesh(mesh) : null;
+    if (!renderable || renderable.isDisposed()) return null;
+    return this.computePartSummary(renderable);
+  }
+
+  exportSelectedPartInfo(): string {
+    const part = this.getSelectedPartInfo();
+    if (!part) return "";
+
+    const lines: string[] = [];
+    lines.push(`## ${part.name || "Selected Part"} — Part Info`);
+    lines.push("");
+    lines.push("| Property | Value |");
+    lines.push("|----------|-------|");
+    lines.push(`| Mesh | ${escapeTableCell(part.name || "—")} |`);
+    lines.push(`| Triangles | ${part.triangleCount.toLocaleString()} |`);
+    lines.push(`| Vertices | ${part.vertexCount.toLocaleString()} |`);
+    lines.push(`| Material | ${escapeTableCell(part.materialName ?? "—")} |`);
+    lines.push(`| Bounding Size | ${part.boundingSize.x.toFixed(3)} x ${part.boundingSize.y.toFixed(3)} x ${part.boundingSize.z.toFixed(3)} |`);
+    lines.push(`| Center | ${part.center.x.toFixed(3)}, ${part.center.y.toFixed(3)}, ${part.center.z.toFixed(3)} |`);
+    lines.push("");
     return lines.join("\n");
   }
 
@@ -840,6 +890,8 @@ export class BabylonModelPreview {
     this.gizmo = null;
     this.disassembly?.dispose();
     this.disassembly = null;
+    this.clearFocusedMesh();
+    this.originalMeshVisibility.clear();
     this.bboxMesh?.dispose();
     this.bboxMesh = null;
     this.camera.detachControl();
@@ -885,6 +937,76 @@ export class BabylonModelPreview {
       seen.add(mesh);
       return mesh.getTotalVertices() > 0 || mesh.getTotalIndices() > 0;
     });
+  }
+
+  private setFocusedMesh(mesh: AbstractMesh | null): void {
+    if (!this.rootMesh) return;
+    const target = mesh ? this.findRenderableMesh(mesh) : null;
+    if (!target || target.isDisposed()) {
+      this.clearFocusedMesh();
+      return;
+    }
+
+    const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    for (const candidate of renderableMeshes) {
+      if (!this.originalMeshVisibility.has(candidate.uniqueId)) {
+        this.originalMeshVisibility.set(candidate.uniqueId, candidate.visibility);
+      }
+      const selected = candidate === target;
+      candidate.visibility = selected ? 1 : 0.22;
+      candidate.renderOutline = selected;
+      candidate.outlineColor = new Color3(0.18, 0.76, 1);
+      candidate.outlineWidth = selected ? 0.045 : 0;
+    }
+    this.focusedMesh = target;
+  }
+
+  private clearFocusedMesh(): void {
+    if (!this.rootMesh) {
+      this.focusedMesh = null;
+      return;
+    }
+
+    for (const mesh of this.getRenderableMeshes(this.rootMesh)) {
+      const originalVisibility = this.originalMeshVisibility.get(mesh.uniqueId);
+      if (originalVisibility !== undefined) {
+        mesh.visibility = originalVisibility;
+      }
+      mesh.renderOutline = false;
+      mesh.outlineWidth = 0;
+    }
+    this.originalMeshVisibility.clear();
+    this.focusedMesh = null;
+  }
+
+  private findRenderableMesh(mesh: AbstractMesh): AbstractMesh | null {
+    if (!this.rootMesh) return null;
+    const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    if (renderableMeshes.includes(mesh)) return mesh;
+
+    let parent = mesh.parent;
+    while (parent && "uniqueId" in parent) {
+      const parentMesh = parent as AbstractMesh;
+      if (renderableMeshes.includes(parentMesh)) return parentMesh;
+      parent = parent.parent;
+    }
+
+    return null;
+  }
+
+  private computePartSummary(mesh: AbstractMesh): ModelPartSummary {
+    mesh.computeWorldMatrix(true);
+    const bbox = mesh.getBoundingInfo().boundingBox;
+    const size = bbox.maximumWorld.subtract(bbox.minimumWorld);
+    const center = bbox.centerWorld;
+    return {
+      name: mesh.name || `mesh-${mesh.uniqueId}`,
+      triangleCount: Math.floor(mesh.getTotalIndices() / 3),
+      vertexCount: mesh.getTotalVertices(),
+      materialName: mesh.material?.name ?? null,
+      boundingSize: { x: size.x, y: size.y, z: size.z },
+      center: { x: center.x, y: center.y, z: center.z },
+    };
   }
 
   private computeSummary(root: Mesh): ModelPreviewSummary {

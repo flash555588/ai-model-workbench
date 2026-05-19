@@ -20,6 +20,7 @@ const INITIAL_STATE: PluginState = {
   agentDraft: "",
   agentPlan: null,
   modelPreview: null,
+  selectedPart: null,
 };
 
 export function createPluginStore(plugin: Plugin): PluginStore {

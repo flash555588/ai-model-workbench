@@ -1,4 +1,4 @@
-import { getFormatCapability, normalizeModelExt } from "./formats/registry";
+import { getFormatCapability, isDisabledSplatExtension, normalizeModelExt } from "./formats/registry";
 import type { LoadStrategy } from "./formats/types";
 import type { ConversionManager } from "./conversion/manager";
 import type { ConvertedAssetCache } from "./cache/converted-asset-cache";
@@ -39,6 +39,9 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
 
   if (!cap || !cap.enabled) {
     log.warn("unsupported format", { sourceExt, path: input.path });
+    if (isDisabledSplatExtension(sourceExt)) {
+      throw new Error("SPLAT preview is disabled in packaged builds. Local-only .splat support is planned; .spz and .sog remain unavailable until their decoders can be bundled locally.");
+    }
     throw new Error(`Unsupported format: .${sourceExt}`);
   }
 
