@@ -1,7 +1,7 @@
 import type { App } from "obsidian";
-import { MarkdownView, TFile } from "obsidian";
+import { MarkdownView, Notice, TFile } from "obsidian";
 import type { PluginStore } from "../../store/plugin-store";
-import type { PluginState, ModelAssetProfile } from "../../domain/models";
+import type { PluginState, ModelAssetProfile, ModelPartSummary } from "../../domain/models";
 import { normalizeTagList } from "../../utils/format";
 import { BabylonModelPreview } from "../../render/babylon/scene";
 import { AnnotationManager } from "../../render/babylon/annotations";
@@ -42,6 +42,76 @@ export function mountWorkbench(
   let queuedModelPath: string | null | undefined = initialState.currentModelPath;
   let lastObservedModelPath = initialState.currentModelPath;
   let lastObservedPreview = initialState.modelPreview;
+
+  function formatPartVector(value: { x: number; y: number; z: number }): string {
+    return `${value.x.toFixed(3)} x ${value.y.toFixed(3)} x ${value.z.toFixed(3)}`;
+  }
+
+  function renderPartDetail(part: ModelPartSummary): HTMLElement {
+    return html`
+      <div class="ai3d-section">
+        <div class="ai3d-section-header">
+          <div class="ai3d-section-title">${t("workbench.selectedPartTitle")}</div>
+        </div>
+        <div class="ai3d-section-body">
+          <div class="ai3d-summary-grid">
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.partMeshLabel")}</div>
+              <div class="ai3d-summary-value">${part.name || "—"}</div>
+            </div>
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.trianglesLabel")}</div>
+              <div class="ai3d-summary-value">${part.triangleCount.toLocaleString()}</div>
+            </div>
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.verticesLabel")}</div>
+              <div class="ai3d-summary-value">${part.vertexCount.toLocaleString()}</div>
+            </div>
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.materialsLabel")}</div>
+              <div class="ai3d-summary-value">${part.materialName ?? "—"}</div>
+            </div>
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.boundingSizeLabel")}</div>
+              <div class="ai3d-summary-value">${formatPartVector(part.boundingSize)}</div>
+            </div>
+            <div class="ai3d-summary-item">
+              <div class="ai3d-summary-label">${t("workbench.centerLabel")}</div>
+              <div class="ai3d-summary-value">${formatPartVector(part.center).replace(/ x /g, ", ")}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    ` as HTMLElement;
+  }
+
+  function insertMarkdownOrCopy(markdown: string): void {
+    const mdView = app.workspace.getActiveViewOfType(MarkdownView);
+    if (mdView && "editor" in mdView) {
+      mdView.editor.replaceSelection(markdown);
+      new Notice(t("workbench.templateInserted"));
+      return;
+    }
+    void navigator.clipboard.writeText(markdown).then(() => {
+      new Notice(t("workbench.templateCopied"));
+    }).catch(() => {});
+  }
+
+  function buildGridTemplate(path: string, preset: "gallery" | "compare"): string {
+    const models = preset === "compare"
+      ? [{ path }, { path }]
+      : [{ path }];
+    return [
+      "```3dgrid",
+      JSON.stringify({
+        models,
+        preset,
+        params: preset === "compare" ? { angle: "iso", spacing: 6 } : { angle: "iso", cols: 1, spacing: 6 },
+      }, null, 2),
+      "```",
+      "",
+    ].join("\n");
+  }
 
   // Focus camera on a pin's world position
   function focusPin(pinId: string): void {
@@ -138,6 +208,7 @@ export function mountWorkbench(
     preview = null;
     previewHost.querySelectorAll(".ai3d-canvas-full").forEach((el) => el.remove());
     clearInlineMessages();
+    ps.store.setState({ selectedPart: null });
   }
 
   function showEmptyPreview(message?: string | ModelLoadFailureDetails): void {
@@ -259,6 +330,21 @@ export function mountWorkbench(
                 <div class="ai3d-summary-value">${sp.materialCount}</div>
               </div>
             </div>
+          </div>
+        </div>
+      ` as HTMLElement);
+    }
+
+    if (state.selectedPart) {
+      panelsEl.appendChild(renderPartDetail(state.selectedPart));
+    } else if (state.modelPreview) {
+      panelsEl.appendChild(html`
+        <div class="ai3d-section">
+          <div class="ai3d-section-header">
+            <div class="ai3d-section-title">${t("workbench.selectedPartTitle")}</div>
+          </div>
+          <div class="ai3d-section-body">
+            <span class="ai3d-tag-empty">${t("workbench.noSelectedPart")}</span>
           </div>
         </div>
       ` as HTMLElement);
@@ -391,6 +477,8 @@ export function mountWorkbench(
             <div class="ai3d-actions">
               ${preview ? html`<button class="ai3d-axis-btn" data-action="reset">${t("workbench.resetViewAction")}</button>` : ""}
               ${preview ? html`<button class="ai3d-axis-btn" data-action="info">${t("workbench.insertInfoAction")}</button>` : ""}
+              ${preview ? html`<button class="ai3d-axis-btn" data-action="gallery">${t("workbench.insertGalleryAction")}</button>` : ""}
+              ${preview ? html`<button class="ai3d-axis-btn" data-action="compare">${t("workbench.insertCompareAction")}</button>` : ""}
               ${preview?.hasAnimations() ? html`<button class="ai3d-axis-btn" data-action="anim">${t("workbench.playAction")}</button>` : ""}
               <button class="ai3d-axis-btn" data-action="save">${t("workbench.saveProfileAction")}</button>
               <button class="ai3d-axis-btn" data-action="note">${t("workbench.generateNoteAction")}</button>
@@ -402,12 +490,15 @@ export function mountWorkbench(
 
       actionsEl.querySelector("[data-action='save']")!.addEventListener("click", () => {
         void ps.save();
+        new Notice(t("workbench.profileSaved"));
       });
 
       const resetAction = actionsEl.querySelector("[data-action='reset']");
       if (resetAction) {
         resetAction.addEventListener("click", () => {
           preview?.resetView();
+          ps.store.setState({ selectedPart: null });
+          new Notice(t("workbench.viewReset"));
         });
       }
 
@@ -421,8 +512,11 @@ export function mountWorkbench(
           const mdView = app.workspace.getActiveViewOfType(MarkdownView);
           if (mdView && "editor" in mdView) {
             (mdView).editor.replaceSelection(md);
+            new Notice(t("workbench.infoInserted"));
           } else {
-            void navigator.clipboard.writeText(md).catch(() => {});
+            void navigator.clipboard.writeText(md).then(() => {
+              new Notice(t("workbench.infoCopied"));
+            }).catch(() => {});
           }
         });
       }
@@ -433,6 +527,22 @@ export function mountWorkbench(
           if (!preview?.toggleAnimation) return;
           const playing = preview.toggleAnimation();
           animAction.textContent = playing ? t("workbench.pauseAction") : t("workbench.playAction");
+        });
+      }
+
+      const galleryAction = actionsEl.querySelector("[data-action='gallery']");
+      if (galleryAction) {
+        galleryAction.addEventListener("click", () => {
+          const path = ps.store.getState().currentModelPath;
+          if (path) insertMarkdownOrCopy(buildGridTemplate(path, "gallery"));
+        });
+      }
+
+      const compareAction = actionsEl.querySelector("[data-action='compare']");
+      if (compareAction) {
+        compareAction.addEventListener("click", () => {
+          const path = ps.store.getState().currentModelPath;
+          if (path) insertMarkdownOrCopy(buildGridTemplate(path, "compare"));
         });
       }
 
@@ -459,7 +569,7 @@ export function mountWorkbench(
         if (!path) {
           showEmptyPreview();
           if (state.modelPreview !== null) {
-            ps.store.setState({ modelPreview: null });
+            ps.store.setState({ modelPreview: null, selectedPart: null });
           }
           continue;
         }
@@ -468,7 +578,7 @@ export function mountWorkbench(
         if (!(file instanceof TFile)) {
           showEmptyPreview(formatT("workbench.fileNotFound", { path }));
           if (state.modelPreview !== null) {
-            ps.store.setState({ modelPreview: null });
+            ps.store.setState({ modelPreview: null, selectedPart: null });
           }
           continue;
         }
@@ -539,6 +649,8 @@ export function mountWorkbench(
               { app, previewMode: s.annotationPreviewMode },
             );
             preview.onPick((result) => {
+              const selectedPart = result.mesh ? preview?.getSelectedPartInfo() ?? null : null;
+              ps.store.setState({ selectedPart });
               if (!annotationMode || !annotationMgr) return;
               const screenX = result.screenX;
               const screenY = result.screenY;
@@ -560,6 +672,7 @@ export function mountWorkbench(
           }
 
           ps.store.setState({ modelPreview: summary });
+          ps.store.setState({ selectedPart: null });
           log.info("model load completed", {
             path,
             effectivePath: source.path,

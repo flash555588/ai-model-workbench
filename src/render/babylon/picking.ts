@@ -22,6 +22,7 @@ export interface PickResult {
 export function setupPicking(
   scene: Scene,
   onPick: (result: PickResult) => void,
+  shouldHighlight: () => boolean = () => true,
 ): () => void {
 
   const highlightLayer = new HighlightLayer("ai3d-pick-highlight", scene);
@@ -47,7 +48,9 @@ export function setupPicking(
     clearHighlight();
     const pickInfo = pointerInfo.pickInfo;
     if (pickInfo?.hit && pickInfo.pickedMesh) {
-      applyHighlight(pickInfo.pickedMesh);
+      if (shouldHighlight()) {
+        applyHighlight(pickInfo.pickedMesh);
+      }
       onPick({ mesh: pickInfo.pickedMesh, pickedPoint: pickInfo.pickedPoint ?? null, screenX, screenY });
     } else {
       onPick({ mesh: null, pickedPoint: null, screenX, screenY });

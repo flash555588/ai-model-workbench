@@ -1,5 +1,5 @@
 import type { App, MarkdownPostProcessorContext } from "obsidian";
-import { isSupportedModelExtension, listSupportedModelExtensions } from "../../io/formats/registry";
+import { isDisabledSplatExtension, isSupportedModelExtension, listSupportedModelExtensions } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import { BabylonModelPreview } from "../../render/babylon/scene";
 import { GridRenderer } from "../../render/babylon/grid";
@@ -42,6 +42,9 @@ async function prepareInlineModel(
 
   const sourceExt = sourcePath.split(".").pop()?.toLowerCase() ?? "";
   if (!isSupportedModelExtension(sourceExt)) {
+    if (isDisabledSplatExtension(sourceExt)) {
+      throw new Error(t("codeBlock.splatDisabled"));
+    }
     throw new Error(formatT("codeBlock.unsupportedFormat", {
       ext: `.${sourceExt}`,
       formats: listSupportedModelExtensions().join(", "),
@@ -171,7 +174,7 @@ export function registerCodeBlockProcessor(
       if (!isSupportedModelExtension(ext)) {
         el.createDiv({
           cls: "ai3d-inline-empty",
-          text: formatT("codeBlock.unsupportedFormat", {
+          text: isDisabledSplatExtension(ext) ? t("codeBlock.splatDisabled") : formatT("codeBlock.unsupportedFormat", {
             ext: `.${ext}`,
             formats: listSupportedModelExtensions().join(", "),
           }),

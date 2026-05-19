@@ -1,4 +1,5 @@
 node_modules/
+.tmp/
 main.js.map
 data.json
 _pr_work/

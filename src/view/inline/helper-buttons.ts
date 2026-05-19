@@ -36,9 +36,11 @@ export interface SnapshotProvider {
   captureSnapshot(): string | null;
   resetView?(): void;
   exportModelInfo?(modelPath?: string): string;
+  exportSelectedPartInfo?(): string;
   toggleWireframe?(): boolean;
   toggleOrientationGizmo?(): boolean;
   toggleBoundingBox?(): boolean;
+  toggleFocusSelection?(): boolean;
   toggleDisassembly?(): boolean;
   resetDisassembly?(): void;
   hasAnimations?(): boolean;
@@ -173,6 +175,29 @@ export function createHelperButtons(
     }
   });
 
+  // Export currently selected part info button (target/list icon)
+  const partInfoBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySelectedPartInfoLabel") } }));
+  partInfoBtn.appendChild(createSvgIcon(`<path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/><path d="M17 19h5"/><path d="M17 16h5"/><path d="M17 22h5"/>`));
+  partInfoBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview?.exportSelectedPartInfo) return;
+    try {
+      const md = preview.exportSelectedPartInfo();
+      if (!md) {
+        showTooltip(partInfoBtn, t("helper.noSelectedPart"));
+        return;
+      }
+      void navigator.clipboard.writeText(md).then(() => {
+        showTooltip(partInfoBtn, t("helper.copied"));
+      }).catch(() => {
+        showTooltip(partInfoBtn, t("helper.failed"));
+      });
+    } catch (err) {
+      console.error("[AI3D] Export selected part info failed:", err);
+      showTooltip(partInfoBtn, t("helper.failed"));
+    }
+  });
+
   // Wireframe toggle button (grid/square icon)
   const wireBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleWireframeLabel") } });
   wireBtn.appendChild(createSvgIcon(`<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/>`));
@@ -204,6 +229,17 @@ export function createHelperButtons(
     const on = preview.toggleBoundingBox();
     bboxBtn.classList.toggle("ai3d-btn-active", on);
     showTooltip(bboxBtn, on ? t("helper.boundingBoxOn") : t("helper.boundingBoxOff"));
+  });
+
+  // Focus selected mesh button (click a part to isolate it visually)
+  const focusBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleFocusSelectionLabel") } }));
+  focusBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.93 4.93l2.12 2.12"/><path d="M16.95 16.95l2.12 2.12"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/>`));
+  focusBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview?.toggleFocusSelection) return;
+    const on = preview.toggleFocusSelection();
+    focusBtn.classList.toggle("ai3d-btn-active", on);
+    showTooltip(focusBtn, on ? t("helper.focusSelectionOn") : t("helper.focusSelectionOff"));
   });
 
   // Disassembly mode toggle button (separate parts by dragging)
