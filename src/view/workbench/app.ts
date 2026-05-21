@@ -64,12 +64,16 @@ export function mountWorkbench(
   let lastObservedModelPath = initialState.currentModelPath;
   let lastObservedPreview = initialState.modelPreview;
   const supportedImportExts = listSupportedModelExtensions().map((ext) => ext.toUpperCase());
+  const iconCache = new Map<string, HTMLElement>();
 
   function renderIcon(iconName: string): HTMLElement {
+    const cached = iconCache.get(iconName);
+    if (cached) return cached.cloneNode(true) as HTMLElement;
     const icon = activeDocument.createElement("span");
     icon.className = "ai3d-ui-icon";
     setIcon(icon, iconName);
-    return icon;
+    iconCache.set(iconName, icon);
+    return icon.cloneNode(true) as HTMLElement;
   }
 
   function getModelLabel(path: string | null): string {
@@ -1276,8 +1280,8 @@ function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null |
 let noteGenerationLock: Promise<void> | null = null;
 
 export async function generateKnowledgeNote(app: App, ps: PluginStore) {
-  // Serialize concurrent calls to prevent duplicate note creation
-  if (noteGenerationLock !== null) await noteGenerationLock;
+  // Block if already running - prevents redundant vault read/write
+  if (noteGenerationLock !== null) return;
   let resolveLock!: () => void;
   noteGenerationLock = new Promise<void>(r => { resolveLock = r; });
 

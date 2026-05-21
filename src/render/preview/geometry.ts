@@ -123,7 +123,7 @@ export function createPreviewLineOfSight(
   target: PreviewWorldPoint,
 ): PreviewLineOfSight | null {
   const offset = subtractPreviewWorldPoints(target, origin);
-  const distance = distancePreviewWorldPoints(target, origin);
+  const distance = Math.hypot(offset.x, offset.y, offset.z);
   const direction = normalizePreviewWorldPoint(offset);
   if (!direction) {
     return null;
