@@ -65,6 +65,8 @@ export function mountWorkbench(
   let lastObservedPreview = initialState.modelPreview;
   const supportedImportExts = listSupportedModelExtensions().map((ext) => ext.toUpperCase());
   const iconCache = new Map<string, HTMLElement>();
+  let explodeAxis: PreviewAxis = "x";
+  let explodeValue = 0;
 
   function renderIcon(iconName: string): HTMLElement {
     const cached = iconCache.get(iconName);
@@ -927,13 +929,13 @@ export function mountWorkbench(
             <div class="ai3d-disassemble-controls">
               <div class="ai3d-slider-row">
                 <span class="ai3d-slider-label">${t("workbench.explodeLabel")}</span>
-                <input type="range" class="ai3d-slider" min="0" max="100" value="0" />
-                <span class="ai3d-slider-value">0%</span>
+                <input type="range" class="ai3d-slider" min="0" max="100" value=${String(explodeValue)} />
+                <span class="ai3d-slider-value">${explodeValue}%</span>
               </div>
               <div class="ai3d-axis-buttons">
-                <button class="ai3d-axis-btn is-active" data-axis="x">X</button>
-                <button class="ai3d-axis-btn" data-axis="y">Y</button>
-                <button class="ai3d-axis-btn" data-axis="z">Z</button>
+                <button class=${`ai3d-axis-btn ${explodeAxis === "x" ? "is-active" : ""}`} data-axis="x">X</button>
+                <button class=${`ai3d-axis-btn ${explodeAxis === "y" ? "is-active" : ""}`} data-axis="y">Y</button>
+                <button class=${`ai3d-axis-btn ${explodeAxis === "z" ? "is-active" : ""}`} data-axis="z">Z</button>
               </div>
             </div>
           </div>
@@ -944,22 +946,20 @@ export function mountWorkbench(
       const slider = controlsEl.querySelector<HTMLInputElement>(".ai3d-slider")!;
       const valueLabel = controlsEl.querySelector<HTMLSpanElement>(".ai3d-slider-value")!;
       const axisBtns = controlsEl.querySelectorAll<HTMLElement>(".ai3d-axis-btn");
-      let currentAxis: PreviewAxis = "x";
 
       slider.addEventListener("input", () => {
-        const val = parseInt(slider.value, 10);
-        valueLabel.textContent = `${val}%`;
-        preview?.setExplode(val / 100, currentAxis);
+        explodeValue = parseInt(slider.value, 10);
+        valueLabel.textContent = `${explodeValue}%`;
+        preview?.setExplode(explodeValue / 100, explodeAxis);
       });
 
       axisBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
           axisBtns.forEach((b) => b.classList.remove("is-active"));
           btn.classList.add("is-active");
-          currentAxis = btn.dataset.axis as PreviewAxis;
-          const val = parseInt(slider.value, 10);
+          explodeAxis = btn.dataset.axis as PreviewAxis;
           preview?.resetExplode();
-          if (val > 0) preview?.setExplode(val / 100, currentAxis);
+          if (explodeValue > 0) preview?.setExplode(explodeValue / 100, explodeAxis);
         });
       });
     }
@@ -1218,32 +1218,30 @@ export function mountWorkbench(
   void syncSelectedModel();
 
   // ── Panel re-render subscription (only when relevant fields change) ──
+  const getProfile = () => {
+    const s = ps.store.getState();
+    return s.currentModelPath ? s.modelAssetProfiles[s.currentModelPath] : null;
+  };
   let lastPanelState = {
     modelPath: ps.store.getState().currentModelPath,
     preview: ps.store.getState().modelPreview,
     selectedPart: ps.store.getState().selectedPart,
-    profileJson: JSON.stringify(
-      ps.store.getState().currentModelPath
-        ? ps.store.getState().modelAssetProfiles[ps.store.getState().currentModelPath!]
-        : null,
-    ),
+    profile: getProfile(),
   };
   const unsubPanels = ps.store.subscribe(() => {
     const state = ps.store.getState();
-    const profileJson = JSON.stringify(
-      state.currentModelPath ? state.modelAssetProfiles[state.currentModelPath] : null,
-    );
+    const profile = state.currentModelPath ? state.modelAssetProfiles[state.currentModelPath] : null;
     if (
       state.currentModelPath === lastPanelState.modelPath
       && state.modelPreview === lastPanelState.preview
       && state.selectedPart === lastPanelState.selectedPart
-      && profileJson === lastPanelState.profileJson
+      && profile === lastPanelState.profile
     ) return;
     lastPanelState = {
       modelPath: state.currentModelPath,
       preview: state.modelPreview,
       selectedPart: state.selectedPart,
-      profileJson,
+      profile,
     };
     renderPanels();
   });
