@@ -13,8 +13,16 @@ const failureDir = join(rootDir, ".tmp", "preview-failures");
 const bundlePath = join(outDir, "preview.js");
 const shimPath = join(outDir, "obsidian-shim.js");
 const entryPath = join(rootDir, "scripts", "visual-preview-entry.ts");
-const modelPath = join(rootDir, "models", "rubiks-cube-3x3.glb");
+const modelPath = parseModelPath();
 const stylesPath = join(rootDir, "styles.css");
+
+function parseModelPath() {
+  const modelIndex = process.argv.indexOf("--model");
+  if (modelIndex >= 0) {
+    return resolve(process.argv[modelIndex + 1]);
+  }
+  return join(rootDir, "models", "rubiks-cube-3x3.glb");
+}
 
 function parseMode() {
   const modeIndex = process.argv.indexOf("--mode");
@@ -41,6 +49,9 @@ const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".glb", "model/gltf-binary"],
   [".gltf", "model/gltf+json"],
+  [".stl", "application/sla"],
+  [".ply", "application/octet-stream"],
+  [".obj", "text/plain"],
   [".wasm", "application/wasm"],
 ]);
 
@@ -424,6 +435,11 @@ async function verify() {
       params.set("mode", verifyMode);
     }
     params.set("rollout", verifyRollout);
+    // Pass model filename if not the default
+    const modelFilename = modelPath.split(/[/\\]/).pop();
+    if (modelFilename && modelFilename !== "rubiks-cube-3x3.glb") {
+      params.set("model", modelFilename);
+    }
     const targetUrl = params.size > 0 ? `${url}?${params.toString()}` : url;
     await page.goto(targetUrl, { waitUntil: "commit" });
     await page.waitForFunction(() => !!window.__ai3dPreviewVerify && window.__ai3dPreviewVerify.status !== "loading", null, {

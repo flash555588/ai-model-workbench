@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
-const verifyScriptPath = fileURLToPath(new URL("./verify-preview.mjs", import.meta.url));
+const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const verifyScriptPath = join(rootDir, "scripts", "verify-preview.mjs");
 
 const cases = [
+  // GLB format tests
   {
     label: "Default simple GLB preview",
     args: [],
@@ -35,6 +38,26 @@ const cases = [
   {
     label: "Rollback readonly-pin GLB preview",
     args: ["--mode", "readonly-pin", "--rollout", "babylon-safe"],
+  },
+  // STL format test
+  {
+    label: "STL preview (Three.js)",
+    args: ["--model", join(rootDir, "models", "test.stl")],
+  },
+  // PLY format test
+  {
+    label: "PLY preview (Three.js)",
+    args: ["--model", join(rootDir, "models", "test.ply")],
+  },
+  // OBJ format test
+  {
+    label: "OBJ preview (Three.js)",
+    args: ["--model", join(rootDir, "models", "test.obj")],
+  },
+  // GLB alternate path (confirms path resolution works)
+  {
+    label: "GLB alternate path (Three.js)",
+    args: ["--model", join(rootDir, "models", "test-model.glb")],
   },
 ];
 

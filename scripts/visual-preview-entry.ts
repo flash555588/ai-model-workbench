@@ -140,11 +140,22 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
 }
 
 async function loadSampleModel(): Promise<ArrayBuffer> {
-  const response = await fetch("/models/rubiks-cube-3x3.glb");
+  const modelFile = getModelFilename();
+  const response = await fetch(`/models/${modelFile}`);
   if (!response.ok) {
     throw new Error(`Failed to load sample model: HTTP ${response.status}`);
   }
   return response.arrayBuffer();
+}
+
+function getModelFilename(): string {
+  const value = new URLSearchParams(window.location.search).get("model");
+  return value ?? "rubiks-cube-3x3.glb";
+}
+
+function getModelExt(): string {
+  const filename = getModelFilename();
+  return filename.split(".").pop()?.toLowerCase() ?? "glb";
 }
 
 function createPreviewAppStub() {
@@ -289,14 +300,15 @@ async function runBasicPreview(
   canvas: HTMLCanvasElement,
   rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
 ): Promise<void> {
+  const ext = getModelExt();
   const previewOptions = {
-    ext: "glb",
+    ext,
     annotationMode: "none",
     rendererRollout,
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  const summary = await preview.loadModel(await loadSampleModel(), ext);
   attachHelperToolbar(host, preview);
   window.__ai3dPreview = preview;
   setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route });
@@ -307,15 +319,16 @@ async function runDirectEditPreview(
   canvas: HTMLCanvasElement,
   rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
 ): Promise<void> {
+  const ext = getModelExt();
   const previewOptions = {
-    ext: "glb",
+    ext,
     annotationMode: "edit",
     allowEditModeOnThree: true,
     rendererRollout,
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  const summary = await preview.loadModel(await loadSampleModel(), ext);
   attachHelperToolbar(host, preview);
   const annotationPreview = preview as AnnotationPreview;
   const annotationMgr = new AnnotationManager(
@@ -353,14 +366,15 @@ async function runReadonlyPinPreview(
   canvas: HTMLCanvasElement,
   rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
 ): Promise<void> {
+  const ext = getModelExt();
   const previewOptions = {
-    ext: "glb",
+    ext,
     annotationMode: "readonly",
     rendererRollout,
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  const summary = await preview.loadModel(await loadSampleModel(), ext);
   attachHelperToolbar(host, preview);
 
   const annotationPreview = preview as AnnotationPreview;
