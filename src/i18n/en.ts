@@ -33,6 +33,8 @@ export const en = {
   "settings.previewRendererRollout.babylonSafe": "Compatibility mode",
   "settings.previewRendererRollout.readonly": "Reading surfaces only",
   "settings.previewRendererRollout.direct": "Reading + file view (Recommended)",
+  "settings.useThreeRenderer": "Use Three.js renderer",
+  "settings.useThreeRenderer.desc": "Toggle between Three.js (faster, lighter) and Babylon.js (full compatibility) for single-model previews. Three.js supports GLB/GLTF/STL/PLY/OBJ. Workbench and 3dgrid always use Babylon.js.",
   "settings.autoRotateDefault": "Auto-rotate by default",
   "settings.autoRotateDefault.desc": "Start model previews with auto-rotation enabled.",
   "settings.snapshotNaming": "Snapshot naming",

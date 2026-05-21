@@ -32,6 +32,19 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
   const allowEditModeOnThree = !!options.allowEditModeOnThree;
   const requireWorkbenchFeatures = !!options.requireWorkbenchFeatures;
   const rendererRollout = resolveRendererRollout(options.rendererRollout);
+  const useThree = options.useThreeRenderer !== false; // default true
+
+  // If useThreeRenderer is false, force Babylon.js for all formats
+  if (!useThree) {
+    return {
+      backend: "babylon",
+      ext,
+      annotationMode,
+      requireWorkbenchFeatures,
+      rendererRollout,
+      reason: "useThreeRenderer=false",
+    };
+  }
 
   if (THREE_FORMATS.has(ext) && !requireWorkbenchFeatures) {
     if (annotationMode === "edit" && rendererRollout !== "three-direct-glb") {

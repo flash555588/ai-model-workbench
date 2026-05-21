@@ -54,6 +54,7 @@ class ModelEmbedWidget extends WidgetType {
     private preferFbx2gltfForFbx: boolean,
     private annotationPreviewMode: PluginSettings["annotationPreviewMode"],
     private previewRendererRollout: PluginSettings["previewRendererRollout"],
+    private useThreeRenderer: boolean,
     private convertedAssetCache: ConvertedAssetCache,
     private getAnnotations?: (modelPath: string) => AnnotationPin[],
   ) {
@@ -183,6 +184,7 @@ class ModelEmbedWidget extends WidgetType {
         ext: prepared.effectiveExt,
         annotationMode: pins.length > 0 ? "readonly" : "none",
         rendererRollout: this.previewRendererRollout,
+        useThreeRenderer: this.useThreeRenderer,
       } as const;
       const { preview } = await createLoggedModelPreview(
         log,
@@ -298,6 +300,7 @@ function findEmbeds(
   preferFbx2gltfForFbx: boolean,
   annotationPreviewMode: PluginSettings["annotationPreviewMode"],
   previewRendererRollout: PluginSettings["previewRendererRollout"],
+  useThreeRenderer: boolean,
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
@@ -371,6 +374,7 @@ function findEmbeds(
             preferFbx2gltfForFbx,
             annotationPreviewMode,
             previewRendererRollout,
+            useThreeRenderer,
             convertedAssetCache,
             getAnnotations,
           ),
@@ -418,6 +422,7 @@ export function registerLivePreviewExtension(
         s.preferFbx2gltfForFbx,
         s.annotationPreviewMode,
         s.previewRendererRollout,
+        s.useThreeRenderer,
         convertedAssetCache,
         getAnnotations,
       );
@@ -439,6 +444,7 @@ export function registerLivePreviewExtension(
           s.preferFbx2gltfForFbx,
           s.annotationPreviewMode,
           s.previewRendererRollout,
+          s.useThreeRenderer,
           convertedAssetCache,
           getAnnotations,
         );

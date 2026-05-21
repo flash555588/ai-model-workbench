@@ -179,6 +179,7 @@ export class DirectModelView extends FileView {
         annotationMode: "edit",
         allowEditModeOnThree: true,
         rendererRollout: settings.previewRendererRollout,
+        useThreeRenderer: settings.useThreeRenderer,
       } as const;
       const { preview } = await createLoggedModelPreview<AnnotationPreview>(
         log,

@@ -127,6 +127,7 @@ export interface PreviewFactoryOptions {
   allowEditModeOnThree?: boolean;
   requireWorkbenchFeatures?: boolean;
   rendererRollout?: PreviewRendererRollout;
+  useThreeRenderer?: boolean;
 }
 
 function hasMethod(value: unknown, name: string): boolean {

@@ -279,6 +279,7 @@ export function registerCodeBlockProcessor(
             ext: source.ext,
             annotationMode: pins.length > 0 ? "readonly" : "none",
             rendererRollout: settings.previewRendererRollout,
+            useThreeRenderer: settings.useThreeRenderer,
           } as const;
           const { preview: nextPreview } = await createLoggedModelPreview(
             log,

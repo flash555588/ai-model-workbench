@@ -19,6 +19,8 @@ export interface PluginSettings {
   autoGenerateKnowledgeNotes: boolean;
   annotationPreviewMode: "plain-text" | "markdown";
   previewRendererRollout: PreviewRendererRollout;
+  /** Simple toggle: true = Three.js, false = Babylon.js (compatibility). */
+  useThreeRenderer: boolean;
   sendRawModelToRemote: boolean;
   sendPreviewImagesToRemote: boolean;
   sendGeometrySummaryToRemote: boolean;

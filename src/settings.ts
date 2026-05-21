@@ -186,6 +186,17 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.useThreeRenderer"))
+      .setDesc(t("settings.useThreeRenderer.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().useThreeRenderer)
+          .onChange((val) => {
+            this.plugin.updateSettings({ useThreeRenderer: val });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.autoRotateDefault"))
       .setDesc(t("settings.autoRotateDefault.desc"))
       .addToggle((toggle) =>

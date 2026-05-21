@@ -35,6 +35,8 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.previewRendererRollout.babylonSafe": "兼容优先",
   "settings.previewRendererRollout.readonly": "仅阅读场景",
   "settings.previewRendererRollout.direct": "阅读 + 文件视图（推荐）",
+  "settings.useThreeRenderer": "使用 Three.js 渲染器",
+  "settings.useThreeRenderer.desc": "在 Three.js（更快、更轻量）和 Babylon.js（完全兼容）之间切换单模型预览渲染器。Three.js 支持 GLB/GLTF/STL/PLY/OBJ。工作台和 3dgrid 始终使用 Babylon.js。",
   "settings.autoRotateDefault": "默认自动旋转",
   "settings.autoRotateDefault.desc": "启动 3D 预览时默认开启自动旋转。",
   "settings.snapshotNaming": "快照命名",

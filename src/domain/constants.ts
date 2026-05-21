@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   autoGenerateKnowledgeNotes: true,
   annotationPreviewMode: "plain-text",
   previewRendererRollout: "three-direct-glb",
+  useThreeRenderer: true,
   sendRawModelToRemote: false,
   sendPreviewImagesToRemote: false,
   sendGeometrySummaryToRemote: false,
