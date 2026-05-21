@@ -136,6 +136,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private disassembly: PreviewDisassemblyController | null = null;
   private disassemblySetup = false;
+  private renderDirty = true;
+  private cachedMeshes: Mesh[] | null = null;
+  private cachedMeshRoot: Object3D | null = null;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -209,6 +212,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     this.rootObject = root;
     this.scene.add(root);
+    this.invalidateMeshCache();
+    this.markDirty();
 
     if (animations.length > 0) {
       this.mixer = new AnimationMixer(root);
@@ -369,6 +374,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
       }
     }
+    this.markDirty();
     return this.wireframeEnabled;
   }
 
@@ -379,6 +385,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.scene.add(this.axesHelper);
     }
     this.axesHelper.visible = !this.axesHelper.visible;
+    this.markDirty();
     return this.axesHelper.visible;
   }
 
@@ -387,10 +394,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.bboxEnabled) {
       this.bboxHelper?.removeFromParent();
       this.bboxHelper = null;
+      this.markDirty();
       return false;
     }
 
     this.ensureBoundingBoxHelper();
+    this.markDirty();
     return !!this.bboxHelper;
   }
 
@@ -402,6 +411,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.mixer) return false;
     this.animationPlaying = !this.animationPlaying;
     this.mixer.timeScale = this.animationPlaying ? 1 : 0;
+    this.markDirty();
     return this.animationPlaying;
   }
 
@@ -420,11 +430,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setExplode(factor: number, axis: PreviewAxis): void {
     if (!this.rootObject) return;
     setThreeExplode(this.rootObject, factor, axis);
+    this.markDirty();
   }
 
   resetExplode(): void {
     if (!this.rootObject) return;
     resetThreeExplode(this.rootObject);
+    this.markDirty();
   }
 
   focusWorldPoint(point: PreviewWorldPoint): void {
@@ -506,10 +518,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const deltaSeconds = Math.max(0, (now - this.clock.last) / 1000);
     this.clock.last = now;
 
-    this.controls.update();
-    if (this.mixer && this.animationPlaying) {
+    const cameraMoved = this.controls.update();
+    const animating = !!this.mixer && this.animationPlaying;
+    if (animating && this.mixer) {
       this.mixer.update(deltaSeconds);
     }
+
+    if (!cameraMoved && !animating && !this.renderDirty) return;
+    this.renderDirty = false;
+
     this.bboxHelper?.update();
     this.selectionHelper?.update();
     this.focusHelper?.update();
@@ -517,6 +534,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     for (const callback of this.renderObservers) {
       callback();
     }
+  }
+
+  private markDirty(): void {
+    this.renderDirty = true;
   }
 
   private resizeRenderer(): void {
@@ -528,6 +549,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.markDirty();
   }
 
   private applyCameraConfig(config: CameraConfig): void {
@@ -596,6 +618,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
+    this.invalidateMeshCache();
+    this.markDirty();
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
     this.bboxHelper?.removeFromParent();
@@ -689,13 +713,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private getRenderableMeshes(root: Object3D): Mesh[] {
+    if (this.cachedMeshes && this.cachedMeshRoot === root) return this.cachedMeshes;
     const meshes: Mesh[] = [];
     root.traverse((object) => {
       if (isMesh(object) && object.geometry) {
         meshes.push(object);
       }
     });
+    this.cachedMeshes = meshes;
+    this.cachedMeshRoot = root;
     return meshes;
+  }
+
+  private invalidateMeshCache(): void {
+    this.cachedMeshes = null;
+    this.cachedMeshRoot = null;
   }
 
   private ensureBoundingBoxHelper(): void {
