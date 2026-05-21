@@ -238,9 +238,8 @@
   --ai3d-panel-glow: 0 14px 40px rgba(0, 0, 0, 0.24);
   padding: 14px;
   gap: 14px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background:
     radial-gradient(circle at top left, rgba(84, 122, 255, 0.08), transparent 32%),
