@@ -160,8 +160,11 @@ export function createHelperButtons(
     button.classList.toggle("is-hidden", !enabled);
   };
 
+  let lastSyncedPreview: unknown = null;
   const syncCapabilities = (): void => {
     const preview = getPreview();
+    if (preview === lastSyncedPreview) return;
+    lastSyncedPreview = preview;
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
     toggleCapabilityButton(resetBtn, !!preview?.resetView);

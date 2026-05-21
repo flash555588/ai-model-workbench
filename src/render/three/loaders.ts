@@ -149,6 +149,7 @@ export async function loadThreeOBJ(
       const lines = mtlText.split("\n");
       const objBasename = getPortableStem(modelPath);
       let texCount = 0;
+      const texCache = new Map<string, string>();
 
       for (let i = 0; i < lines.length; i++) {
         const m = lines[i].match(TEX_RE);
@@ -174,9 +175,16 @@ export async function loadThreeOBJ(
 
         let resolved = false;
         for (const cand of candidates) {
+          if (texCache.has(cand)) {
+            lines[i] = `${m[1]} ${texCache.get(cand)}`;
+            texCount++;
+            resolved = true;
+            break;
+          }
           try {
             const texBuf = await readFile(cand);
             const dataUrl = `data:${guessMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
+            texCache.set(cand, dataUrl);
             lines[i] = `${m[1]} ${dataUrl}`;
             texCount++;
             resolved = true;

@@ -638,101 +638,121 @@ export function mountWorkbench(
     });
   }
 
-  function wireWorkbenchActions(root: HTMLElement): void {
-    root.querySelectorAll<HTMLElement>("[data-left-action='import-model']").forEach((el) => {
-      el.addEventListener("click", () => openImportModal());
-    });
-    root.querySelectorAll<HTMLElement>("[data-scroll-target]").forEach((el) => {
-      el.addEventListener("click", () => scrollToWorkbenchPanel(el.dataset.scrollTarget));
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='open-settings']").forEach((el) => {
-      el.addEventListener("click", () => openPluginSettings());
-    });
-    root.querySelectorAll<HTMLElement>("[data-view-mode]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const mode = el.dataset.viewMode;
-        if (!preview) return;
-        if (mode === "mesh" && focusSelectionMode) {
+  // ── Event delegation: single handler replaces per-render DOM scans ──
+  function handleContainerClick(event: MouseEvent): void {
+    try {
+      const target = (event.target as HTMLElement).closest<HTMLElement>(
+        "[data-action],[data-left-action],[data-scroll-target],[data-model-path],[data-view-mode]",
+      );
+      if (!target) return;
+
+      // Model path click
+      const modelPath = target.dataset.modelPath;
+      if (modelPath) { selectModelPath(modelPath); return; }
+
+      // Left action
+      const leftAction = target.dataset.leftAction;
+      if (leftAction === "import-model") { openImportModal(); return; }
+
+      // Scroll target
+      const scrollTarget = target.dataset.scrollTarget;
+      if (scrollTarget) { scrollToWorkbenchPanel(scrollTarget); return; }
+
+      // View mode
+      const viewMode = target.dataset.viewMode;
+      if (viewMode && preview) {
+        if (viewMode === "mesh" && focusSelectionMode) {
           focusSelectionMode = preview.toggleFocusSelection();
-        } else if (mode === "focus") {
+        } else if (viewMode === "focus") {
           focusSelectionMode = preview.toggleFocusSelection();
         }
         renderPanels();
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='toggle-annot']").forEach((el) => {
-      el.addEventListener("click", () => {
-        if (el instanceof HTMLInputElement) return;
-        setAnnotationMode(!annotationMode);
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='save']").forEach((el) => {
-      el.addEventListener("click", () => {
-        void ps.save();
-        new Notice(t("workbench.profileSaved"));
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='reset']").forEach((el) => {
-      el.addEventListener("click", () => {
-        preview?.resetView();
-        ps.store.setState({ selectedPart: null });
-        new Notice(t("workbench.viewReset"));
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='info']").forEach((el) => {
-      el.addEventListener("click", () => {
-        if (!preview) return;
-        const modelPath = ps.store.getState().currentModelPath ?? undefined;
-        const md = preview.exportModelInfo(modelPath);
-        if (!md) return;
-        const mdView = app.workspace.getActiveViewOfType(MarkdownView);
-        if (mdView && "editor" in mdView) {
-          mdView.editor.replaceSelection(md);
-          new Notice(t("workbench.infoInserted"));
-        } else {
-          void navigator.clipboard.writeText(md).then(() => new Notice(t("workbench.infoCopied"))).catch(() => {});
+        return;
+      }
+
+      const action = target.dataset.action;
+      if (!action) return;
+
+      // Pin actions (delegate from parent annot-item)
+      const pinItem = target.closest<HTMLElement>("[data-pin-id]");
+      if (pinItem && action !== "toggle-annot") {
+        const pinId = pinItem.dataset.pinId!;
+        if (action === "edit-pin") { annotationMgr?.editPin(pinId); return; }
+        if (action === "delete-pin") { annotationMgr?.removePin(pinId); return; }
+        if (action === "focus-pin") { focusPin(pinId); return; }
+      }
+
+      switch (action) {
+        case "open-settings": openPluginSettings(); break;
+        case "toggle-annot":
+          if (target instanceof HTMLInputElement) return;
+          setAnnotationMode(!annotationMode);
+          break;
+        case "save": void ps.save(); new Notice(t("workbench.profileSaved")); break;
+        case "reset":
+          preview?.resetView();
+          ps.store.setState({ selectedPart: null });
+          new Notice(t("workbench.viewReset"));
+          break;
+        case "info": {
+          if (!preview) break;
+          const md = preview.exportModelInfo(ps.store.getState().currentModelPath ?? undefined);
+          if (!md) break;
+          const mdView = app.workspace.getActiveViewOfType(MarkdownView);
+          if (mdView && "editor" in mdView) {
+            mdView.editor.replaceSelection(md);
+            new Notice(t("workbench.infoInserted"));
+          } else {
+            void navigator.clipboard.writeText(md).then(() => new Notice(t("workbench.infoCopied"))).catch(() => {});
+          }
+          break;
         }
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='anim']").forEach((el) => {
-      el.addEventListener("click", () => {
-        if (!preview?.toggleAnimation) return;
-        const playing = preview.toggleAnimation();
-        el.replaceChildren(...renderIconLabel(playing ? "pause" : "play", playing ? t("workbench.pauseAction") : t("workbench.playAction")));
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='gallery']").forEach((el) => {
-      el.addEventListener("click", () => {
-        const modelPath = getCurrentModelPathOrNotice();
-        if (modelPath) insertMarkdownOrCopy(buildGridTemplate(modelPath, "gallery"));
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='compare']").forEach((el) => {
-      el.addEventListener("click", () => {
-        const modelPath = getCurrentModelPathOrNotice();
-        if (modelPath) insertMarkdownOrCopy(buildGridTemplate(modelPath, "compare"));
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='note']").forEach((el) => {
-      el.addEventListener("click", () => {
-        if (!getCurrentModelPathOrNotice()) return;
-        void generateKnowledgeNote(app, ps);
-      });
-    });
-    root.querySelectorAll<HTMLElement>("[data-action='open-note']").forEach((el) => {
-      el.addEventListener("click", () => {
-        const modelPath = ps.store.getState().currentModelPath;
-        if (!modelPath) return;
-        const notePath = ps.store.getState().modelAssetProfiles[modelPath]?.reportNotePath;
-        if (!notePath) return;
-        const file = app.vault.getAbstractFileByPath(notePath);
-        if (!(file instanceof TFile)) {
-          new Notice(formatT("workbench.fileNotFound", { path: notePath }));
-          return;
+        case "anim":
+          if (!preview?.toggleAnimation) break;
+          {
+            const playing = preview.toggleAnimation();
+            target.replaceChildren(...renderIconLabel(playing ? "pause" : "play", playing ? t("workbench.pauseAction") : t("workbench.playAction")));
+          }
+          break;
+        case "gallery": {
+          const p = getCurrentModelPathOrNotice();
+          if (p) insertMarkdownOrCopy(buildGridTemplate(p, "gallery"));
+          break;
         }
-        void app.workspace.getLeaf(true).openFile(file, { active: true });
-      });
-    });
+        case "compare": {
+          const p = getCurrentModelPathOrNotice();
+          if (p) insertMarkdownOrCopy(buildGridTemplate(p, "compare"));
+          break;
+        }
+        case "note":
+          if (getCurrentModelPathOrNotice()) void generateKnowledgeNote(app, ps);
+          break;
+        case "open-note": {
+          const mp = ps.store.getState().currentModelPath;
+          if (!mp) break;
+          const np = ps.store.getState().modelAssetProfiles[mp]?.reportNotePath;
+          if (!np) break;
+          const f = app.vault.getAbstractFileByPath(np);
+          if (!(f instanceof TFile)) { new Notice(formatT("workbench.fileNotFound", { path: np })); break; }
+          void app.workspace.getLeaf(true).openFile(f, { active: true });
+          break;
+        }
+      }
+    } catch (e) {
+      console.error("[AI3D] click handler error:", e);
+    }
+  }
+
+  container.addEventListener("click", handleContainerClick);
+  container.addEventListener("change", (e) => {
+    const t = e.target as HTMLElement;
+    if (t instanceof HTMLInputElement && t.dataset.action === "toggle-annot") {
+      setAnnotationMode(t.checked);
+    }
+  });
+
+  function wireWorkbenchActions(_root: HTMLElement): void {
+    // No-op: all actions handled by delegation on container
   }
 
   function renderBottomPanels(state: PluginState): void {
@@ -1030,24 +1050,6 @@ export function mountWorkbench(
         </div>
       ` as HTMLElement;
       panelsEl.appendChild(annotEl);
-
-      // Toggle annotate mode
-      const toggleBtn = annotEl.querySelector("[data-action='toggle-annot']");
-      if (toggleBtn) {
-        toggleBtn.addEventListener("click", () => {
-          setAnnotationMode(!annotationMode);
-        });
-      }
-      // Pin action handlers
-      annotEl.querySelectorAll<HTMLElement>("[data-action='focus-pin']").forEach(el => {
-        el.addEventListener("click", () => { focusPin(el.dataset.pinId!); });
-      });
-      annotEl.querySelectorAll<HTMLElement>("[data-action='edit-pin']").forEach(el => {
-        el.addEventListener("click", (e) => { e.stopPropagation(); annotationMgr?.editPin(el.dataset.pinId!); });
-      });
-      annotEl.querySelectorAll<HTMLElement>("[data-action='delete-pin']").forEach(el => {
-        el.addEventListener("click", (e) => { e.stopPropagation(); annotationMgr?.removePin(el.dataset.pinId!); });
-      });
     }
 
   }
@@ -1246,6 +1248,7 @@ export function mountWorkbench(
     unsubModel();
     unsubPanels();
     activeDocument.removeEventListener("keydown", handleEsc);
+    container.removeEventListener("click", handleContainerClick);
     destroyActivePreview();
     container.replaceChildren();
     container.classList.remove("ai3d-workbench");
