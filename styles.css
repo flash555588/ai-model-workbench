@@ -37,15 +37,34 @@
 /* --- Layout --- */
 
 .ai3d-workbench {
+  /* ── Design Tokens ── */
   --ai3d-spacing: var(--size-4-3);
-  --ai3d-radius: var(--radius-s);
-  --ai3d-radius-l: var(--radius-l);
+  --ai3d-gap: var(--size-4-3);
+  --ai3d-radius-sm: 8px;
+  --ai3d-radius: 12px;
+  --ai3d-radius-l: 16px;
+  --ai3d-radius-xl: 20px;
+  --ai3d-radius-pill: 999px;
+  --ai3d-panel-border: color-mix(in srgb, var(--background-modifier-border) 75%, rgba(255, 255, 255, 0.04));
+  --ai3d-panel-bg: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 84%, rgba(17, 24, 39, 0.72)), color-mix(in srgb, var(--background-primary) 92%, rgba(8, 12, 20, 0.94)));
+  --ai3d-panel-bg-strong: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 88%, rgba(22, 30, 45, 0.9)), color-mix(in srgb, var(--background-primary) 95%, rgba(8, 12, 20, 1)));
+  --ai3d-panel-glow: 0 14px 40px rgba(0, 0, 0, 0.24);
+  --ai3d-accent-color: var(--interactive-accent, #7f6df2);
+  --ai3d-success-color: #2f8f75;
+  --ai3d-danger-color: #e5484d;
+  --ai3d-text-muted: var(--text-muted);
+  /* ── Layout ── */
   padding: var(--ai3d-spacing);
   display: flex;
   flex-direction: column;
-  gap: var(--ai3d-spacing);
+  gap: var(--ai3d-gap);
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(84, 122, 255, 0.08), transparent 32%),
+    radial-gradient(circle at top right, rgba(43, 199, 176, 0.06), transparent 28%),
+    var(--background-primary);
 }
 
 .ai3d-workbench.is-mobile {
@@ -59,6 +78,7 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--ai3d-radius-l);
   background: var(--background-primary);
+  overflow: hidden;
 }
 
 .ai3d-section-header {
@@ -229,23 +249,7 @@
   touch-action: none;
 }
 
-/* --- Workbench Refresh --- */
-
-.ai3d-workbench {
-  --ai3d-panel-border: color-mix(in srgb, var(--background-modifier-border) 75%, rgba(255, 255, 255, 0.04));
-  --ai3d-panel-bg: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 84%, rgba(17, 24, 39, 0.72)), color-mix(in srgb, var(--background-primary) 92%, rgba(8, 12, 20, 0.94)));
-  --ai3d-panel-bg-strong: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 88%, rgba(22, 30, 45, 0.9)), color-mix(in srgb, var(--background-primary) 95%, rgba(8, 12, 20, 1)));
-  --ai3d-panel-glow: 0 14px 40px rgba(0, 0, 0, 0.24);
-  padding: 14px;
-  gap: 14px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at top left, rgba(84, 122, 255, 0.08), transparent 32%),
-    radial-gradient(circle at top right, rgba(43, 199, 176, 0.06), transparent 28%),
-    var(--background-primary);
-}
+/* --- Stage Shell --- */
 
 .ai3d-stage-shell {
   min-width: 0;
@@ -253,8 +257,8 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
-  border-radius: 18px;
+  padding: var(--ai3d-spacing);
+  border-radius: var(--ai3d-radius-xl);
   border: 1px solid var(--ai3d-panel-border);
   background: var(--ai3d-panel-bg-strong);
   box-shadow: var(--ai3d-panel-glow);
@@ -2511,10 +2515,10 @@
   white-space: nowrap;
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  animation: ai3d-fade-in 0.15s ease;
+  animation: ai3d-fade-in-centered 0.15s ease;
 }
 
-@keyframes ai3d-fade-in {
+@keyframes ai3d-fade-in-centered {
   from { opacity: 0; transform: translateX(-50%) translateY(4px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
@@ -3538,9 +3542,15 @@ body .is-hidden.is-hidden.is-hidden {
   border: 2px solid rgba(111, 85, 200, 0.3);
 }
 
-@keyframes ai3d-annot-pulse {
+@keyframes ai3d-annot-pulse-accent {
   0%, 100% { border-color: rgba(111, 85, 200, 0.3); }
   50% { border-color: rgba(111, 85, 200, 0.6); }
+}
+
+/* Skin override: use accent pulse color */
+.ai3d-workbench .ai3d-annotation-pin::after {
+  animation-name: ai3d-annot-pulse-accent;
+  border-color: rgba(111, 85, 200, 0.3);
 }
 
 .ai3d-workbench .ai3d-tooltip {
