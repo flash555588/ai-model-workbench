@@ -139,6 +139,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private renderDirty = true;
   private cachedMeshes: Mesh[] | null = null;
   private cachedMeshRoot: Object3D | null = null;
+  private cameraAnimHandle = 0;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -245,6 +246,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   destroy(): void {
     cancelAnimationFrame(this.renderHandle);
+    cancelAnimationFrame(this.cameraAnimHandle);
     this._onPickCallbacks = [];
     this.renderObservers.clear();
     this.disassembly?.dispose();
@@ -482,6 +484,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private animateCamera(targetPos: Vector3, targetLookAt: Vector3): void {
+    cancelAnimationFrame(this.cameraAnimHandle);
     const startPos = this.camera.position.clone();
     const startTarget = this.controls.target.clone();
     const duration = 500;
@@ -495,12 +498,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.camera.position.lerpVectors(startPos, targetPos, ease);
       this.controls.target.lerpVectors(startTarget, targetLookAt, ease);
       this.controls.update();
+      this.markDirty();
 
       if (t < 1) {
-        requestAnimationFrame(tick);
+        this.cameraAnimHandle = requestAnimationFrame(tick);
       }
     };
-    requestAnimationFrame(tick);
+    this.cameraAnimHandle = requestAnimationFrame(tick);
   }
 
   private startRenderLoop(): void {
@@ -634,6 +638,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
       if (!isMesh(object)) return;
       object.geometry.dispose();
       for (const material of materialList(object.material)) {
+        const mat = material as unknown as Record<string, unknown>;
+        for (const key of Object.keys(mat)) {
+          const value = mat[key];
+          if (value && typeof value === "object" && "dispose" in value && typeof (value as { dispose: unknown }).dispose === "function") {
+            (value as { dispose: () => void }).dispose();
+          }
+        }
         material.dispose();
       }
     });

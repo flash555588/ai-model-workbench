@@ -1211,8 +1211,36 @@ export function mountWorkbench(
   });
   void syncSelectedModel();
 
-  // ── Panel re-render subscription ──
-  const unsubPanels = ps.store.subscribe(() => renderPanels());
+  // ── Panel re-render subscription (only when relevant fields change) ──
+  let lastPanelState = {
+    modelPath: ps.store.getState().currentModelPath,
+    preview: ps.store.getState().modelPreview,
+    selectedPart: ps.store.getState().selectedPart,
+    profileJson: JSON.stringify(
+      ps.store.getState().currentModelPath
+        ? ps.store.getState().modelAssetProfiles[ps.store.getState().currentModelPath!]
+        : null,
+    ),
+  };
+  const unsubPanels = ps.store.subscribe(() => {
+    const state = ps.store.getState();
+    const profileJson = JSON.stringify(
+      state.currentModelPath ? state.modelAssetProfiles[state.currentModelPath] : null,
+    );
+    if (
+      state.currentModelPath === lastPanelState.modelPath
+      && state.modelPreview === lastPanelState.preview
+      && state.selectedPart === lastPanelState.selectedPart
+      && profileJson === lastPanelState.profileJson
+    ) return;
+    lastPanelState = {
+      modelPath: state.currentModelPath,
+      preview: state.modelPreview,
+      selectedPart: state.selectedPart,
+      profileJson,
+    };
+    renderPanels();
+  });
 
   return () => {
     unsubModel();
