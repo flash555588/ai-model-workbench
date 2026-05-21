@@ -1,53 +1,103 @@
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh.js";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import { getPreviewBoundsCenter } from "../preview/bounds";
+import type { PreviewAxis, PreviewWorldPoint } from "../preview/types";
+import {
+  clonePreviewWorldPoint,
+  toPreviewWorldPoint,
+} from "../preview/geometry";
+import {
+  resetPreviewExplode,
+  setPreviewExplode,
+  type PreviewExplodeAdapter,
+  type PreviewExplodeState,
+} from "../preview/explode";
+import {
+  getBabylonRenderableMeshes,
+  getBabylonRenderablePreviewBounds,
+} from "./mesh-preview";
 
 interface ExplodeMeta {
-  _originalPos: { x: number; y: number; z: number };
-  _originalCenter: { x: number; y: number; z: number };
+  _originalPos?: PreviewWorldPoint;
+  _originalCenter?: PreviewWorldPoint;
+  _previewExplodeState?: PreviewExplodeState;
+}
+
+function clonePoint(point: PreviewWorldPoint): PreviewWorldPoint {
+  return clonePreviewWorldPoint(point);
+}
+
+class BabylonExplodeAdapter implements PreviewExplodeAdapter<AbstractMesh> {
+  private readonly rootMesh: Mesh;
+  private readonly loadedMeshes: Iterable<AbstractMesh>;
+
+  constructor(rootMesh: Mesh, loadedMeshes: Iterable<AbstractMesh> = []) {
+    this.rootMesh = rootMesh;
+    this.loadedMeshes = loadedMeshes;
+  }
+
+  getParts(): readonly AbstractMesh[] {
+    return getBabylonRenderableMeshes(this.rootMesh, this.loadedMeshes);
+  }
+
+  getRootCenter(): PreviewWorldPoint {
+    return getPreviewBoundsCenter(getBabylonRenderablePreviewBounds(this.rootMesh, this.loadedMeshes));
+  }
+
+  getPartPosition(part: AbstractMesh): PreviewWorldPoint {
+    return toPreviewWorldPoint(part.position);
+  }
+
+  getPartCenter(part: AbstractMesh): PreviewWorldPoint {
+    return toPreviewWorldPoint(part.getBoundingInfo().boundingBox.centerWorld);
+  }
+
+  setPartPosition(part: AbstractMesh, position: PreviewWorldPoint): void {
+    part.position = new Vector3(position.x, position.y, position.z);
+  }
+
+  getPartState(part: AbstractMesh): PreviewExplodeState | null {
+    const meta = part.metadata as ExplodeMeta | undefined;
+    if (meta?._previewExplodeState) {
+      return {
+        originalPosition: clonePoint(meta._previewExplodeState.originalPosition),
+        originalCenter: clonePoint(meta._previewExplodeState.originalCenter),
+      };
+    }
+    if (meta?._originalPos && meta?._originalCenter) {
+      return {
+        originalPosition: clonePoint(meta._originalPos),
+        originalCenter: clonePoint(meta._originalCenter),
+      };
+    }
+    return null;
+  }
+
+  setPartState(part: AbstractMesh, state: PreviewExplodeState): void {
+    if (!part.metadata || typeof part.metadata !== "object") {
+      part.metadata = {};
+    }
+    const meta = part.metadata as ExplodeMeta;
+    meta._previewExplodeState = {
+      originalPosition: clonePoint(state.originalPosition),
+      originalCenter: clonePoint(state.originalCenter),
+    };
+    // Keep legacy fields populated so hot reloads or older session state remain readable.
+    meta._originalPos = clonePoint(state.originalPosition);
+    meta._originalCenter = clonePoint(state.originalCenter);
+  }
 }
 
 export function setExplode(
   rootMesh: Mesh,
   factor: number,
-  axis: "x" | "y" | "z",
+  axis: PreviewAxis,
+  loadedMeshes: Iterable<AbstractMesh> = [],
 ): void {
-  const children = rootMesh.getChildMeshes();
-  const rootCenter = rootMesh.getBoundingInfo().boundingBox.centerWorld;
-
-  for (const child of children) {
-    if (!child.metadata) child.metadata = {};
-    const meta = child.metadata as ExplodeMeta;
-
-    // Cache original position on first call (local space, relative to parent)
-    if (!meta._originalPos) {
-      const local = child.position;
-      meta._originalPos = { x: local.x, y: local.y, z: local.z };
-    }
-
-    // Cache original bounding center on first call
-    if (!meta._originalCenter) {
-      const childCenter = child.getBoundingInfo().boundingBox.centerWorld;
-      meta._originalCenter = { x: childCenter.x, y: childCenter.y, z: childCenter.z };
-    }
-
-    // Always compute delta from original center, never from current (moved) center
-    const delta = (meta._originalCenter[axis] - rootCenter[axis]) * factor;
-
-    const orig = meta._originalPos;
-    child.position = new Vector3(
-      axis === "x" ? orig.x + delta : orig.x,
-      axis === "y" ? orig.y + delta : orig.y,
-      axis === "z" ? orig.z + delta : orig.z,
-    );
-  }
+  setPreviewExplode(new BabylonExplodeAdapter(rootMesh, loadedMeshes), factor, axis);
 }
 
-export function resetExplode(rootMesh: Mesh): void {
-  const children = rootMesh.getChildMeshes();
-  for (const child of children) {
-    const meta = child.metadata as ExplodeMeta | undefined;
-    if (meta?._originalPos) {
-      child.position = new Vector3(meta._originalPos.x, meta._originalPos.y, meta._originalPos.z);
-    }
-  }
+export function resetExplode(rootMesh: Mesh, loadedMeshes: Iterable<AbstractMesh> = []): void {
+  resetPreviewExplode(new BabylonExplodeAdapter(rootMesh, loadedMeshes));
 }

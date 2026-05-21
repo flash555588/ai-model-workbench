@@ -4,7 +4,7 @@ import type {
   PresetCameraDef,
   ViewportRect,
   PresetResult,
-} from "../../../domain/models";
+} from "../../domain/models";
 
 // ── Camera presets (ArcRotateCamera α/β in radians) ─────────────────
 

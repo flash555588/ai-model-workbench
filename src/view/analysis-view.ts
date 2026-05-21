@@ -1,11 +1,11 @@
-import { FileView, type WorkspaceLeaf } from "obsidian";
+import { ItemView, type WorkspaceLeaf } from "obsidian";
 import type { PluginStore } from "../store/plugin-store";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import { mountWorkbench } from "./workbench/app";
 
 export const VIEW_TYPE = "ai-3d-workbench";
 
-export class AnalysisView extends FileView {
+export class AnalysisView extends ItemView {
   private store: PluginStore;
   private convertedAssetCache: ConvertedAssetCache;
   private unmount: (() => void) | null = null;
@@ -29,6 +29,7 @@ export class AnalysisView extends FileView {
   }
 
   onOpen(): Promise<void> {
+    this.unmount?.();
     this.unmount = mountWorkbench(this.contentEl, this.app, this.store, this.convertedAssetCache);
     return Promise.resolve();
   }

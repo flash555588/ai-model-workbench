@@ -1,11 +1,13 @@
 import type { App, MarkdownPostProcessorContext } from "obsidian";
 import { isDisabledSplatExtension, isSupportedModelExtension, listSupportedModelExtensions } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
-import { BabylonModelPreview } from "../../render/babylon/scene";
-import { GridRenderer } from "../../render/babylon/grid";
-import { AnnotationManager } from "../../render/babylon/annotations";
+import { AnnotationManager } from "../../render/preview/annotations";
+import type { PreviewGridRenderer } from "../../render/preview/grid";
+import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
+import type { ModelPreview } from "../../render/preview/types";
+import { supportsAnnotationPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
-import { getPreset, composeSections } from "../../render/babylon/presets";
+import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
 import type { ThreeDBlockConfig, ModelConfig, GridBlockConfig, ComposeSection } from "../../domain/models";
 import { createConversionManager } from "../../io/conversion/factory";
@@ -19,6 +21,9 @@ import { describeModelLoadFailure, isMissingConverterError } from "../../io/conv
 import { formatT, t } from "../../i18n";
 import { renderModelLoadFailure } from "../model-load-feedback";
 import { isMobile } from "../../utils/device";
+import { createLogger } from "../../utils/log";
+
+const log = createLogger("inline-code-block");
 
 interface PreparedInlineModel {
   sourcePath: string;
@@ -206,7 +211,7 @@ export function registerCodeBlockProcessor(
       host.appendChild(canvas);
 
       // Add helper buttons
-      let preview: BabylonModelPreview | null = null;
+      let preview: ModelPreview | null = null;
       let annotationMgr: AnnotationManager | null = null;
       let annotationVisible = true;
       let destroyed = false;
@@ -269,7 +274,20 @@ export function registerCodeBlockProcessor(
             convertedAssetCache,
           });
           const source = toPreviewSource(prepared);
-          preview = new BabylonModelPreview(canvas);
+          const pins = getAnnotations?.(modelPath) ?? [];
+          const previewOptions = {
+            ext: source.ext,
+            annotationMode: pins.length > 0 ? "readonly" : "none",
+            rendererRollout: settings.previewRendererRollout,
+          } as const;
+          const { preview: nextPreview } = await createLoggedModelPreview(
+            log,
+            { surface: "code-block", modelPath },
+            canvas,
+            previewOptions,
+          );
+          preview = nextPreview;
+          toolbar.syncCapabilities();
           loading.setPhaseKey("loading.loadingModel");
           const data = await readBinaryPath(app, source.path);
           const readFile = async (p: string) => readBinaryPath(app, p);
@@ -283,38 +301,35 @@ export function registerCodeBlockProcessor(
             config.scene = { ...config.scene, autoRotate: true, autoRotateSpeed: settings.autoRotateSpeed };
           }
           preview.applyConfig(config);
-          preview.setRenderQuality(settings.renderQuality, settings.renderScale);
+          preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
 
           // Readonly annotations
-          if (getAnnotations && modelPath) {
-            const pins = getAnnotations(modelPath);
-            if (pins.length > 0) {
-              const canvasEl = preview.getCanvas();
-              if (canvasEl) {
-                annotationMgr = new AnnotationManager(
-                  { scene: preview.getScene(), camera: preview.getCamera(), engine: preview.getEngine(), canvas: canvasEl },
-                  host,
-                  "readonly",
-                  pins,
-                  undefined,
-                  createNoteReader(app),
-                  undefined,
-                  { app, previewMode: settings.annotationPreviewMode },
-                );
-                toolbar.showAnnotateButton();
-                toolbar.updateAnnotationBadge(pins.length);
-              }
+          if (pins.length > 0 && supportsAnnotationPreview(preview)) {
+            const provider = preview.getAnnotationProvider();
+            if (provider.canvas) {
+              annotationMgr = new AnnotationManager(
+                provider,
+                host,
+                "readonly",
+                pins,
+                undefined,
+                createNoteReader(app),
+                undefined,
+                { app, previewMode: settings.annotationPreviewMode },
+              );
+              toolbar.showAnnotateButton();
+              toolbar.updateAnnotationBadge(pins.length);
             }
           }
 
           if (ext === "stl" && modelCfg.color) {
-            preview.setSTLColor(modelCfg.color);
+            preview.setSTLColor?.(modelCfg.color);
           }
           if (ext === "stl" && modelCfg.wireframe !== undefined) {
-            preview.setWireframe(modelCfg.wireframe);
+            preview.setWireframe?.(modelCfg.wireframe);
           }
 
-          if (preview.hasAnimations()) {
+          if (preview.hasAnimations?.()) {
             toolbar.showAnimButton();
           }
 
@@ -487,11 +502,11 @@ export function registerGridCodeBlockProcessor(
         gridHost.style.setProperty("--grid-height", `${config.rowHeight * rows}px`);
       }
 
-      let renderer: GridRenderer | null = null;
+      let renderer: PreviewGridRenderer | null = null;
       let destroyed = false;
       let loaded = false;
 
-      createHelperButtons(el, gridHost, app, () => renderer, () => helperSourcePath, () => {
+      const gridToolbar: HelperToolbar = createHelperButtons(el, gridHost, app, () => renderer, () => helperSourcePath, () => {
         if (destroyed) return;
         destroyed = true;
         observer.disconnect();
@@ -521,7 +536,17 @@ export function registerGridCodeBlockProcessor(
         gridLoading.setProgress(-1);
 
         try {
-          renderer = new GridRenderer(canvas);
+          const { renderer: nextRenderer } = await createLoggedGridRenderer(
+            log,
+            {
+              surface: "3dgrid",
+              preset: config.preset ?? "compare",
+              modelCount: config.models?.length ?? 0,
+            },
+            canvas,
+          );
+          renderer = nextRenderer;
+          gridToolbar.syncCapabilities();
           const activeRenderer = renderer;
           const readFile = async (path: string) => readBinaryPath(app, path);
 

@@ -1,8 +1,8 @@
 import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
 import type { PluginSettings, ModelAssetProfile } from "../domain/models";
-import { BabylonModelPreview } from "../render/babylon/scene";
-import { AnnotationManager } from "../render/babylon/annotations";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import { AnnotationManager } from "../render/preview/annotations";
+import { createLoggedModelPreview } from "../render/preview/selection";
+import type { AnnotationPreview } from "../render/preview/types";
 import { createHelperButtons } from "./inline/helper-buttons";
 import { createConversionManager } from "../io/conversion/factory";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
@@ -17,15 +17,18 @@ import { describeModelLoadFailure, isMissingConverterError } from "../io/convers
 import { t } from "../i18n";
 import { renderModelLoadFailure } from "./model-load-feedback";
 import { isMobile } from "../utils/device";
+import { createLogger } from "../utils/log";
 
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
+
+const log = createLogger("direct-view");
 
 function createDefaultProfile(): ModelAssetProfile {
   return { tags: [], notes: "", annotations: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 
 export class DirectModelView extends FileView {
-  private preview: BabylonModelPreview | null = null;
+  private preview: AnnotationPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
   private annotationMode = false;
   private loadGeneration = 0;
@@ -171,7 +174,20 @@ export class DirectModelView extends FileView {
       if (gen !== this.loadGeneration) return;
       const source = toPreviewSource(prepared);
 
-      this.preview = new BabylonModelPreview(canvas);
+      const previewOptions = {
+        ext: source.ext,
+        annotationMode: "edit",
+        allowEditModeOnThree: true,
+        rendererRollout: settings.previewRendererRollout,
+      } as const;
+      const { preview } = await createLoggedModelPreview<AnnotationPreview>(
+        log,
+        { surface: "direct-view", modelPath: file.path },
+        canvas,
+        previewOptions,
+      );
+      this.preview = preview;
+      toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, source.path);
       if (gen !== this.loadGeneration) { this.preview.destroy(); this.preview = null; return; }
@@ -183,14 +199,14 @@ export class DirectModelView extends FileView {
       loading.setProgress(100);
 
       // Set up annotation manager (edit mode)
-      const canvasEl = this.preview.getCanvas();
-      if (canvasEl) {
+      const provider = this.preview.getAnnotationProvider();
+      if (provider.canvas) {
         const profile = this.ps.store.getState().modelAssetProfiles[file.path];
         const initialPins = profile?.annotations ?? [];
         const noteReader = createNoteReader(this.app);
         const headingSearch = createHeadingSearch(this.app);
         this.annotationMgr = new AnnotationManager(
-          { scene: this.preview.getScene(), camera: this.preview.getCamera(), engine: this.preview.getEngine(), canvas: canvasEl },
+          provider,
           host,
           "edit",
           initialPins,
@@ -217,18 +233,10 @@ export class DirectModelView extends FileView {
           if (!this.annotationMode || !this.annotationMgr) return;
           const screenX = result.screenX;
           const screenY = result.screenY;
-
-          let worldPos: Vector3 | null = null;
-          if (result.pickedPoint) {
-            worldPos = result.pickedPoint;
-          } else if (result.mesh) {
-            const bbox = result.mesh.getBoundingInfo().boundingBox;
-            worldPos = bbox.centerWorld.clone();
-            console.debug("[AI3D] Annotation: pickedPoint null, using bbox center fallback");
-          }
+          const worldPos = this.preview?.getPickWorldPoint(result) ?? null;
           if (!worldPos) return;
 
-          console.debug("[AI3D] Annotation: creating pin at", worldPos.toString(), "screen:", screenX, screenY);
+          console.debug("[AI3D] Annotation: creating pin at", worldPos, "screen:", screenX, screenY);
           this.annotationMgr.showEditor(screenX, screenY, worldPos);
         });
       }

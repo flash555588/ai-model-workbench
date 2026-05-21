@@ -5,7 +5,7 @@
  */
 
 type Props = Record<string, unknown> | null;
-type Child = Node | string | number | boolean | null | undefined;
+type Child = Node | Child[] | string | number | boolean | null | undefined;
 type ComponentFn = (props: Record<string, unknown>) => HTMLElement;
 
 export function createElement(
@@ -29,8 +29,14 @@ export function createElement(
         (val as (el: HTMLElement) => void)(el);
       } else if (key === "class" && typeof val === "string") {
         el.className = val;
+      } else if (key === "className" && typeof val === "string") {
+        el.className = val;
       } else if (key === "style" && typeof val === "object") {
         Object.assign(el.style, val);
+      } else if (key === "attr" && isRecord(val)) {
+        setAttributes(el, val);
+      } else if (key === "dataset" && isRecord(val)) {
+        setDataset(el, val);
       } else if (key.startsWith("on") && typeof val === "function") {
         const event = key.slice(2).toLowerCase();
         el.addEventListener(event, val as EventListener);
@@ -56,10 +62,39 @@ function appendChildren(parent: HTMLElement, children: Child[]) {
     if (child == null || child === false) continue;
     if (Array.isArray(child)) {
       appendChildren(parent, child);
-    } else if (child instanceof Node) {
+    } else if (isNodeLike(child)) {
       parent.appendChild(child);
     } else {
       parent.appendChild(activeDocument.createTextNode(String(child)));
     }
   }
+}
+
+function setAttributes(el: HTMLElement, attrs: Record<string, unknown>): void {
+  for (const [key, val] of Object.entries(attrs)) {
+    if (val === true) {
+      el.setAttribute(key, "");
+    } else if (val !== false && val != null) {
+      el.setAttribute(key, String(val));
+    }
+  }
+}
+
+function setDataset(el: HTMLElement, dataset: Record<string, unknown>): void {
+  for (const [key, val] of Object.entries(dataset)) {
+    if (val != null) {
+      el.dataset[key] = String(val);
+    }
+  }
+}
+
+function isNodeLike(value: unknown): value is Node {
+  if (!value || typeof value !== "object") return false;
+  const nodeCtor = activeDocument.defaultView?.Node ?? Node;
+  return value instanceof nodeCtor
+    || ("nodeType" in value && typeof (value as Node).nodeType === "number" && "nodeName" in value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

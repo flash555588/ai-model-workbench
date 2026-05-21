@@ -3,7 +3,7 @@ import type {
   ComposeSection,
   PresetResult,
   ViewportRect,
-} from "../../../domain/models";
+} from "../../domain/models";
 import type { PresetHandler } from "./base";
 
 /**

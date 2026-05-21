@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in a Babylon.js viewport, lets you annotate key parts, and turns models into linked notes. Common mesh formats load directly, while CAD, FBX, and interchange formats can be converted to GLB through local tools.
+> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in a local WebGL viewport, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) now use a configurable Three.js rendering path across reading surfaces and direct file view, while workbench, `3dgrid`, and SPLAT stay on the Babylon.js capability path that fits them best.
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -29,10 +29,10 @@
 
 ## Features
 
-- **Direct mesh preview** for GLB/GLTF, STL, OBJ, and PLY
+- **Direct mesh preview** for GLB/GLTF, STL, OBJ, and PLY (all routed through Three.js by default)
 - **Optional conversion** for CAD, FBX, 3MF, and DAE assets
-- **Babylon.js 9.6** engine with WebGL 2 rendering
-- **Three embedding methods**: Live Preview, code blocks, direct file view
+- **Hybrid preview routing**: single-model previews use Three.js for GLB/GLTF/STL/PLY/OBJ with a Babylon.js compatibility fallback in settings
+- **Inline and file previews**: Live Preview, code blocks, and direct file view
 - **Grid system**: render multiple models in a single viewport with presets
 - **3D annotations**: click-to-pin bookmarks with labels, colors, and depth-aware occlusion
 - **Knowledge notes**: generate structured Markdown from loaded models
@@ -108,7 +108,7 @@ All install methods place the same three files in that folder:
 
 | File | Size | Description |
 |------|------|-------------|
-| `main.js` | ~1.7 MB | Plugin runtime (Babylon.js core) |
+| `main.js` | ~3.8 MB | Plugin runtime bundle |
 | `manifest.json` | ~1 KB | Obsidian plugin manifest |
 | `styles.css` | ~10 KB | Plugin styles |
 
@@ -125,9 +125,21 @@ npm install
 npm run build
 ```
 
-2. Create `<vault>/.obsidian/plugins/ai-model-workbench/` if it does not exist.
-3. Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
-4. In Obsidian, enable `AI Model Workbench` in `Settings > Community Plugins`.
+2. Install the built files into a vault:
+
+```bash
+# Install to the bundled test vault
+npm run install:vault
+
+# Or install to your own vault
+npm run install:vault -- --vault "C:\path\to\your-vault"
+```
+
+The installer copies `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/ai-model-workbench/` and enables `ai-model-workbench` in `community-plugins.json`.
+
+3. If Obsidian is already open, reload the app or disable and re-enable `AI Model Workbench` in `Settings > Community Plugins`.
+
+Manual fallback: create `<vault>/.obsidian/plugins/ai-model-workbench/`, copy `main.js`, `manifest.json`, and `styles.css` into that folder, then enable `AI Model Workbench` in Obsidian.
 
 ### Option B: Download a Release
 
@@ -359,6 +371,8 @@ Add labeled bookmarks directly on model surfaces. Annotations persist per model 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Language | auto | UI language (English / Simplified Chinese / auto-detect) |
+| Annotation preview mode | plain-text | How saved annotation content renders inside readonly previews |
+| Preview compatibility mode | Reading + file view | Controls how widely the newer single-model GLB preview path is used |
 | Canvas height | 400 | Preview height in pixels |
 | Auto-rotate | off | Start with turntable animation |
 | Auto-rotate speed | 0.5 | Rotation speed (0.1-2.0) |
@@ -501,16 +515,34 @@ src/
 ├── store/
 │   ├── create-store.ts        # Custom store primitive
 │   └── plugin-store.ts        # Obsidian saveData bridge
-├── render/babylon/
-│   ├── scene.ts               # BabylonModelPreview class
-│   ├── grid.ts                # GridRenderer class
-│   ├── annotations.ts         # AnnotationManager (pin overlay + occlusion)
-│   ├── picking.ts             # Click-to-pick with highlight
-│   ├── loaders/
-│   │   ├── stl-loader.ts      # Custom binary STL parser
-│   │   ├── ply-loader.ts      # Custom ASCII/binary PLY parser
-│   │   └── register.ts        # Babylon SceneLoader plugins
-│   └── presets/               # Grid layout presets
+├── render/
+│   ├── preview/               # Renderer-agnostic abstraction layer
+│   │   ├── types.ts           # ModelPreview, AnnotationPreview, WorkbenchPreview interfaces
+│   │   ├── routing.ts         # Three/Babylon route decision logic
+│   │   ├── factory.ts         # Dynamic import factory for renderers
+│   │   ├── selection.ts       # Preview selection with logging
+│   │   ├── annotations.ts     # AnnotationManager (pin overlay + occlusion)
+│   │   ├── geometry.ts        # Renderer-agnostic vector math
+│   │   ├── bounds.ts          # Bounding box utilities
+│   │   ├── camera-fit.ts      # Camera fitting algorithms
+│   │   ├── disassembly.ts     # Disassembly controller (adapter pattern)
+│   │   ├── explode.ts         # Explode view (adapter pattern)
+│   │   ├── report.ts          # Markdown report generation
+│   │   └── summary.ts         # Model/part summary creation
+│   ├── three/                 # Three.js renderer
+│   │   ├── scene.ts           # ThreeModelPreview class (GLB/GLTF/STL/PLY/OBJ)
+│   │   ├── loaders.ts         # Format-specific loaders with vault MTL resolution
+│   │   ├── disassembly.ts     # ThreeDisassemblyAdapter
+│   │   └── explode.ts         # ThreeExplodeAdapter
+│   ├── babylon/               # Babylon.js renderer
+│   │   ├── scene.ts           # BabylonModelPreview class
+│   │   ├── grid.ts            # GridRenderer class
+│   │   ├── picking.ts         # Click-to-pick with highlight
+│   │   ├── loaders/
+│   │   │   ├── stl-loader.ts  # Custom binary STL parser
+│   │   │   ├── ply-loader.ts  # Custom ASCII/binary PLY parser
+│   │   │   └── register.ts    # Babylon SceneLoader plugins
+│   │   └── presets/           # Grid layout presets
 ├── io/
 │   ├── formats/
 │   │   └── registry.ts        # Format capability registry
@@ -567,7 +599,6 @@ Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL string
 | Issue | Affected Formats | Workaround |
 |-------|-----------------|------------|
 | External converter required | FBX | Install and enable FBX2glTF |
-| Binary-only STL | STL | Convert ASCII STL to binary |
 | External tools required | STEP/IGES/BREP/SLDPRT | Install Python + CadQuery or FreeCAD |
 | Texture path resolution | OBJ | Place textures in same directory as OBJ |
 | Conversion timeout | SLDPRT | 10-minute timeout for complex assemblies |
@@ -589,13 +620,28 @@ npm install           # Install dependencies
 npm run dev           # Development build with watch
 npm run build         # Production build
 npm run typecheck     # TypeScript type check
+npm run verify:preview  # Targeted browser preview smoke test
+npm run verify:preview:success  # Full preview routing success suite
 ```
+
+### Preview Verification
+
+Run `npm run verify:preview:success` before shipping preview changes. For a focused default-route check, `npm run verify:preview` still works. The success suite launches a temporary Playwright harness, loads `models/rubiks-cube-3x3.glb`, and verifies:
+
+- default simple `GLB` preview
+- default direct-edit `GLB` preview
+- default readonly saved-pin `GLB` preview
+- reading-surfaces-only rollout behavior
+- compatibility-mode rollback behavior
+- helper toolbar interactions, focus mode, selected-part export, and wheel-scroll containment
+
+If verification fails, the script saves a screenshot and a log with preview state plus browser messages under `.tmp/preview-failures/`.
 
 ### Build Output
 
 ```
 ai-model-workbench/
-├── main.js           # 1.7 MB (minified, Babylon.js core)
+├── main.js           # ~3.8 MB (minified plugin runtime bundle)
 ├── manifest.json     # Plugin manifest
 ├── styles.css        # Plugin styles
 └── src/              # Source code
@@ -616,13 +662,13 @@ Releases are published by the GitHub Actions `Release` workflow. Push a tag that
 
 ### Bundle Size Optimization
 
-Babylon.js core is ~98% of the bundle size. The project uses:
+The rendering runtimes dominate the bundle size. The project keeps the output in check with:
 
 - Subpath imports (`@babylonjs/core/Engines/engine.js`) instead of barrel imports
 - Tree-shaking to remove unused features
 - esbuild for fast, optimized bundling
 
-Without subpath imports, the bundle would be ~7 MB instead of 1.7 MB.
+Because the shipped preview mix now includes both Babylon and Three paths, the exact bundle size moves as routing coverage changes. Treat the build output above as the current reference point rather than a fixed ceiling.
 
 ---
 

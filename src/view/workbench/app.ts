@@ -1,13 +1,12 @@
 import type { App } from "obsidian";
-import { MarkdownView, Notice, TFile } from "obsidian";
+import { MarkdownView, Notice, TFile, setIcon } from "obsidian";
 import type { PluginStore } from "../../store/plugin-store";
 import type { PluginState, ModelAssetProfile, ModelPartSummary } from "../../domain/models";
 import { normalizeTagList } from "../../utils/format";
-import { BabylonModelPreview } from "../../render/babylon/scene";
-import { AnnotationManager } from "../../render/babylon/annotations";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
-import { Animation } from "@babylonjs/core/Animations/animation.js";
-import { EasingFunction, CubicEase } from "@babylonjs/core/Animations/easing.js";
+import { AnnotationManager } from "../../render/preview/annotations";
+import { formatPreviewWorldPoint } from "../../render/preview/report";
+import { createLoggedModelPreview } from "../../render/preview/selection";
+import type { PreviewAxis, WorkbenchPreview } from "../../render/preview/types";
 import { html } from "./h";
 import { prepareModelInput } from "../../io/model-pipeline";
 import { createConversionManager } from "../../io/conversion/factory";
@@ -21,8 +20,30 @@ import { describeModelLoadFailure, type ModelLoadFailureDetails, isMissingConver
 import { formatT, t } from "../../i18n";
 import { renderModelLoadFailure } from "../model-load-feedback";
 import { isMobile } from "../../utils/device";
+import { buildKnowledgeNoteContent, LOCAL_ANALYSIS_VERSION } from "./knowledge-note";
+import { ModelFileSuggestModal } from "../model-file-suggest-modal";
+import { listSupportedModelExtensions } from "../../io/formats/registry";
 
 const log = createLogger("workbench");
+
+function replaceWithHtml(el: HTMLElement, result: unknown): void {
+  el.replaceChildren();
+  const nodes: Node[] = [];
+  function flatten(v: unknown): void {
+    if (Array.isArray(v)) { for (const item of v) flatten(item); }
+    else if (v instanceof Node) nodes.push(v);
+  }
+  flatten(result);
+  if (nodes.length > 0) el.append(...nodes);
+}
+
+function getProfileTags(profile: Partial<ModelAssetProfile> | null | undefined): string[] {
+  return Array.isArray(profile?.tags) ? profile.tags : [];
+}
+
+function getProfileAnnotations(profile: Partial<ModelAssetProfile> | null | undefined): ModelAssetProfile["annotations"] {
+  return Array.isArray(profile?.annotations) ? profile.annotations : [];
+}
 
 export function mountWorkbench(
   container: HTMLElement,
@@ -34,52 +55,255 @@ export function mountWorkbench(
   container.classList.add("ai3d-workbench");
   container.classList.toggle("is-mobile", mobile);
 
-  let preview: BabylonModelPreview | null = null;
+  let preview: WorkbenchPreview | null = null;
   let annotationMgr: AnnotationManager | null = null;
   let annotationMode = false;
+  let focusSelectionMode = false;
   let loading = false;
   const initialState = ps.store.getState();
   let queuedModelPath: string | null | undefined = initialState.currentModelPath;
   let lastObservedModelPath = initialState.currentModelPath;
   let lastObservedPreview = initialState.modelPreview;
+  const supportedImportExts = listSupportedModelExtensions().map((ext) => ext.toUpperCase());
 
-  function formatPartVector(value: { x: number; y: number; z: number }): string {
-    return `${value.x.toFixed(3)} x ${value.y.toFixed(3)} x ${value.z.toFixed(3)}`;
+  function renderIcon(iconName: string): HTMLElement {
+    const icon = activeDocument.createElement("span");
+    icon.className = "ai3d-ui-icon";
+    setIcon(icon, iconName);
+    return icon;
+  }
+
+  function getModelLabel(path: string | null): string {
+    if (!path) return t("workbench.noModelLoaded");
+    return getPortableStem(path) || path;
+  }
+
+  function getModelExt(path: string | null): string | null {
+    if (!path) return null;
+    const ext = path.split(".").pop()?.trim();
+    return ext ? ext.toUpperCase() : null;
+  }
+
+  function renderMetric(label: string, value: string, className = "") {
+    return html`
+      <div class=${`ai3d-summary-item ${className}`.trim()}>
+        <div class="ai3d-summary-label">${label}</div>
+        <div class="ai3d-summary-value">${value}</div>
+      </div>
+    `;
+  }
+
+  function renderIconLabel(iconName: string, label: string): HTMLElement[] {
+    return [
+      renderIcon(iconName),
+      html`<span>${label}</span>` as HTMLElement,
+    ];
+  }
+
+  function selectModel(file: TFile): void {
+    if (ps.store.getState().currentModelPath === file.path) {
+      ps.store.setState({
+        currentModelPath: null,
+        modelPreview: null,
+        selectedPart: null,
+      });
+    }
+
+    ps.store.setState({
+      currentModelPath: file.path,
+      modelPreview: null,
+      selectedPart: null,
+    });
+  }
+
+  function openImportModal(): void {
+    new ModelFileSuggestModal(app, (file) => {
+      selectModel(file);
+    }).open();
+  }
+
+  function openPluginSettings(): void {
+    const setting = (app as App & {
+      setting?: {
+        open: () => void;
+        openTabById?: (id: string) => void;
+      };
+    }).setting;
+    if (!setting) {
+      new Notice(t("workbench.settingsUnavailable"));
+      return;
+    }
+    setting.open();
+    setting.openTabById?.("ai-model-workbench");
+  }
+
+  function getCurrentModelPathOrNotice(): string | null {
+    const path = ps.store.getState().currentModelPath;
+    if (!path) {
+      new Notice(t("workbench.noModelLoaded"));
+      return null;
+    }
+    return path;
+  }
+
+  function scrollToWorkbenchPanel(target: string | undefined): void {
+    if (!target) return;
+    const selectors: Record<string, string> = {
+      details: ".ai3d-detail-hero",
+      previews: ".ai3d-preview-views-panel",
+      connections: ".ai3d-compare-panel",
+      disassembly: ".ai3d-disassemble-controls",
+      tags: ".ai3d-tag-section",
+      annotations: ".ai3d-annot-section",
+    };
+    const selector = selectors[target];
+    if (!selector) return;
+    const targetEl = container.querySelector<HTMLElement>(selector);
+    targetEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function renderPartDetail(part: ModelPartSummary): HTMLElement {
+    const metrics = [
+      { label: t("workbench.trianglesLabel"), value: part.triangleCount.toLocaleString() },
+      { label: t("workbench.verticesLabel"), value: part.vertexCount.toLocaleString() },
+      { label: t("workbench.materialsLabel"), value: part.materialName ?? "-" },
+      { label: t("workbench.boundingSizeLabel"), value: formatPreviewWorldPoint(part.boundingSize) },
+      { label: t("workbench.centerLabel"), value: formatPreviewWorldPoint(part.center, { separator: ", " }) },
+    ];
+
     return html`
-      <div class="ai3d-section">
-        <div class="ai3d-section-header">
+      <div class="ai3d-section ai3d-detail-hero ai3d-part-detail">
+        <div class="ai3d-section-header ai3d-detail-hero-header">
           <div class="ai3d-section-title">${t("workbench.selectedPartTitle")}</div>
+          <button class="ai3d-icon-button" type="button" data-action="save" title=${t("workbench.saveProfileAction")}>
+            ${renderIcon("heart")}
+          </button>
         </div>
         <div class="ai3d-section-body">
-          <div class="ai3d-summary-grid">
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.partMeshLabel")}</div>
-              <div class="ai3d-summary-value">${part.name || "—"}</div>
+          <div class="ai3d-detail-hero-top">
+            <div class="ai3d-detail-orb is-part">
+              <span>${renderIcon("box")}</span>
             </div>
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.trianglesLabel")}</div>
-              <div class="ai3d-summary-value">${part.triangleCount.toLocaleString()}</div>
-            </div>
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.verticesLabel")}</div>
-              <div class="ai3d-summary-value">${part.vertexCount.toLocaleString()}</div>
-            </div>
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.materialsLabel")}</div>
-              <div class="ai3d-summary-value">${part.materialName ?? "—"}</div>
-            </div>
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.boundingSizeLabel")}</div>
-              <div class="ai3d-summary-value">${formatPartVector(part.boundingSize)}</div>
-            </div>
-            <div class="ai3d-summary-item">
-              <div class="ai3d-summary-label">${t("workbench.centerLabel")}</div>
-              <div class="ai3d-summary-value">${formatPartVector(part.center).replace(/ x /g, ", ")}</div>
+            <div class="ai3d-detail-copy">
+              <strong>${part.name || t("workbench.partMeshLabel")}</strong>
+              <span>${t("workbench.partMeshLabel")}</span>
+              <div class="ai3d-detail-hero-chips">
+                <span class="ai3d-tag-chip">${t("workbench.selectedPartTitle")}</span>
+              </div>
             </div>
           </div>
+          <div class="ai3d-detail-spec-grid">
+            ${metrics.map((metric) => html`
+              <div class="ai3d-detail-spec">
+                <span>${metric.label}</span>
+                <strong>${metric.value}</strong>
+              </div>
+            `)}
+          </div>
+        </div>
+      </div>
+    ` as HTMLElement;
+  }
+
+  function renderModelDetail(state: PluginState): HTMLElement {
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const summary = state.modelPreview;
+    const ext = getModelExt(path);
+    const metrics = [
+      { label: t("workbench.meshesLabel"), value: summary ? summary.meshCount.toLocaleString() : "-" },
+      {
+        label: summary?.splatCount ? t("workbench.splatsLabel") : t("workbench.trianglesLabel"),
+        value: summary ? (summary.splatCount ?? summary.triangleCount).toLocaleString() : "-",
+      },
+      { label: t("workbench.verticesLabel"), value: summary ? summary.vertexCount.toLocaleString() : "-" },
+      { label: t("workbench.materialsLabel"), value: summary ? String(summary.materialCount) : "-" },
+      { label: t("workbench.boundingSizeLabel"), value: summary ? formatPreviewWorldPoint(summary.boundingSize) : "-" },
+    ];
+
+    return html`
+      <div class="ai3d-section ai3d-detail-hero">
+        <div class="ai3d-section-header ai3d-detail-hero-header">
+          <div class="ai3d-section-title">${t("workbench.recordTitle")}</div>
+          <button class="ai3d-icon-button" type="button" data-action="save" title=${t("workbench.saveProfileAction")}>
+            ${renderIcon("heart")}
+          </button>
+        </div>
+        <div class="ai3d-section-body">
+          <div class="ai3d-detail-hero-top">
+            <div class="ai3d-detail-orb">
+              <span>${ext ?? "3D"}</span>
+            </div>
+            <div class="ai3d-detail-copy">
+              <strong>${getModelLabel(path)}</strong>
+              <span>${path ?? t("workbench.emptyText")}</span>
+              <div class="ai3d-detail-hero-chips">
+                ${profile?.analysisVersion ? html`<span class="ai3d-tag-chip">${profile.analysisVersion}</span>` : ""}
+                <span class="ai3d-tag-chip">${t(profile?.reportNotePath ? "workbench.noteReady" : "workbench.notePending")}</span>
+              </div>
+            </div>
+          </div>
+          <div class="ai3d-detail-spec-grid">
+            ${metrics.map((metric) => html`
+              <div class="ai3d-detail-spec">
+                <span>${metric.label}</span>
+                <strong>${metric.value}</strong>
+              </div>
+            `)}
+          </div>
+        </div>
+      </div>
+    ` as HTMLElement;
+  }
+
+  function renderAnalysisNotes(state: PluginState): HTMLElement {
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const tagCount = getProfileTags(profile).length;
+    const pinCount = getProfileAnnotations(profile).length;
+    const notePath = profile?.reportNotePath;
+
+    return html`
+      <div class="ai3d-section ai3d-notes-card">
+        <div class="ai3d-section-header">
+          <div class="ai3d-section-title">${t("workbench.notesTitle")}</div>
+        </div>
+        <div class="ai3d-section-body">
+          <p class="ai3d-note-copy">${notePath ?? t("workbench.noReportYet")}</p>
+          <div class="ai3d-note-facts">
+            <span>${tagCount} ${t("workbench.tagsTitle")}</span>
+            <span>${formatT("workbench.pinCount", { count: String(pinCount) })}</span>
+            <span>${t(notePath ? "workbench.noteReady" : "workbench.notePending")}</span>
+          </div>
+          <button class="ai3d-card-action" type="button" data-action=${notePath ? "open-note" : "note"} disabled=${!path}>
+            ${notePath ? renderIconLabel("book-open", t("workbench.openNoteAction")) : renderIconLabel("file-plus-2", t("workbench.generateNoteAction"))}
+          </button>
+        </div>
+      </div>
+    ` as HTMLElement;
+  }
+
+  function renderConnectionMap(state: PluginState): HTMLElement {
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const notePath = profile?.reportNotePath;
+
+    return html`
+      <div class="ai3d-section ai3d-occurrence-card">
+        <div class="ai3d-section-header">
+          <div class="ai3d-section-title">${t("workbench.whereTitle")}</div>
+        </div>
+        <div class="ai3d-section-body">
+          <div class="ai3d-occurrence-map" aria-hidden="true">
+            <span class="ai3d-occurrence-node is-source"></span>
+            <span class="ai3d-occurrence-line"></span>
+            <span class="ai3d-occurrence-node is-target"></span>
+          </div>
+          <strong>${getModelLabel(path)}</strong>
+          <span>${notePath ? (getPortableStem(notePath) ?? notePath) : t("workbench.noReportYet")}</span>
+          <button class="ai3d-card-action" type="button" data-action=${notePath ? "open-note" : "note"} disabled=${!path}>
+            ${notePath ? renderIconLabel("book-open", t("workbench.openNoteAction")) : renderIconLabel("file-plus-2", t("workbench.generateNoteAction"))}
+          </button>
         </div>
       </div>
     ` as HTMLElement;
@@ -118,17 +342,7 @@ export function mountWorkbench(
     if (!annotationMgr || !preview) return;
     const pos = annotationMgr.getPinPosition(pinId);
     if (!pos) return;
-    const cam = preview.getCamera();
-    const anim = new Animation("focusPin", "target", 30, Animation.ANIMATIONTYPE_VECTOR3, Animation.ANIMATIONLOOPMODE_CONSTANT);
-    anim.setKeys([
-      { frame: 0, value: cam.target.clone() },
-      { frame: 20, value: pos },
-    ]);
-    const ease = new CubicEase();
-    ease.setEasingMode(EasingFunction.EASINGMODE_EASEOUT);
-    anim.setEasingFunction(ease);
-    cam.animations = [anim];
-    preview.getScene().beginAnimation(cam, 0, 20, false);
+    preview.focusWorldPoint(pos);
   }
 
   // ESC key to exit annotation mode
@@ -141,15 +355,31 @@ export function mountWorkbench(
 
   // ── Stable preview host (never removed from DOM) ──
   // Create on container (in DOM) to inherit Obsidian CSS variables
-  const previewHost = container.createDiv({ cls: "ai3d-preview-host" });
+  const headerEl = container.createDiv({ cls: "ai3d-studio-topbar" });
+  const layoutEl = container.createDiv({ cls: "ai3d-studio-grid" });
+  const leftRailEl = layoutEl.createDiv({ cls: "ai3d-left-rail" });
+  const centerStackEl = layoutEl.createDiv({ cls: "ai3d-center-stack" });
+  const stageEl = centerStackEl.createDiv({ cls: "ai3d-stage-shell" });
+  const stageChromeEl = stageEl.createDiv({ cls: "ai3d-stage-chrome" });
+  const previewHost = stageEl.createDiv({ cls: "ai3d-preview-host" });
   if (mobile) {
     previewHost.classList.add("is-mobile-scroll-mode");
   }
   const emptyState = html`
-    <div class="ai3d-empty-state">
-      <div class="ai3d-empty-icon">3D</div>
-      <div class="ai3d-empty-title">${t("workbench.emptyTitle")}</div>
-      <div class="ai3d-empty-text">${t("workbench.emptyText")}</div>
+    <div class="ai3d-empty-state ai3d-empty-stage">
+      <div class="ai3d-empty-shell">
+        <div class="ai3d-empty-kicker">AI 3D Workbench</div>
+        <div class="ai3d-empty-title">${t("workbench.emptyTitle")}</div>
+        <div class="ai3d-empty-text">${t("workbench.emptyText")}</div>
+        <div class="ai3d-empty-actions">
+          <button class="ai3d-axis-btn is-active" onClick=${() => openImportModal()}>
+            ${t("main.commandImportModel")}
+          </button>
+        </div>
+        <div class="ai3d-empty-format-row">
+          ${supportedImportExts.slice(0, 8).map((ext) => html`<span class="ai3d-stage-pill">${ext}</span>`)}
+        </div>
+      </div>
     </div>
   ` as HTMLElement;
   previewHost.appendChild(emptyState);
@@ -158,7 +388,7 @@ export function mountWorkbench(
   const modeOverlay = previewHost.createDiv({ cls: "ai3d-annot-mode-overlay is-hidden" });
 
   let mobilePreviewInteractive = false;
-  const mobilePreviewBar = mobile ? container.createDiv({ cls: "ai3d-mobile-mode-bar is-detached is-hidden" }) : null;
+  const mobilePreviewBar = mobile ? stageEl.createDiv({ cls: "ai3d-mobile-mode-bar is-detached is-hidden" }) : null;
   const mobilePreviewHint = mobilePreviewBar?.createDiv({ cls: "ai3d-mobile-mode-hint", text: t("workbench.mobileHint") }) ?? null;
   const mobilePreviewModeBtn = mobilePreviewBar?.createEl("button", {
     cls: "ai3d-mobile-mode-btn",
@@ -201,6 +431,7 @@ export function mountWorkbench(
     annotationMgr?.destroy();
     annotationMgr = null;
     annotationMode = false;
+    focusSelectionMode = false;
     modeOverlay.classList.add("is-hidden");
     mobilePreviewBar?.classList.add("is-hidden");
     setMobilePreviewInteraction(false);
@@ -235,29 +466,449 @@ export function mountWorkbench(
   }
 
   // ── Panels container (re-rendered on state change) ──
-  const panelsEl = container.createDiv({ cls: "ai3d-panels" });
+  const bottomPanelsEl = centerStackEl.createDiv({ cls: "ai3d-bottom-panels" });
+  const panelsEl = layoutEl.createDiv({ cls: "ai3d-right-rail ai3d-panels" });
+
+  function listWorkbenchModelPaths(state: PluginState): string[] {
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    const add = (path: string | null | undefined) => {
+      if (!path || seen.has(path)) return;
+      seen.add(path);
+      paths.push(path);
+    };
+
+    add(state.currentModelPath);
+    Object.keys(state.modelAssetProfiles)
+      .sort((left, right) => {
+        const leftUpdated = state.modelAssetProfiles[left]?.updatedAt ?? "";
+        const rightUpdated = state.modelAssetProfiles[right]?.updatedAt ?? "";
+        return rightUpdated.localeCompare(leftUpdated);
+      })
+      .forEach(add);
+    state.convertedAssetRecords
+      .slice()
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .forEach((record) => {
+        add(record.sourcePath);
+        add(record.outputPath);
+      });
+
+    return paths.slice(0, 8);
+  }
+
+  function selectModelPath(path: string): void {
+    if (ps.store.getState().currentModelPath === path) return;
+    ps.store.setState({
+      currentModelPath: path,
+      modelPreview: null,
+      selectedPart: null,
+    });
+  }
+
+  function renderStudioHeader(state: PluginState): void {
+    const path = state.currentModelPath;
+    const ext = getModelExt(path);
+    const reportNotePath = path ? state.modelAssetProfiles[path]?.reportNotePath : undefined;
+    const navItems = [
+      { label: t("workbench.navGallery"), icon: "layout-grid", action: "gallery", disabled: !preview },
+      { label: t("workbench.navLibrary"), icon: "folder-open", leftAction: "import-model", active: true },
+      {
+        label: t("workbench.navNotebooks"),
+        icon: "book-open",
+        action: reportNotePath ? "open-note" : "note",
+        disabled: !path,
+      },
+      { label: t("workbench.navSettings"), icon: "settings", action: "open-settings" },
+    ];
+
+    replaceWithHtml(headerEl, html`
+      <div class="ai3d-brand-block">
+        <div class="ai3d-brand-mark" aria-hidden="true">${renderIcon("sparkles")}</div>
+        <div class="ai3d-brand-copy">
+          <h1>${t("workbench.studioTitle")}</h1>
+          <p>${t("workbench.studioTagline")}</p>
+        </div>
+      </div>
+      <nav class="ai3d-top-nav" aria-label=${t("workbench.navLabel")}>
+        ${navItems.map((item, index) => html`
+          <button
+            class=${`ai3d-top-nav-item ${item.active || index === 1 ? "is-active" : ""}`.trim()}
+            type="button"
+            data-action=${item.action ?? ""}
+            data-left-action=${item.leftAction ?? ""}
+            disabled=${item.disabled ?? false}
+            title=${item.label}
+          >
+            ${renderIcon(item.icon)}
+            <span>${item.label}</span>
+          </button>
+        `)}
+        <button class="ai3d-avatar-chip" type="button" data-action="save" title=${t("workbench.saveProfileAction")}>
+          ${ext ?? "3D"}
+        </button>
+      </nav>
+    `);
+    wireWorkbenchActions(headerEl);
+  }
+
+  function renderLeftRail(state: PluginState): void {
+    const paths = listWorkbenchModelPaths(state);
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const tags = getProfileTags(profile);
+    const annotations = getProfileAnnotations(profile);
+    const summary = state.modelPreview;
+
+    replaceWithHtml(leftRailEl, html`
+      <section class="ai3d-panel ai3d-library-panel">
+        <div class="ai3d-panel-heading">
+          <span>${renderIcon("leaf")}${t("workbench.sourcesTitle")}</span>
+          <span class="ai3d-panel-count">${String(paths.length)}</span>
+        </div>
+        <div class="ai3d-model-list">
+          ${paths.length > 0
+            ? paths.map((itemPath, index) => {
+                const itemProfile = state.modelAssetProfiles[itemPath];
+                const active = itemPath === path;
+                const itemTags = getProfileTags(itemProfile).length;
+                const itemAnnotations = getProfileAnnotations(itemProfile).length;
+                const hasNote = Boolean(itemProfile?.reportNotePath);
+                return html`
+                  <button class=${`ai3d-model-row ${active ? "is-active" : ""}`} type="button" data-model-path=${itemPath}>
+                    <span class=${`ai3d-mini-model ai3d-thumb-${index % 6} ${hasNote ? "is-note" : ""}`}>
+                      <span class="ai3d-mini-model-badge">${getModelExt(itemPath) ?? "3D"}</span>
+                    </span>
+                    <span class="ai3d-model-row-copy">
+                      <strong>${getModelLabel(itemPath)}</strong>
+                      <span>${itemPath}</span>
+                      <span class="ai3d-model-row-meta">
+                        <em>${itemTags} ${t("workbench.tagsTitle")}</em>
+                        <em>${itemAnnotations} ${t("workbench.annotationsTitle")}</em>
+                        ${hasNote ? html`<em class="ai3d-model-row-note">${t("workbench.noteReady")}</em>` : ""}
+                      </span>
+                    </span>
+                    <span class=${`ai3d-favorite-dot ${itemAnnotations > 0 ? "is-on" : ""}`}></span>
+                  </button>
+                `;
+              })
+            : html`<div class="ai3d-rail-empty">${t("workbench.noModelLoaded")}</div>`}
+          <button class="ai3d-model-row ai3d-import-row" type="button" data-left-action="import-model">
+            <span class="ai3d-mini-model ai3d-thumb-import">
+              <span class="ai3d-mini-model-badge">+</span>
+            </span>
+            <span class="ai3d-model-row-copy">
+              <strong>${t("main.commandImportModel")}</strong>
+              <span>${supportedImportExts.slice(0, 5).join(", ")}</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="ai3d-panel ai3d-layer-panel">
+        <div class="ai3d-panel-heading">
+          <span>${renderIcon("sparkles")}${t("workbench.layersTitle")}</span>
+        </div>
+        <div class="ai3d-layer-list">
+          <button class="ai3d-layer-row is-active" type="button" data-scroll-target="details">
+            <span class="ai3d-color-dot"></span>
+            <span>${summary ? `${summary.meshCount.toLocaleString()} ${t("workbench.meshesLabel")}` : t("workbench.summaryTitle")}</span>
+          </button>
+          <button class="ai3d-layer-row" type="button" data-scroll-target="annotations">
+            <span class="ai3d-color-dot is-purple"></span>
+            <span>${formatT("workbench.pinCount", { count: String(annotations.length) })}</span>
+          </button>
+          <button class="ai3d-layer-row" type="button" data-scroll-target="tags">
+            <span class="ai3d-color-dot is-green"></span>
+            <span>${tags.length > 0 ? tags.slice(0, 3).join(", ") : t("workbench.noTagsYet")}</span>
+          </button>
+        </div>
+      </section>
+    `);
+
+    leftRailEl.querySelectorAll<HTMLElement>("[data-model-path]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const nextPath = el.dataset.modelPath;
+        if (nextPath) selectModelPath(nextPath);
+      });
+    });
+    leftRailEl.querySelector<HTMLElement>("[data-left-action='import-model']")
+      ?.addEventListener("click", () => openImportModal());
+    leftRailEl.querySelectorAll<HTMLElement>("[data-scroll-target]").forEach((el) => {
+      el.addEventListener("click", () => scrollToWorkbenchPanel(el.dataset.scrollTarget));
+    });
+  }
+
+  function wireWorkbenchActions(root: HTMLElement): void {
+    root.querySelectorAll<HTMLElement>("[data-left-action='import-model']").forEach((el) => {
+      el.addEventListener("click", () => openImportModal());
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-scroll-target]").forEach((el) => {
+      el.addEventListener("click", () => scrollToWorkbenchPanel(el.dataset.scrollTarget));
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='open-settings']").forEach((el) => {
+      el.addEventListener("click", () => openPluginSettings());
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-view-mode]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const mode = el.dataset.viewMode;
+        if (!preview) return;
+        if (mode === "mesh" && focusSelectionMode) {
+          focusSelectionMode = preview.toggleFocusSelection();
+        } else if (mode === "focus") {
+          focusSelectionMode = preview.toggleFocusSelection();
+        }
+        renderPanels();
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='toggle-annot']").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (el instanceof HTMLInputElement) return;
+        setAnnotationMode(!annotationMode);
+      });
+    });
+    root.querySelectorAll<HTMLInputElement>("input[data-action='toggle-annot']").forEach((el) => {
+      el.addEventListener("change", () => setAnnotationMode(el.checked));
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='save']").forEach((el) => {
+      el.addEventListener("click", () => {
+        void ps.save();
+        new Notice(t("workbench.profileSaved"));
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='reset']").forEach((el) => {
+      el.addEventListener("click", () => {
+        preview?.resetView();
+        ps.store.setState({ selectedPart: null });
+        new Notice(t("workbench.viewReset"));
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='info']").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (!preview) return;
+        const modelPath = ps.store.getState().currentModelPath ?? undefined;
+        const md = preview.exportModelInfo(modelPath);
+        if (!md) return;
+        const mdView = app.workspace.getActiveViewOfType(MarkdownView);
+        if (mdView && "editor" in mdView) {
+          mdView.editor.replaceSelection(md);
+          new Notice(t("workbench.infoInserted"));
+        } else {
+          void navigator.clipboard.writeText(md).then(() => {
+            new Notice(t("workbench.infoCopied"));
+          }).catch(() => {});
+        }
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='anim']").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (!preview?.toggleAnimation) return;
+        const playing = preview.toggleAnimation();
+        el.replaceChildren(...renderIconLabel(playing ? "pause" : "play", playing ? t("workbench.pauseAction") : t("workbench.playAction")));
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='gallery']").forEach((el) => {
+      el.addEventListener("click", () => {
+        const modelPath = getCurrentModelPathOrNotice();
+        if (modelPath) insertMarkdownOrCopy(buildGridTemplate(modelPath, "gallery"));
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='compare']").forEach((el) => {
+      el.addEventListener("click", () => {
+        const modelPath = getCurrentModelPathOrNotice();
+        if (modelPath) insertMarkdownOrCopy(buildGridTemplate(modelPath, "compare"));
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='note']").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (!getCurrentModelPathOrNotice()) return;
+        void generateKnowledgeNote(app, ps);
+      });
+    });
+
+    root.querySelectorAll<HTMLElement>("[data-action='open-note']").forEach((el) => {
+      el.addEventListener("click", () => {
+        const modelPath = ps.store.getState().currentModelPath;
+        if (!modelPath) return;
+        const notePath = ps.store.getState().modelAssetProfiles[modelPath]?.reportNotePath;
+        if (!notePath) return;
+        const file = app.vault.getAbstractFileByPath(notePath);
+        if (!(file instanceof TFile)) {
+          new Notice(formatT("workbench.fileNotFound", { path: notePath }));
+          return;
+        }
+        void app.workspace.getLeaf(true).openFile(file, { active: true });
+      });
+    });
+  }
+
+  function renderBottomPanels(state: PluginState): void {
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const reportNotePath = profile?.reportNotePath;
+
+    replaceWithHtml(bottomPanelsEl, html`
+      <section class="ai3d-panel ai3d-preview-views-panel">
+        <div class="ai3d-panel-heading">
+          <span>${t("workbench.previewViewsTitle")}</span>
+        </div>
+        <div class="ai3d-micro-card-row">
+          <button class="ai3d-micro-card" type="button" data-action="reset" disabled=${!preview}>
+            <span>${renderIcon("rotate-ccw")}</span>
+            <strong>${t("workbench.resetViewAction")}</strong>
+          </button>
+          <button class="ai3d-micro-card" type="button" data-action="info" disabled=${!preview}>
+            <span class="is-purple">${renderIcon("file-text")}</span>
+            <strong>${t("workbench.insertInfoAction")}</strong>
+          </button>
+          <button class="ai3d-micro-card" type="button" data-action="gallery" disabled=${!preview}>
+            <span class="is-green">${renderIcon("layout-grid")}</span>
+            <strong>${t("workbench.insertGalleryAction")}</strong>
+          </button>
+          <button class="ai3d-micro-card ai3d-add-card" type="button" data-action="compare" disabled=${!preview}>
+            <span>${renderIcon("columns-2")}</span>
+            <strong>${t("workbench.insertCompareAction")}</strong>
+          </button>
+        </div>
+      </section>
+
+      <section class="ai3d-panel ai3d-compare-panel">
+        <div class="ai3d-panel-heading">
+          <span>${t("workbench.connectionsTitle")}</span>
+        </div>
+        <div class="ai3d-compare-row">
+          <div>
+            <span class="ai3d-mini-model">${getModelExt(path) ?? "3D"}</span>
+            <span>
+              <strong>${getModelLabel(path)}</strong>
+              <em>${path ? t("workbench.currentModelLabel") : t("workbench.noModelLoaded")}</em>
+            </span>
+          </div>
+          <b>VS</b>
+          <div>
+            <span>
+              <strong>${reportNotePath ? (getPortableStem(reportNotePath) ?? reportNotePath) : t("workbench.openNoteAction")}</strong>
+              <em>${reportNotePath ?? t("workbench.noReportYet")}</em>
+            </span>
+            <span class="ai3d-mini-model is-note">MD</span>
+          </div>
+        </div>
+        <button class="ai3d-comparison-button" type="button" data-action=${reportNotePath ? "open-note" : "note"} disabled=${!path}>
+          ${reportNotePath ? t("workbench.openNoteAction") : t("workbench.generateNoteAction")}
+        </button>
+      </section>
+    `);
+
+    wireWorkbenchActions(bottomPanelsEl);
+  }
+
+  function renderStageChrome() {
+    const state = ps.store.getState();
+    renderStudioHeader(state);
+    const path = state.currentModelPath;
+    const profile = path ? state.modelAssetProfiles[path] : undefined;
+    const ext = getModelExt(path);
+    const summary = state.modelPreview;
+    const reportNotePath = path ? state.modelAssetProfiles[path]?.reportNotePath : undefined;
+    const noteReady = Boolean(reportNotePath);
+
+    replaceWithHtml(stageChromeEl, html`
+      <div class="ai3d-stage-head">
+        <div class="ai3d-stage-copy">
+          <div class="ai3d-stage-kicker">${t("workbench.modelTitle")}</div>
+          <div class="ai3d-stage-title-row">
+            <div class="ai3d-stage-title">${getModelLabel(path)}</div>
+            <div class="ai3d-stage-badges">
+              ${ext ? html`<span class="ai3d-stage-pill is-accent">${ext}</span>` : ""}
+              ${profile?.analysisVersion ? html`<span class="ai3d-stage-pill">${profile.analysisVersion}</span>` : ""}
+            </div>
+          </div>
+          <div class="ai3d-stage-path">${path ?? t("workbench.emptyText")}</div>
+          <div class="ai3d-stage-ledger">
+            ${path ? html`
+              <span class=${`ai3d-stage-ledger-item ${noteReady ? "is-ready" : ""}`.trim()}>
+                ${renderIcon("file-text")}
+                <span>${t(noteReady ? "workbench.noteReady" : "workbench.notePending")}</span>
+              </span>
+            ` : ""}
+            ${profile?.analysisVersion ? html`
+              <span class="ai3d-stage-ledger-item">
+                ${renderIcon("search")}
+                <span>${t("workbench.analysisLabel")}: ${profile.analysisVersion}</span>
+              </span>
+            ` : ""}
+          </div>
+        </div>
+        ${path && summary ? html`
+          <div class="ai3d-stage-stat-grid">
+            ${renderMetric(t("workbench.tagsTitle"), String(getProfileTags(profile).length), "is-compact")}
+            ${renderMetric(t("workbench.annotationsTitle"), String(getProfileAnnotations(profile).length), "is-compact")}
+            ${renderMetric(
+              summary.splatCount ? t("workbench.splatsLabel") : t("workbench.trianglesLabel"),
+              (summary.splatCount ?? summary.triangleCount).toLocaleString(),
+              "is-compact",
+            )}
+            ${renderMetric(t("workbench.materialsLabel"), String(summary.materialCount), "is-compact")}
+            ${renderMetric(t("workbench.verticesLabel"), summary.vertexCount.toLocaleString(), "is-compact")}
+            ${renderMetric(t("workbench.boundingSizeLabel"), formatPreviewWorldPoint(summary.boundingSize), "is-compact")}
+          </div>
+        ` : ""}
+        <div class="ai3d-view-card">
+          <span>${t("workbench.viewModeTitle")}</span>
+          <div class="ai3d-mode-switcher is-triple">
+            <button class=${!focusSelectionMode ? "is-active" : ""} type="button" data-view-mode="mesh" title=${t("workbench.modeMesh")}>
+              ${renderIconLabel("box", t("workbench.modeMeshShort"))}
+            </button>
+            <button class=${focusSelectionMode ? "is-active" : ""} type="button" data-view-mode="focus" title=${t("workbench.modeFocus")}>
+              ${renderIconLabel("crosshair", t("workbench.modeFocusShort"))}
+            </button>
+            <button class=${annotationMode ? "is-active" : ""} type="button" data-action="toggle-annot" title=${annotationMode ? t("workbench.exitAnnotate") : t("workbench.annotate")}>
+              ${renderIconLabel("pencil", t("workbench.annotate"))}
+            </button>
+          </div>
+          <div class="ai3d-stage-note-line">${path ? t(noteReady ? "workbench.noteReady" : "workbench.notePending") : t("workbench.emptyText")}</div>
+        </div>
+      </div>
+      ${path ? html`
+        <div class="ai3d-stage-toolbar">
+          ${preview ? html`<button type="button" data-action="reset">${renderIconLabel("rotate-ccw", t("workbench.resetViewAction"))}</button>` : ""}
+          ${preview ? html`<button type="button" data-action="info">${renderIconLabel("file-text", t("workbench.insertInfoAction"))}</button>` : ""}
+          ${preview ? html`<button type="button" data-action="gallery">${renderIconLabel("layout-grid", t("workbench.insertGalleryAction"))}</button>` : ""}
+          ${preview ? html`<button type="button" data-action="compare">${renderIconLabel("columns-2", t("workbench.insertCompareAction"))}</button>` : ""}
+          ${preview?.hasAnimations() ? html`<button type="button" data-action="anim">${renderIconLabel("play", t("workbench.playAction"))}</button>` : ""}
+        </div>
+        <div class="ai3d-export-toolbar">
+          <button type="button" data-action="save">${renderIconLabel("save", t("workbench.saveProfileAction"))}</button>
+          <button type="button" data-action="note">${renderIconLabel("file-text", t("workbench.generateNoteAction"))}</button>
+          ${reportNotePath ? html`<button type="button" data-action="open-note">${renderIconLabel("book-open", t("workbench.openNoteAction"))}</button>` : ""}
+        </div>
+      ` : ""}
+    `);
+    wireWorkbenchActions(stageChromeEl);
+  }
 
   function renderPanels() {
     const state = ps.store.getState();
+    renderStageChrome();
+    renderLeftRail(state);
+    renderBottomPanels(state);
     panelsEl.replaceChildren();
 
-    // ── Model Status ──
-    panelsEl.appendChild(html`
-      <div class="ai3d-section">
-        <div class="ai3d-section-header">
-          <div>
-            <div class="ai3d-section-title">${t("workbench.modelTitle")}</div>
-            <div class="ai3d-section-subtitle">Babylon.js</div>
-          </div>
-        </div>
-        <div class="ai3d-section-body">
-          <div class="ai3d-model-status">
-            <span class=${`ai3d-status-dot ${state.currentModelPath ? "is-active" : ""}`}></span>
-            <span class="ai3d-model-name">${state.currentModelPath ?? t("workbench.noModelLoaded")}</span>
-          </div>
-        </div>
-      </div>
-    ` as HTMLElement);
+    panelsEl.appendChild(state.selectedPart ? renderPartDetail(state.selectedPart) : renderModelDetail(state));
+    panelsEl.appendChild(renderAnalysisNotes(state));
+    panelsEl.appendChild(renderConnectionMap(state));
+    wireWorkbenchActions(panelsEl);
 
     // ── Disassembly Controls ──
     if (preview) {
@@ -287,7 +938,7 @@ export function mountWorkbench(
       const slider = controlsEl.querySelector<HTMLInputElement>(".ai3d-slider")!;
       const valueLabel = controlsEl.querySelector<HTMLSpanElement>(".ai3d-slider-value")!;
       const axisBtns = controlsEl.querySelectorAll<HTMLElement>(".ai3d-axis-btn");
-      let currentAxis: "x" | "y" | "z" = "x";
+      let currentAxis: PreviewAxis = "x";
 
       slider.addEventListener("input", () => {
         const val = parseInt(slider.value, 10);
@@ -299,7 +950,7 @@ export function mountWorkbench(
         btn.addEventListener("click", () => {
           axisBtns.forEach((b) => b.classList.remove("is-active"));
           btn.classList.add("is-active");
-          currentAxis = btn.dataset.axis as "x" | "y" | "z";
+          currentAxis = btn.dataset.axis as PreviewAxis;
           const val = parseInt(slider.value, 10);
           preview?.resetExplode();
           if (val > 0) preview?.setExplode(val / 100, currentAxis);
@@ -307,53 +958,10 @@ export function mountWorkbench(
       });
     }
 
-    // ── Summary Grid ──
-    if (state.modelPreview) {
-      const sp = state.modelPreview;
-      panelsEl.appendChild(html`
-        <div class="ai3d-section">
-          <div class="ai3d-section-header">
-            <div class="ai3d-section-title">${t("workbench.summaryTitle")}</div>
-          </div>
-          <div class="ai3d-section-body">
-            <div class="ai3d-summary-grid">
-              <div class="ai3d-summary-item">
-                <div class="ai3d-summary-label">${t("workbench.meshesLabel")}</div>
-                <div class="ai3d-summary-value">${sp.meshCount}</div>
-              </div>
-              <div class="ai3d-summary-item">
-                <div class="ai3d-summary-label">${sp.splatCount ? t("workbench.splatsLabel") : t("workbench.trianglesLabel")}</div>
-                <div class="ai3d-summary-value">${(sp.splatCount ?? sp.triangleCount).toLocaleString()}</div>
-              </div>
-              <div class="ai3d-summary-item">
-                <div class="ai3d-summary-label">${t("workbench.materialsLabel")}</div>
-                <div class="ai3d-summary-value">${sp.materialCount}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ` as HTMLElement);
-    }
-
-    if (state.selectedPart) {
-      panelsEl.appendChild(renderPartDetail(state.selectedPart));
-    } else if (state.modelPreview) {
-      panelsEl.appendChild(html`
-        <div class="ai3d-section">
-          <div class="ai3d-section-header">
-            <div class="ai3d-section-title">${t("workbench.selectedPartTitle")}</div>
-          </div>
-          <div class="ai3d-section-body">
-            <span class="ai3d-tag-empty">${t("workbench.noSelectedPart")}</span>
-          </div>
-        </div>
-      ` as HTMLElement);
-    }
-
     // ── Tags Section ──
     if (state.currentModelPath) {
       const profile = state.modelAssetProfiles[state.currentModelPath];
-      const tags = profile?.tags ?? [];
+      const tags = getProfileTags(profile);
       const tagsEl = html`
         <div class="ai3d-section">
           <div class="ai3d-section-header">
@@ -366,8 +974,8 @@ export function mountWorkbench(
                   ? tags.map((t: string) => html`<span class="ai3d-tag-chip">${t}</span>`)
                   : html`<span class="ai3d-tag-empty">${t("workbench.noTagsYet")}</span>`}
               </div>
-              <div style=${{ display: "flex", gap: "8px" }}>
-                <input class="ai3d-input" placeholder=${t("workbench.addTagPlaceholder")} style=${{ flex: "1" }} />
+              <div class="ai3d-tag-input-row">
+                <input class="ai3d-input" placeholder=${t("workbench.addTagPlaceholder")} />
                 <button class="ai3d-axis-btn">${t("workbench.addTagAction")}</button>
               </div>
             </div>
@@ -398,7 +1006,7 @@ export function mountWorkbench(
     // ── Annotations Section ──
     if (state.currentModelPath && preview) {
       const profile = state.modelAssetProfiles[state.currentModelPath];
-      const annotations = profile?.annotations ?? [];
+      const annotations = getProfileAnnotations(profile);
       const annotEl = html`
         <div class="ai3d-section">
           <div class="ai3d-section-header">
@@ -428,6 +1036,11 @@ export function mountWorkbench(
                       </span>
                     </div>
                   `)}
+                </div>
+              ` : annotationMode ? html`
+                <div class="ai3d-empty-hint">
+                  <div class="ai3d-empty-hint-icon">${renderIcon("pencil")}</div>
+                  <span class="ai3d-tag-empty">${t("workbench.annotateHintActive")}</span>
                 </div>
               ` : ""}
             </div>
@@ -469,87 +1082,6 @@ export function mountWorkbench(
       });
     }
 
-    // ── Actions ──
-    if (state.currentModelPath) {
-      const actionsEl = html`
-        <div class="ai3d-section">
-          <div class="ai3d-section-body">
-            <div class="ai3d-actions">
-              ${preview ? html`<button class="ai3d-axis-btn" data-action="reset">${t("workbench.resetViewAction")}</button>` : ""}
-              ${preview ? html`<button class="ai3d-axis-btn" data-action="info">${t("workbench.insertInfoAction")}</button>` : ""}
-              ${preview ? html`<button class="ai3d-axis-btn" data-action="gallery">${t("workbench.insertGalleryAction")}</button>` : ""}
-              ${preview ? html`<button class="ai3d-axis-btn" data-action="compare">${t("workbench.insertCompareAction")}</button>` : ""}
-              ${preview?.hasAnimations() ? html`<button class="ai3d-axis-btn" data-action="anim">${t("workbench.playAction")}</button>` : ""}
-              <button class="ai3d-axis-btn" data-action="save">${t("workbench.saveProfileAction")}</button>
-              <button class="ai3d-axis-btn" data-action="note">${t("workbench.generateNoteAction")}</button>
-            </div>
-          </div>
-        </div>
-      ` as HTMLElement;
-      panelsEl.appendChild(actionsEl);
-
-      actionsEl.querySelector("[data-action='save']")!.addEventListener("click", () => {
-        void ps.save();
-        new Notice(t("workbench.profileSaved"));
-      });
-
-      const resetAction = actionsEl.querySelector("[data-action='reset']");
-      if (resetAction) {
-        resetAction.addEventListener("click", () => {
-          preview?.resetView();
-          ps.store.setState({ selectedPart: null });
-          new Notice(t("workbench.viewReset"));
-        });
-      }
-
-      const infoAction = actionsEl.querySelector("[data-action='info']");
-      if (infoAction) {
-        infoAction.addEventListener("click", () => {
-          if (!preview) return;
-          const path = ps.store.getState().currentModelPath ?? undefined;
-          const md = preview.exportModelInfo(path);
-          if (!md) return;
-          const mdView = app.workspace.getActiveViewOfType(MarkdownView);
-          if (mdView && "editor" in mdView) {
-            (mdView).editor.replaceSelection(md);
-            new Notice(t("workbench.infoInserted"));
-          } else {
-            void navigator.clipboard.writeText(md).then(() => {
-              new Notice(t("workbench.infoCopied"));
-            }).catch(() => {});
-          }
-        });
-      }
-
-      const animAction = actionsEl.querySelector("[data-action='anim']");
-      if (animAction) {
-        animAction.addEventListener("click", () => {
-          if (!preview?.toggleAnimation) return;
-          const playing = preview.toggleAnimation();
-          animAction.textContent = playing ? t("workbench.pauseAction") : t("workbench.playAction");
-        });
-      }
-
-      const galleryAction = actionsEl.querySelector("[data-action='gallery']");
-      if (galleryAction) {
-        galleryAction.addEventListener("click", () => {
-          const path = ps.store.getState().currentModelPath;
-          if (path) insertMarkdownOrCopy(buildGridTemplate(path, "gallery"));
-        });
-      }
-
-      const compareAction = actionsEl.querySelector("[data-action='compare']");
-      if (compareAction) {
-        compareAction.addEventListener("click", () => {
-          const path = ps.store.getState().currentModelPath;
-          if (path) insertMarkdownOrCopy(buildGridTemplate(path, "compare"));
-        });
-      }
-
-      actionsEl.querySelector("[data-action='note']")!.addEventListener("click", () => {
-        void generateKnowledgeNote(app, ps.store.getState());
-      });
-    }
   }
 
   // Initial panel render
@@ -588,7 +1120,6 @@ export function mountWorkbench(
         const canvas = previewHost.createEl("canvas", { cls: "ai3d-canvas-full" });
         // Ensure canvas renders before modeOverlay (createEl auto-appends as last child)
         previewHost.insertBefore(canvas, modeOverlay);
-        previewHost.appendChild(canvas);
 
         try {
           log.info("begin model load", { path });
@@ -609,7 +1140,20 @@ export function mountWorkbench(
           const data = await readBinaryPath(app, source.path);
           const readFile = async (p: string) => readBinaryPath(app, p);
 
-          preview = new BabylonModelPreview(canvas);
+          const previewOptions = {
+            ext: source.ext,
+            annotationMode: "edit",
+            allowEditModeOnThree: true,
+            requireWorkbenchFeatures: false,
+            rendererRollout: state.settings.previewRendererRollout,
+          } as const;
+          const { preview: nextPreview } = await createLoggedModelPreview<WorkbenchPreview>(
+            log,
+            { surface: "workbench", path },
+            canvas,
+            previewOptions,
+          );
+          preview = nextPreview;
           mobilePreviewBar?.classList.remove("is-hidden");
           const summary = await preview.loadModel(data, source.ext, readFile, source.path);
           const latestPath = ps.store.getState().currentModelPath;
@@ -624,22 +1168,22 @@ export function mountWorkbench(
           const s = ps.store.getState().settings;
           preview.setRenderQuality(s.renderQuality, s.renderScale);
 
-          const canvasEl = preview.getCanvas();
-          if (canvasEl) {
+          const provider = preview.getAnnotationProvider();
+          if (provider.canvas) {
             const profile = ps.store.getState().modelAssetProfiles[path];
             const noteReader = createNoteReader(app);
             const headingSearch = createHeadingSearch(app);
 
             annotationMgr = new AnnotationManager(
-              { scene: preview.getScene(), camera: preview.getCamera(), engine: preview.getEngine(), canvas: canvasEl },
+              provider,
               previewHost,
               "edit",
-              profile?.annotations ?? [],
+              getProfileAnnotations(profile),
               (pins) => {
                 const current = ps.store.getState().modelAssetProfiles;
                 const p = ps.store.getState().currentModelPath;
                 if (!p) return;
-                const existing = current[p] ?? createDefaultProfile();
+                const existing = normalizeModelAssetProfile(current[p]);
                 ps.store.setState({
                   modelAssetProfiles: { ...current, [p]: { ...existing, annotations: pins, updatedAt: new Date().toISOString() } },
                 });
@@ -654,19 +1198,9 @@ export function mountWorkbench(
               if (!annotationMode || !annotationMgr) return;
               const screenX = result.screenX;
               const screenY = result.screenY;
-
-              let worldPos: Vector3 | null = null;
-              if (result.pickedPoint) {
-                worldPos = result.pickedPoint;
-              } else if (result.mesh) {
-                const bbox = result.mesh.getBoundingInfo().boundingBox;
-                worldPos = bbox.centerWorld.clone();
-                console.debug("[AI3D] Annotation: pickedPoint null, using bbox center fallback");
-              }
-
+              const worldPos = preview?.getPickWorldPoint(result) ?? null;
               if (!worldPos) return;
 
-              console.debug("[AI3D] Annotation: creating pin at", worldPos.toString(), "screen:", screenX, screenY);
               annotationMgr.showEditor(screenX, screenY, worldPos);
             });
           }
@@ -725,16 +1259,30 @@ function createDefaultProfile(): ModelAssetProfile {
   return { tags: [], notes: "", annotations: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
 
+function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null | undefined): ModelAssetProfile {
+  const now = new Date().toISOString();
+  return {
+    tags: getProfileTags(profile),
+    notes: typeof profile?.notes === "string" ? profile.notes : "",
+    annotations: getProfileAnnotations(profile),
+    analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
+    reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
+    createdAt: typeof profile?.createdAt === "string" ? profile.createdAt : now,
+    updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : now,
+  };
+}
+
 /** Guard against concurrent or duplicate note generation calls. */
 let noteGenerationLock: Promise<void> | null = null;
 
-export async function generateKnowledgeNote(app: App, state: PluginState) {
+export async function generateKnowledgeNote(app: App, ps: PluginStore) {
   // Serialize concurrent calls to prevent duplicate note creation
   if (noteGenerationLock !== null) await noteGenerationLock;
   let resolveLock!: () => void;
   noteGenerationLock = new Promise<void>(r => { resolveLock = r; });
 
   try {
+    const state = ps.store.getState();
     const path = state.currentModelPath;
     if (!path) return;
 
@@ -743,82 +1291,57 @@ export async function generateKnowledgeNote(app: App, state: PluginState) {
     const baseName = getPortableStem(path) || "model";
     const reportFolder = state.settings.reportFolder;
     const notePath = `${reportFolder}/${baseName} Report.md`;
-    const content = buildNoteContent(baseName, path, profile, preview);
+    const content = buildKnowledgeNoteContent({
+      baseName,
+      notePath,
+      sourcePath: path,
+      profile,
+      preview,
+    });
 
     // If file exists, update it; otherwise create (with fallback if concurrent creation won)
     const existingFile = app.vault.getAbstractFileByPath(notePath);
+    let outputFile: TFile | null = existingFile instanceof TFile ? existingFile : null;
     if (existingFile instanceof TFile) {
       await app.vault.modify(existingFile, content);
-      return;
-    }
-
-    // Ensure folder exists
-    const folder = app.vault.getAbstractFileByPath(reportFolder);
-    if (!folder) {
-      await app.vault.createFolder(reportFolder).catch(() => {});
-    }
-
-    try {
-      await app.vault.create(notePath, content);
-    } catch {
-      // File was created concurrently — fall back to modify
-      const file = app.vault.getAbstractFileByPath(notePath);
-      if (file instanceof TFile) {
-        await app.vault.modify(file, content);
+    } else {
+      // Ensure folder exists
+      const folder = app.vault.getAbstractFileByPath(reportFolder);
+      if (!folder) {
+        await app.vault.createFolder(reportFolder).catch(() => {});
       }
+
+      try {
+        outputFile = await app.vault.create(notePath, content);
+      } catch {
+        // File was created concurrently; fall back to modify.
+        const file = app.vault.getAbstractFileByPath(notePath);
+        if (file instanceof TFile) {
+          outputFile = file;
+          await app.vault.modify(file, content);
+        }
+      }
+    }
+
+    if (outputFile) {
+      const currentProfiles = ps.store.getState().modelAssetProfiles;
+        const existingProfile = normalizeModelAssetProfile(currentProfiles[path]);
+      ps.store.setState({
+        modelAssetProfiles: {
+          ...currentProfiles,
+          [path]: {
+            ...existingProfile,
+            analysisVersion: LOCAL_ANALYSIS_VERSION,
+            reportNotePath: outputFile.path,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      });
+      await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
+      new Notice(`Knowledge note updated: ${outputFile.path}`);
     }
   } finally {
     resolveLock();
     if (noteGenerationLock !== null) noteGenerationLock = null;
   }
-}
-
-function buildNoteContent(
-  baseName: string,
-  sourcePath: string,
-  profile: ModelAssetProfile | undefined,
-  preview: import("../../domain/models").ModelPreviewSummary | null,
-): string {
-  const frontmatter = [
-    "---",
-    `source_model: "${sourcePath}"`,
-    `format: ${sourcePath.split(".").pop()?.toLowerCase() ?? "unknown"}`,
-    `status: ready`,
-    `updated_at: ${new Date().toISOString()}`,
-    ...(profile?.tags.length ? [`knowledge_tags:`, ...profile.tags.map((t) => `  - ${t}`)] : []),
-    "---",
-  ].join("\n");
-
-  return [
-    frontmatter,
-    "",
-    `# ${baseName}`,
-    "",
-    "## Summary",
-    "",
-    ...(preview
-      ? [
-          "| Metric | Value |",
-          "|--------|-------|",
-          `| Meshes | ${preview.meshCount} |`,
-          `| ${preview.splatCount ? "Splats" : "Triangles"} | ${(preview.splatCount ?? preview.triangleCount).toLocaleString()} |`,
-          `| Vertices | ${preview.vertexCount.toLocaleString()} |`,
-          `| Materials | ${preview.materialCount} |`,
-          `| Bounding Size | ${preview.boundingSize.x.toFixed(2)} x ${preview.boundingSize.y.toFixed(2)} x ${preview.boundingSize.z.toFixed(2)} |`,
-          "",
-        ]
-      : ["(No preview data available)", ""]),
-    "## Key Parts",
-    "",
-    "(Parts will be populated after analysis)",
-    "",
-    "## Suggested Knowledge Points",
-    "",
-    "(Knowledge points will be generated after AI analysis)",
-    "",
-    "## Review Notes",
-    "",
-    profile?.notes ?? "",
-    "",
-  ].join("\n");
 }

@@ -9,10 +9,31 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const outDir = join(rootDir, ".tmp", "preview-verify");
+const failureDir = join(rootDir, ".tmp", "preview-failures");
 const bundlePath = join(outDir, "preview.js");
 const shimPath = join(outDir, "obsidian-shim.js");
 const entryPath = join(rootDir, "scripts", "visual-preview-entry.ts");
 const modelPath = join(rootDir, "models", "rubiks-cube-3x3.glb");
+const stylesPath = join(rootDir, "styles.css");
+
+function parseMode() {
+  const modeIndex = process.argv.indexOf("--mode");
+  if (modeIndex >= 0) {
+    return process.argv[modeIndex + 1] ?? "basic";
+  }
+  return "basic";
+}
+
+function parseRollout() {
+  const rolloutIndex = process.argv.indexOf("--rollout");
+  if (rolloutIndex >= 0) {
+    return process.argv[rolloutIndex + 1] ?? "three-direct-glb";
+  }
+  return "three-direct-glb";
+}
+
+const verifyMode = parseMode();
+const verifyRollout = parseRollout();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -62,6 +83,16 @@ async function buildHarness() {
       "export class TFile {}",
       "export class Notice {}",
       "export class Plugin {}",
+      "export class Component {",
+      "  constructor() { this.children = []; }",
+      "  load() {}",
+      "  unload() { this.children.length = 0; }",
+      "  addChild(child) { this.children.push(child); return child; }",
+      "  removeChild(child) { this.children = this.children.filter((entry) => entry !== child); }",
+      "}",
+      "export const MarkdownRenderer = {",
+      "  async render(_app, content, el) { el.textContent = content; }",
+      "};",
       "",
     ].join("\n"),
     "utf8",
@@ -102,10 +133,12 @@ function createStaticServer() {
 <html>
 <head>
   <meta charset="utf-8" />
+  <link rel="stylesheet" href="/styles.css" />
   <style>
     html, body { margin: 0; background: #101217; color: #f6f0dd; font-family: sans-serif; }
     .scroll-sentinel { height: 900px; display: grid; place-items: center; }
     .preview-card { width: 960px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 20px; background: #171b23; border-radius: 20px; }
+    .ai3d-preview-host { min-height: 640px; }
     #preview-canvas { display: block; width: 100%; height: 640px; background: #20242e; border-radius: 14px; }
   </style>
 </head>
@@ -118,6 +151,8 @@ function createStaticServer() {
 
       if (pathname.startsWith("/.tmp/preview-verify/")) {
         filePath = join(rootDir, pathname.slice(1));
+      } else if (pathname === "/styles.css") {
+        filePath = stylesPath;
       } else if (pathname.startsWith("/models/")) {
         filePath = join(rootDir, pathname.slice(1));
       } else {
@@ -194,6 +229,174 @@ async function canvasPixelStats(page) {
   });
 }
 
+async function readPreviewState(page) {
+  try {
+    return await page.evaluate(() => window.__ai3dPreviewVerify ?? null);
+  } catch (error) {
+    return {
+      status: "unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+const toolbarLabels = {
+  wireframe: "Toggle wireframe",
+  axes: "Toggle orientation axes",
+  boundingBox: "Toggle bounding box",
+  resolution: "Change resolution",
+};
+
+async function getToolbarButton(page, label) {
+  const button = page.locator(`.ai3d-helper-toolbar button[aria-label="${label}"]`).first();
+  await button.waitFor({ state: "visible", timeout: 5000 });
+  return button;
+}
+
+async function dispatchCanvasClick(page, clientX, clientY) {
+  await page.evaluate(({ clientX, clientY }) => {
+    const canvas = document.querySelector("#preview-canvas");
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("Preview canvas is unavailable for synthetic click");
+    }
+
+    canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX,
+      clientY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: "mouse",
+    }));
+  }, { clientX, clientY });
+}
+
+async function pickSelectedPartInfo(page, box) {
+  const offsets = [
+    [0, 0],
+    [0.12, -0.12],
+    [-0.12, -0.12],
+    [0.12, 0.12],
+    [-0.12, 0.12],
+  ];
+
+  for (const [offsetX, offsetY] of offsets) {
+    const clientX = box.x + box.width * (0.5 + offsetX);
+    const clientY = box.y + box.height * (0.5 + offsetY);
+    await dispatchCanvasClick(page, clientX, clientY);
+    await page.waitForTimeout(100);
+    const markdown = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+    if (markdown.includes("Part Info")) {
+      return { markdown, clientX, clientY };
+    }
+  }
+
+  return { markdown: "", clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+}
+
+async function verifyHelperToolbar(page) {
+  await page.waitForSelector(".ai3d-helper-toolbar", { timeout: 5000 });
+
+  const wireBtn = await getToolbarButton(page, toolbarLabels.wireframe);
+  await wireBtn.click();
+  assert(
+    await wireBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
+    "Wireframe toolbar button did not activate",
+  );
+
+  const axesBtn = await getToolbarButton(page, toolbarLabels.axes);
+  await axesBtn.click();
+  assert(
+    await axesBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
+    "Orientation axes toolbar button did not activate",
+  );
+
+  const bboxBtn = await getToolbarButton(page, toolbarLabels.boundingBox);
+  await bboxBtn.click();
+  assert(
+    await bboxBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
+    "Bounding box toolbar button did not activate",
+  );
+
+  const resBtn = await getToolbarButton(page, toolbarLabels.resolution);
+  const beforeText = (await resBtn.textContent())?.trim();
+  await resBtn.click();
+  await page.waitForTimeout(100);
+  const afterText = (await resBtn.textContent())?.trim();
+  assert(
+    !!beforeText && !!afterText && beforeText !== afterText,
+    `Resolution toolbar button did not cycle value: before=${beforeText ?? "null"}, after=${afterText ?? "null"}`,
+  );
+}
+
+async function verifyReadonlyPinMode(page, state) {
+  assert(state?.mode === "readonly-pin", `Expected readonly-pin mode, received ${state?.mode ?? "unknown"}`);
+  await page.waitForFunction(() => {
+    const verify = window.__ai3dPreviewVerify;
+    return verify?.pinCount === 1 && verify.pinLabels?.[0] === "Center Pin";
+  }, null, { timeout: 5000 });
+
+  const pin = page.locator(".ai3d-annotation-pin").first();
+  await pin.waitFor({ state: "visible", timeout: 5000 });
+  const pinLabel = (await pin.locator(".ai3d-pin-label").textContent()) ?? "";
+  assert(pinLabel.includes("Center Pin"), `Readonly pin label was unexpected: ${pinLabel}`);
+  assert(await page.locator(".ai3d-pin-delete").count() === 0, "Readonly pin unexpectedly exposed delete controls");
+
+  await pin.click();
+  await page.waitForTimeout(200);
+  assert(await page.locator(".ai3d-annotation-editor").count() === 0, "Readonly pin unexpectedly opened editor");
+}
+
+async function saveFailureArtifacts(page, browserMessages, error) {
+  await mkdir(failureDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const basePath = join(failureDir, `preview-failure-${stamp}`);
+  const screenshotPath = `${basePath}.png`;
+  const logPath = `${basePath}.txt`;
+  let screenshotLine = "Screenshot: not captured";
+  let screenshotCaptured = false;
+
+  if (page && !page.isClosed()) {
+    try {
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      screenshotLine = `Screenshot: ${screenshotPath}`;
+      screenshotCaptured = true;
+    } catch (screenshotError) {
+      screenshotLine = `Screenshot failed: ${
+        screenshotError instanceof Error ? screenshotError.stack ?? screenshotError.message : String(screenshotError)
+      }`;
+    }
+  }
+
+  const state = page && !page.isClosed() ? await readPreviewState(page) : null;
+  const lines = [
+    `Error: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    screenshotLine,
+    "",
+    "Preview state:",
+    JSON.stringify(state, null, 2),
+    "",
+    "Browser messages:",
+    browserMessages.length > 0 ? browserMessages.join("\n") : "(none)",
+    "",
+  ];
+
+  await writeFile(logPath, lines.join("\n"), "utf8");
+  return { screenshotPath: screenshotCaptured ? screenshotPath : null, logPath };
+}
+
 async function verify() {
   assert(existsSync(modelPath), `Missing sample model: ${modelPath}`);
   await buildHarness();
@@ -209,13 +412,21 @@ async function verify() {
     headless: true,
   });
 
+  let page = null;
+  const browserMessages = [];
+
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    const browserMessages = [];
+    page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     page.on("console", (message) => browserMessages.push(`${message.type()}: ${message.text()}`));
     page.on("pageerror", (error) => browserMessages.push(`pageerror: ${error.stack ?? error.message}`));
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => window.__ai3dPreviewVerify?.status !== "loading", null, {
+    const params = new URLSearchParams();
+    if (verifyMode !== "basic") {
+      params.set("mode", verifyMode);
+    }
+    params.set("rollout", verifyRollout);
+    const targetUrl = params.size > 0 ? `${url}?${params.toString()}` : url;
+    await page.goto(targetUrl, { waitUntil: "commit" });
+    await page.waitForFunction(() => !!window.__ai3dPreviewVerify && window.__ai3dPreviewVerify.status !== "loading", null, {
       timeout: 15000,
     });
 
@@ -227,6 +438,7 @@ async function verify() {
     assert(state.summary.meshCount > 0, "Model summary reports zero meshes");
     assert(state.summary.triangleCount > 0, "Model summary reports zero triangles");
     assert(state.summary.vertexCount > 0, "Model summary reports zero vertices");
+    assert(state.route?.backend === expectedBackend(verifyMode, verifyRollout), `Unexpected route: ${JSON.stringify(state.route)}`);
 
     await page.waitForTimeout(500);
     const stats = await canvasPixelStats(page);
@@ -248,18 +460,103 @@ async function verify() {
 
     const focusOn = await page.evaluate(() => window.__ai3dPreview?.toggleFocusSelection());
     assert(focusOn === true, "Focus selection did not turn on");
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await page.waitForTimeout(100);
-    const selectedPartMarkdown = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+    const selectedPartPick = await pickSelectedPartInfo(page, box);
+    const selectedPartMarkdown = selectedPartPick.markdown;
     assert(selectedPartMarkdown.includes("Part Info"), "Selected part info was not exported");
     assert(selectedPartMarkdown.includes("| Triangles |"), "Selected part info is missing triangle count");
 
+    await verifyHelperToolbar(page);
+
+    if (verifyMode === "direct-edit") {
+      assert(state?.mode === "direct-edit", `Expected direct-edit mode, received ${state?.mode ?? "unknown"}`);
+
+      const snapshot = await page.evaluate(() => window.__ai3dPreview?.captureSnapshot?.() ?? "");
+      assert(snapshot.startsWith("data:image/png;base64,"), "Snapshot capture did not return a PNG data URL");
+
+      await page.waitForSelector(".ai3d-annotation-editor", { timeout: 5000 });
+      const editorBox = await page.locator(".ai3d-annotation-editor").boundingBox();
+      assert(editorBox, "Annotation editor did not open");
+      assert(
+        Math.abs(editorBox.x - selectedPartPick.clientX) < 220 && Math.abs(editorBox.y - selectedPartPick.clientY) < 220,
+        `Annotation editor anchored too far from pick point: ${JSON.stringify(editorBox)}`,
+      );
+
+      await page.locator(".ai3d-annotation-editor-input").fill("Phase 2 Pin");
+      await page.locator(".ai3d-annotation-editor-confirm").click();
+      await page.waitForFunction(() => window.__ai3dPreviewVerify?.pinCount === 1, null, { timeout: 5000 });
+
+      const pin = page.locator(".ai3d-annotation-pin").first();
+      await pin.waitFor({ state: "visible", timeout: 5000 });
+      const pinLabel = (await pin.locator(".ai3d-pin-label").textContent()) ?? "";
+      assert(pinLabel.includes("Phase 2 Pin"), `Created pin label was unexpected: ${pinLabel}`);
+
+      await pin.click();
+      await page.waitForFunction(() => {
+        const input = document.querySelector(".ai3d-annotation-editor-input");
+        return input instanceof HTMLInputElement && input.value === "Phase 2 Pin";
+      }, null, { timeout: 5000 });
+      await page.locator(".ai3d-annotation-editor-input").fill("Updated Pin");
+      await page.locator(".ai3d-annotation-editor-confirm").click();
+      await page.waitForFunction(() => window.__ai3dPreviewVerify?.pinLabels?.[0] === "Updated Pin", null, { timeout: 5000 });
+
+      await pin.click();
+      await page.waitForSelector(".ai3d-annotation-editor-delete", { timeout: 5000 });
+      await page.locator(".ai3d-annotation-editor-delete").click();
+      await page.waitForFunction(() => window.__ai3dPreviewVerify?.pinCount === 0, null, { timeout: 5000 });
+
+      console.log("Direct edit preview verification passed");
+      console.log(JSON.stringify({
+        mode: verifyMode,
+        rendererRollout: verifyRollout,
+        route: state.route,
+        summary: state.summary,
+        pixelStats: stats,
+        selectedPart: selectedPartMarkdown,
+      }, null, 2));
+      return;
+    }
+
+    if (verifyMode === "readonly-pin") {
+      await verifyReadonlyPinMode(page, state);
+      console.log("Readonly pin preview verification passed");
+      console.log(JSON.stringify({
+        mode: verifyMode,
+        rendererRollout: verifyRollout,
+        route: state.route,
+        summary: state.summary,
+        pixelStats: stats,
+        selectedPart: selectedPartMarkdown,
+      }, null, 2));
+      return;
+    }
+
     console.log("Preview verification passed");
-    console.log(JSON.stringify({ summary: state.summary, pixelStats: stats, selectedPart: selectedPartMarkdown }, null, 2));
+    console.log(JSON.stringify({
+      mode: verifyMode,
+      rendererRollout: verifyRollout,
+      route: state.route,
+      summary: state.summary,
+      pixelStats: stats,
+      selectedPart: selectedPartMarkdown,
+    }, null, 2));
+  } catch (error) {
+    const artifacts = await saveFailureArtifacts(page, browserMessages, error);
+    console.error(`Preview failure artifacts saved: ${artifacts.logPath}`);
+    if (artifacts.screenshotPath) {
+      console.error(`Preview failure screenshot saved: ${artifacts.screenshotPath}`);
+    }
+    throw error;
   } finally {
     await browser.close();
     server.close();
   }
+}
+
+function expectedBackend(mode, rollout) {
+  if (mode === "direct-edit") {
+    return rollout === "three-direct-glb" ? "three" : "babylon";
+  }
+  return rollout === "babylon-safe" ? "babylon" : "three";
 }
 
 verify().catch((error) => {

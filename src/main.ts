@@ -421,7 +421,7 @@ export default class AI3DModelWorkbench extends Plugin {
 
   private async generateNote() {
     const { generateKnowledgeNote } = await import("./view/workbench/app");
-    await generateKnowledgeNote(this.app, this.ps.store.getState());
+    await generateKnowledgeNote(this.app, this.ps);
   }
 
   private clearConversionCache() {

@@ -1,46 +1,424 @@
-import { BabylonModelPreview } from "../src/render/babylon/scene";
+import type { AnnotationPin } from "../src/domain/models";
+import { AnnotationManager } from "../src/render/preview/annotations";
+import { createModelPreview } from "../src/render/preview/factory";
+import { resolvePreviewRoute } from "../src/render/preview/routing";
+import type { AnnotationPreview, ModelPreview } from "../src/render/preview/types";
+import { createHelperButtons } from "../src/view/inline/helper-buttons";
+
+interface DomCreateOptions {
+  cls?: string;
+  text?: string;
+  attr?: Record<string, string>;
+}
 
 declare global {
+  interface HTMLElement {
+    createDiv(options?: DomCreateOptions): HTMLDivElement;
+    createSpan(options?: DomCreateOptions): HTMLSpanElement;
+    createEl<K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions): HTMLElementTagNameMap[K];
+    empty(): void;
+    setText(text: string): void;
+  }
+
   interface Window {
-    __ai3dPreview?: BabylonModelPreview;
+    __ai3dPreview?: ModelPreview;
     __ai3dPreviewVerify?: {
       status: "loading" | "ready" | "error";
+      mode?: "basic" | "direct-edit" | "readonly-pin";
+      rendererRollout?: "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
       summary?: unknown;
+      route?: unknown;
+      pinCount?: number;
+      pinLabels?: string[];
       error?: string;
     };
   }
 }
 
-async function main() {
-  window.__ai3dPreviewVerify = { status: "loading" };
+type VerifyMode = "basic" | "direct-edit" | "readonly-pin";
 
+function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateOptions): T {
+  if (!options) return el;
+  if (options.cls) el.className = options.cls;
+  if (options.text) el.textContent = options.text;
+  if (options.attr) {
+    for (const [key, value] of Object.entries(options.attr)) {
+      el.setAttribute(key, value);
+    }
+  }
+  return el;
+}
+
+function installObsidianDomShims(): void {
+  const globals = window as typeof window & {
+    activeDocument: Document;
+    createDiv: (options?: DomCreateOptions) => HTMLDivElement;
+    createEl: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions) => HTMLElementTagNameMap[K];
+    createSvg: <K extends keyof SVGElementTagNameMap>(tag: K) => SVGElementTagNameMap[K];
+  };
+  globals.activeDocument = document;
+  globals.createDiv = (options) => applyDomCreateOptions(document.createElement("div"), options);
+  globals.createEl = (tag, options) => applyDomCreateOptions(document.createElement(tag), options);
+  globals.createSvg = ((tag: keyof SVGElementTagNameMap) =>
+    document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof globals.createSvg;
+
+  const proto = HTMLElement.prototype as HTMLElement & {
+    createDiv?: (options?: DomCreateOptions) => HTMLDivElement;
+    createSpan?: (options?: DomCreateOptions) => HTMLSpanElement;
+    createEl?: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions) => HTMLElementTagNameMap[K];
+    empty?: () => void;
+    setText?: (text: string) => void;
+  };
+
+  if (!proto.createDiv) {
+    proto.createDiv = function createDiv(options?: DomCreateOptions): HTMLDivElement {
+      const el = applyDomCreateOptions(document.createElement("div"), options);
+      this.appendChild(el);
+      return el;
+    };
+  }
+
+  if (!proto.createSpan) {
+    proto.createSpan = function createSpan(options?: DomCreateOptions): HTMLSpanElement {
+      const el = applyDomCreateOptions(document.createElement("span"), options);
+      this.appendChild(el);
+      return el;
+    };
+  }
+
+  if (!proto.createEl) {
+    proto.createEl = function createEl<K extends keyof HTMLElementTagNameMap>(
+      tag: K,
+      options?: DomCreateOptions,
+    ): HTMLElementTagNameMap[K] {
+      const el = applyDomCreateOptions(document.createElement(tag), options) as HTMLElementTagNameMap[K];
+      this.appendChild(el);
+      return el;
+    };
+  }
+
+  if (!proto.empty) {
+    proto.empty = function empty(): void {
+      this.replaceChildren();
+    };
+  }
+
+  if (!proto.setText) {
+    proto.setText = function setText(text: string): void {
+      this.textContent = text;
+    };
+  }
+}
+
+function setVerifyState(partial: Partial<NonNullable<Window["__ai3dPreviewVerify"]>>): void {
+  window.__ai3dPreviewVerify = {
+    ...(window.__ai3dPreviewVerify ?? { status: "loading" }),
+    ...partial,
+  };
+}
+
+function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement } {
   const shell = document.createElement("main");
   shell.id = "preview-shell";
   shell.innerHTML = `
     <section class="scroll-sentinel">scroll sentinel before canvas</section>
     <section class="preview-card">
-      <canvas id="preview-canvas" width="960" height="640"></canvas>
+      <div class="ai3d-preview-host">
+        <canvas id="preview-canvas" class="ai3d-canvas-full" width="960" height="640"></canvas>
+      </div>
     </section>
     <section class="scroll-sentinel">scroll sentinel after canvas</section>
   `;
   document.body.appendChild(shell);
 
-  const canvas = document.getElementById("preview-canvas") as HTMLCanvasElement | null;
-  if (!canvas) {
-    throw new Error("Preview canvas was not created");
+  const host = shell.querySelector(".ai3d-preview-host");
+  const canvas = shell.querySelector("#preview-canvas");
+  if (!(host instanceof HTMLDivElement) || !(canvas instanceof HTMLCanvasElement)) {
+    throw new Error("Preview shell was not created");
   }
+  return { host, canvas };
+}
 
+async function loadSampleModel(): Promise<ArrayBuffer> {
   const response = await fetch("/models/rubiks-cube-3x3.glb");
   if (!response.ok) {
     throw new Error(`Failed to load sample model: HTTP ${response.status}`);
   }
+  return response.arrayBuffer();
+}
 
-  const preview = new BabylonModelPreview(canvas);
-  const summary = await preview.loadModel(await response.arrayBuffer(), "glb");
-  preview.toggleOrientationGizmo();
+function createPreviewAppStub() {
+  return {
+    vault: {
+      adapter: {
+        exists: async () => true,
+      },
+      createFolder: async () => {},
+      createBinary: async () => {},
+    },
+  };
+}
+
+function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview): void {
+  const parentEl = host.parentElement;
+  if (!(parentEl instanceof HTMLElement)) {
+    throw new Error("Preview host parent is unavailable");
+  }
+  const toolbar = createHelperButtons(
+    parentEl,
+    host,
+    createPreviewAppStub() as never,
+    () => preview,
+    () => "models/rubiks-cube-3x3.glb",
+    () => {},
+  );
+  toolbar.syncCapabilities();
+}
+
+function findVisiblePinPosition(
+  annotationPreview: AnnotationPreview,
+  summary: { boundingSize: { x: number; y: number; z: number } },
+): [number, number, number] {
+  const provider = annotationPreview.getAnnotationProvider();
+  const extent = {
+    x: summary.boundingSize.x * 0.35,
+    y: summary.boundingSize.y * 0.35,
+    z: summary.boundingSize.z * 0.35,
+  };
+  const candidates: Array<[number, number, number]> = [
+    [extent.x, extent.y, extent.z],
+    [extent.x, extent.y, -extent.z],
+    [extent.x, -extent.y, extent.z],
+    [extent.x, -extent.y, -extent.z],
+    [-extent.x, extent.y, extent.z],
+    [-extent.x, extent.y, -extent.z],
+    [-extent.x, -extent.y, extent.z],
+    [-extent.x, -extent.y, -extent.z],
+    [extent.x, 0, 0],
+    [0, extent.y, 0],
+    [0, 0, extent.z],
+    [0, 0, 0],
+  ];
+  const projection = { screenX: 0, screenY: 0, depth: 0 };
+
+  for (const [x, y, z] of candidates) {
+    const point = { x, y, z };
+    if (provider.projectWorldPoint(point, projection) && !provider.isWorldPointOccluded(point)) {
+      return [x, y, z];
+    }
+  }
+
+  return candidates[0];
+}
+
+async function pickVisiblePinPosition(
+  annotationPreview: AnnotationPreview,
+  canvas: HTMLCanvasElement,
+): Promise<[number, number, number] | null> {
+  const offsets = [
+    [0.12, -0.12],
+    [-0.12, -0.12],
+    [0.12, 0.12],
+    [-0.12, 0.12],
+    [0, 0],
+  ] as const;
+
+  for (const [offsetX, offsetY] of offsets) {
+    const point = await new Promise<[number, number, number] | null>((resolve) => {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = rect.left + rect.width * (0.5 + offsetX);
+      const clientY = rect.top + rect.height * (0.5 + offsetY);
+      let settled = false;
+      const release = annotationPreview.onPick((result) => {
+        const point = annotationPreview.getPickWorldPoint(result);
+        if (!point) return;
+        settled = true;
+        release();
+        resolve([point.x, point.y, point.z]);
+      });
+      const finalize = (value: [number, number, number] | null) => {
+        if (settled) return;
+        settled = true;
+        release();
+        resolve(value);
+      };
+
+      window.requestAnimationFrame(() => {
+        canvas.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+          isPrimary: true,
+          pointerId: 1,
+          pointerType: "mouse",
+        }));
+        canvas.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true,
+          button: 0,
+          buttons: 0,
+          clientX,
+          clientY,
+          isPrimary: true,
+          pointerId: 1,
+          pointerType: "mouse",
+        }));
+        window.setTimeout(() => finalize(null), 250);
+      });
+    });
+
+    if (point) {
+      return point;
+    }
+  }
+
+  return null;
+}
+
+function getRendererRollout(): "babylon-safe" | "three-readonly-glb" | "three-direct-glb" {
+  const value = new URLSearchParams(window.location.search).get("rollout");
+  if (value === "babylon-safe" || value === "three-readonly-glb" || value === "three-direct-glb") {
+    return value;
+  }
+  return "three-direct-glb";
+}
+
+async function runBasicPreview(
+  host: HTMLDivElement,
+  canvas: HTMLCanvasElement,
+  rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
+): Promise<void> {
+  const previewOptions = {
+    ext: "glb",
+    annotationMode: "none",
+    rendererRollout,
+  } as const;
+  const route = resolvePreviewRoute(previewOptions);
+  const preview = await createModelPreview(canvas, previewOptions);
+  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  attachHelperToolbar(host, preview);
   window.__ai3dPreview = preview;
+  setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route });
+}
 
-  window.__ai3dPreviewVerify = { status: "ready", summary };
+async function runDirectEditPreview(
+  host: HTMLDivElement,
+  canvas: HTMLCanvasElement,
+  rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
+): Promise<void> {
+  const previewOptions = {
+    ext: "glb",
+    annotationMode: "edit",
+    allowEditModeOnThree: true,
+    rendererRollout,
+  } as const;
+  const route = resolvePreviewRoute(previewOptions);
+  const preview = await createModelPreview(canvas, previewOptions);
+  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  attachHelperToolbar(host, preview);
+  const annotationPreview = preview as AnnotationPreview;
+  const annotationMgr = new AnnotationManager(
+    annotationPreview.getAnnotationProvider(),
+    host,
+    "edit",
+    [],
+    (pins) => {
+      setVerifyState({
+        pinCount: pins.length,
+        pinLabels: pins.map((pin) => pin.label),
+      });
+    },
+  );
+  annotationPreview.onPick((result) => {
+    const worldPos = annotationPreview.getPickWorldPoint(result);
+    if (!worldPos) return;
+    annotationMgr.showEditor(result.screenX, result.screenY, worldPos);
+  });
+  window.__ai3dPreview = preview;
+  window.addEventListener("beforeunload", () => annotationMgr.destroy(), { once: true });
+  setVerifyState({
+    status: "ready",
+    mode: "direct-edit",
+    rendererRollout,
+    summary,
+    route,
+    pinCount: 0,
+    pinLabels: [],
+  });
+}
+
+async function runReadonlyPinPreview(
+  host: HTMLDivElement,
+  canvas: HTMLCanvasElement,
+  rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
+): Promise<void> {
+  const previewOptions = {
+    ext: "glb",
+    annotationMode: "readonly",
+    rendererRollout,
+  } as const;
+  const route = resolvePreviewRoute(previewOptions);
+  const preview = await createModelPreview(canvas, previewOptions);
+  const summary = await preview.loadModel(await loadSampleModel(), "glb");
+  attachHelperToolbar(host, preview);
+
+  const annotationPreview = preview as AnnotationPreview;
+  const visiblePinPosition = await pickVisiblePinPosition(annotationPreview, canvas)
+    ?? findVisiblePinPosition(annotationPreview, summary);
+  const initialPins: AnnotationPin[] = [
+    {
+      id: "verify-readonly-pin",
+      position: visiblePinPosition,
+      label: "Center Pin",
+      color: "#4a9eff",
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  const annotationMgr = new AnnotationManager(
+    annotationPreview.getAnnotationProvider(),
+    host,
+    "readonly",
+    initialPins,
+    (pins) => {
+      setVerifyState({
+        pinCount: pins.length,
+        pinLabels: pins.map((pin) => pin.label),
+      });
+    },
+  );
+  window.__ai3dPreview = preview;
+  window.addEventListener("beforeunload", () => annotationMgr.destroy(), { once: true });
+  setVerifyState({
+    status: "ready",
+    mode: "readonly-pin",
+    rendererRollout,
+    summary,
+    route,
+    pinCount: initialPins.length,
+    pinLabels: initialPins.map((pin) => pin.label),
+  });
+}
+
+async function main() {
+  installObsidianDomShims();
+  window.__ai3dPreviewVerify = { status: "loading" };
+
+  const mode = (new URLSearchParams(window.location.search).get("mode") ?? "basic") as VerifyMode;
+  const rendererRollout = getRendererRollout();
+  const { host, canvas } = createPreviewShell();
+  if (mode === "direct-edit") {
+    await runDirectEditPreview(host, canvas, rendererRollout);
+    return;
+  }
+
+  if (mode === "readonly-pin") {
+    await runReadonlyPinPreview(host, canvas, rendererRollout);
+    return;
+  }
+
+  await runBasicPreview(host, canvas, rendererRollout);
 }
 
 main().catch((error: unknown) => {

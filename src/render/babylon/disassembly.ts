@@ -6,9 +6,24 @@ import type { Node } from "@babylonjs/core/node.js";
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
-import { Plane } from "@babylonjs/core/Maths/math.plane.js";
 import { PointerEventTypes } from "@babylonjs/core/Events/pointerEvents.js";
 import "@babylonjs/core/Rendering/boundingBoxRenderer.js";
+import {
+  applyPreviewRotationDrag,
+  createPreviewPlane,
+  createPreviewLineOfSight,
+  intersectPreviewRayWithPlane,
+  isPreviewHitOccluded,
+  type PreviewPlane,
+  toPreviewQuaternion,
+  toPreviewWorldPoint,
+} from "../preview/geometry";
+import {
+  createPreviewDisassemblyController,
+  type PreviewDisassemblyAdapter,
+  type PreviewDisassemblyController,
+  type PreviewDisassemblySubscriptions,
+} from "../preview/disassembly";
 
 interface PartTransform {
   parent: Nullable<Node>;
@@ -21,151 +36,122 @@ interface PartTransform {
 interface DragState {
   mesh: AbstractMesh;
   mode: "move" | "rotate";
-  plane: Plane;
+  plane: PreviewPlane;
   startPoint: Vector3;
   startPosition: Vector3;
-  startRotation: Vector3;
   startRotationQuaternion: AbstractMesh["rotationQuaternion"];
-  pivot: Vector3; // bbox center for rotation
+  pivot: Vector3;
   pointerX: number;
   pointerY: number;
 }
 
-export class DisassemblyController {
+class BabylonDisassemblyAdapter
+  implements PreviewDisassemblyAdapter<AbstractMesh, PartTransform, DragState> {
+  private static readonly BBOX_VISIBLE = new Color3(0.25, 0.7, 1);
+  private static readonly BBOX_OCCLUDED = new Color3(0.1, 0.25, 0.4);
+
   private readonly scene: Scene;
   private readonly camera: ArcRotateCamera;
   private readonly meshes: AbstractMesh[];
-  private readonly originals = new Map<number, PartTransform>();
-  private observer: Nullable<ReturnType<Scene["onPointerObservable"]["add"]>> = null;
-  private renderObserver: Nullable<ReturnType<Scene["onAfterRenderCameraObservable"]["add"]>> = null;
-  private frameCount = 0;
   private lastOccluded = false;
-  private static readonly BBOX_VISIBLE = new Color3(0.25, 0.7, 1);
-  private static readonly BBOX_OCCLUDED = new Color3(0.1, 0.25, 0.4);
-  private active = false;
-  private drag: DragState | null = null;
   private selected: AbstractMesh | null = null;
 
   constructor(scene: Scene, camera: ArcRotateCamera, meshes: AbstractMesh[]) {
     this.scene = scene;
     this.camera = camera;
     this.meshes = meshes;
-    const bboxRenderer = scene.getBoundingBoxRenderer?.();
-    if (bboxRenderer) {
-      bboxRenderer.frontColor = new Color3(0.25, 0.7, 1);
-      bboxRenderer.backColor = new Color3(0.25, 0.7, 1);
-    }
-    for (const mesh of meshes) {
-      this.originals.set(mesh.uniqueId, this.captureTransform(mesh));
-    }
+    this.setBoundingBoxColor(BabylonDisassemblyAdapter.BBOX_VISIBLE);
   }
 
-  setEnabled(enabled: boolean): boolean {
-    if (this.active === enabled) return this.active;
-    this.active = enabled;
-    this.drag = null;
-    this.setSelected(null);
+  getParts(): readonly AbstractMesh[] {
+    return this.meshes;
+  }
 
-    if (enabled) {
-      this.observer = this.scene.onPointerObservable.add((pointerInfo) => {
-        const event = pointerInfo.event as PointerEvent;
-        if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
-          this.startDrag(pointerInfo.pickInfo?.pickedMesh ?? null, event);
-        } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
-          this.updateDrag(event);
-        } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
-          this.stopDrag();
-        }
-      });
-      this.renderObserver = this.scene.onAfterRenderCameraObservable.add((cam) => {
-        if (cam === this.camera) this.updateBboxOcclusion();
-      });
-    } else {
-      if (this.observer) {
-        this.scene.onPointerObservable.remove(this.observer);
-        this.observer = null;
+  getPartId(part: AbstractMesh): number {
+    return part.uniqueId;
+  }
+
+  isDisposed(part: AbstractMesh): boolean {
+    return part.isDisposed();
+  }
+
+  captureTransform(part: AbstractMesh): PartTransform {
+    return {
+      parent: part.parent,
+      position: part.position.clone(),
+      rotation: part.rotation.clone(),
+      rotationQuaternion: part.rotationQuaternion?.clone() ?? null,
+      scaling: part.scaling.clone(),
+    };
+  }
+
+  restoreTransform(part: AbstractMesh, transform: PartTransform): void {
+    part.setParent(transform.parent);
+    part.position.copyFrom(transform.position);
+    part.rotation.copyFrom(transform.rotation);
+    part.rotationQuaternion = transform.rotationQuaternion?.clone() ?? null;
+    part.scaling.copyFrom(transform.scaling);
+    part.computeWorldMatrix(true);
+  }
+
+  subscribe(subscriptions: PreviewDisassemblySubscriptions): () => void {
+    const pointerObserver = this.scene.onPointerObservable.add((pointerInfo) => {
+      const event = pointerInfo.event as PointerEvent;
+      if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
+        subscriptions.onPointerDown(pointerInfo.pickInfo?.pickedMesh ?? null, event);
+      } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
+        subscriptions.onPointerMove(event);
+      } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
+        subscriptions.onPointerUp(event);
       }
-      if (this.renderObserver) {
-        this.scene.onAfterRenderCameraObservable.remove(this.renderObserver);
-        this.renderObserver = null;
+    });
+    const renderObserver = this.scene.onAfterRenderCameraObservable.add((camera) => {
+      if (camera === this.camera) {
+        subscriptions.onRender();
       }
-      this.camera.attachControl(this.scene.getEngine().getRenderingCanvas(), true);
+    });
+
+    return () => {
+      this.scene.onPointerObservable.remove(pointerObserver);
+      this.scene.onAfterRenderCameraObservable.remove(renderObserver);
+    };
+  }
+
+  resolvePart(target: unknown): AbstractMesh | null {
+    if (!target || typeof target !== "object") return null;
+    if (this.isMeshInSet(target as AbstractMesh)) {
+      return target as AbstractMesh;
     }
-
-    return this.active;
-  }
-
-  toggle(): boolean {
-    return this.setEnabled(!this.active);
-  }
-
-  reset(): void {
-    this.stopDrag();
-    this.setSelected(null);
-    for (const mesh of this.meshes) {
-      if (mesh.isDisposed()) continue;
-      const original = this.originals.get(mesh.uniqueId);
-      if (!original) continue;
-      mesh.setParent(original.parent);
-      mesh.position.copyFrom(original.position);
-      mesh.rotation.copyFrom(original.rotation);
-      mesh.rotationQuaternion = original.rotationQuaternion?.clone() ?? null;
-      mesh.scaling.copyFrom(original.scaling);
-      mesh.computeWorldMatrix(true);
+    const parent = (target as AbstractMesh).parent;
+    if (parent && "uniqueId" in parent && this.isMeshInSet(parent as AbstractMesh)) {
+      return parent as AbstractMesh;
     }
+    return null;
   }
 
-  dispose(): void {
-    this.setEnabled(false);
-    this.originals.clear();
-  }
-
-  private updateBboxOcclusion(): void {
-    if (!this.selected || this.selected.isDisposed()) return;
-    this.frameCount++;
-    if (this.frameCount % 3 !== 0) return;
-
-    const center = this.selected.getBoundingInfo().boundingBox.centerWorld;
-    const camPos = this.camera.position;
-    const dist = Vector3.Distance(camPos, center);
-    const dir = center.subtract(camPos).normalize();
-    const ray = new Ray(camPos, dir, dist);
-    const hit = this.scene.pickWithRay(ray);
-    const eps = Math.max(dist * 0.01, 0.01);
-    const occluded = !!hit?.hit && hit.distance < dist - eps;
-
-    if (occluded !== this.lastOccluded) {
-      this.lastOccluded = occluded;
-      const color = occluded ? DisassemblyController.BBOX_OCCLUDED : DisassemblyController.BBOX_VISIBLE;
-      const renderer = this.scene.getBoundingBoxRenderer?.();
-      if (renderer) {
-        renderer.frontColor = color;
-        renderer.backColor = color;
-      }
+  setSelected(part: AbstractMesh | null): void {
+    if (this.selected && !this.selected.isDisposed()) {
+      this.selected.showBoundingBox = false;
+    }
+    this.selected = part;
+    this.lastOccluded = false;
+    this.setBoundingBoxColor(BabylonDisassemblyAdapter.BBOX_VISIBLE);
+    if (this.selected && !this.selected.isDisposed()) {
+      this.selected.showBoundingBox = true;
     }
   }
 
-  private startDrag(mesh: AbstractMesh | null, event: PointerEvent): void {
-    if (event.button !== 0) return;
-    const part = mesh ? this.findPart(mesh) : null;
-    if (!part) {
-      this.drag = null;
-      this.setSelected(null);
-      return;
+  beginDrag(part: AbstractMesh, event: PointerEvent): DragState | null {
+    const startPoint = this.getPointOnDragPlane(part, event);
+    if (!startPoint) {
+      return null;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    this.camera.detachControl();
+
     part.setParent(null);
     part.computeWorldMatrix(true);
-    this.setSelected(part);
-
-    const startPoint = this.getPointOnDragPlane(part, event);
-    if (!startPoint) {
-      this.drag = null;
-      return;
-    }
 
     if (event.shiftKey && !part.rotationQuaternion) {
       part.rotationQuaternion = Quaternion.FromEulerVector(part.rotation);
@@ -173,118 +159,153 @@ export class DisassemblyController {
     }
 
     const pivot = part.getBoundingInfo().boundingBox.centerWorld.clone();
-
-    this.drag = {
+    const plane = createPreviewPlane(
+      toPreviewWorldPoint(startPoint),
+      toPreviewWorldPoint(this.camera.getForwardRay().direction),
+    );
+    if (!plane) {
+      return null;
+    }
+    const dragState: DragState = {
       mesh: part,
       mode: event.shiftKey ? "rotate" : "move",
-      plane: Plane.FromPositionAndNormal(startPoint, this.camera.getForwardRay().direction),
+      plane,
       startPoint,
       startPosition: part.position.clone(),
-      startRotation: part.rotation.clone(),
       startRotationQuaternion: part.rotationQuaternion?.clone() ?? null,
       pivot,
       pointerX: event.clientX,
       pointerY: event.clientY,
     };
+
+    this.camera.detachControl();
+    return dragState;
   }
 
-  private updateDrag(event: PointerEvent): void {
-    if (!this.drag) return;
+  updateDrag(state: DragState, event: PointerEvent): void {
     event.preventDefault();
     event.stopPropagation();
 
-    if (this.drag.mode === "rotate") {
-      this.updateRotation(event);
+    if (state.mode === "rotate") {
+      this.updateRotation(state, event);
       return;
     }
 
-    const point = this.getRayPlanePoint(event, this.drag.plane);
+    const point = this.getRayPlanePoint(event, state.plane);
     if (!point) return;
 
-    const offset = point.subtract(this.drag.startPoint);
-    this.drag.mesh.position = this.drag.startPosition.add(offset);
-    this.drag.mesh.computeWorldMatrix(true);
+    const offset = point.subtract(state.startPoint);
+    state.mesh.position = state.startPosition.add(offset);
+    state.mesh.computeWorldMatrix(true);
   }
 
-  private updateRotation(event: PointerEvent): void {
-    if (!this.drag) return;
-
-    const dx = event.clientX - this.drag.pointerX;
-    const dy = event.clientY - this.drag.pointerY;
-    const sensitivity = 0.01;
-    const yaw = Quaternion.RotationAxis(this.camera.getDirection(Vector3.Up()).normalize(), dx * sensitivity);
-    const pitch = Quaternion.RotationAxis(this.camera.getDirection(Vector3.Right()).normalize(), dy * sensitivity);
-    const delta = yaw.multiply(pitch);
-
-    // Rotate around bbox center: new_pos = pivot + delta.rotate(start_pos - pivot)
-    const offset = this.drag.startPosition.subtract(this.drag.pivot);
-    const rotMatrix = new Matrix();
-    delta.toRotationMatrix(rotMatrix);
-    const rotatedOffset = Vector3.TransformCoordinates(offset, rotMatrix);
-    this.drag.mesh.position = this.drag.pivot.add(rotatedOffset);
-
-    if (this.drag.startRotationQuaternion) {
-      this.drag.mesh.rotationQuaternion = delta.multiply(this.drag.startRotationQuaternion);
-    } else {
-      const start = Quaternion.FromEulerVector(this.drag.startRotation);
-      this.drag.mesh.rotationQuaternion = delta.multiply(start);
-      this.drag.mesh.rotation.set(0, 0, 0);
-    }
-    this.drag.mesh.computeWorldMatrix(true);
-  }
-
-  private stopDrag(): void {
-    if (!this.drag) return;
-    this.drag = null;
+  endDrag(state: DragState | null): void {
+    if (!state) return;
     this.camera.attachControl(this.scene.getEngine().getRenderingCanvas(), true);
   }
 
-  private findPart(mesh: AbstractMesh): AbstractMesh | null {
-    if (this.meshes.includes(mesh)) return mesh;
-    const parent = mesh.parent;
-    if (parent && "uniqueId" in parent) {
-      const parentMesh = parent as AbstractMesh;
-      if (this.meshes.includes(parentMesh)) return parentMesh;
+  updateSelectionOcclusion(part: AbstractMesh): void {
+    const center = part.getBoundingInfo().boundingBox.centerWorld;
+    const cameraPosition = this.camera.position;
+    const lineOfSight = createPreviewLineOfSight(
+      toPreviewWorldPoint(cameraPosition),
+      toPreviewWorldPoint(center),
+    );
+    if (!lineOfSight) {
+      return;
     }
-    return null;
+    const direction = new Vector3(
+      lineOfSight.direction.x,
+      lineOfSight.direction.y,
+      lineOfSight.direction.z,
+    );
+    const ray = new Ray(cameraPosition, direction, lineOfSight.distance);
+    const hit = this.scene.pickWithRay(ray);
+    const occluded = !!hit?.hit
+      && isPreviewHitOccluded(hit.distance, lineOfSight.distance, lineOfSight.epsilon);
+
+    if (occluded !== this.lastOccluded) {
+      this.lastOccluded = occluded;
+      this.setBoundingBoxColor(
+        occluded
+          ? BabylonDisassemblyAdapter.BBOX_OCCLUDED
+          : BabylonDisassemblyAdapter.BBOX_VISIBLE,
+      );
+    }
   }
 
-  private setSelected(mesh: AbstractMesh | null): void {
-    if (this.selected && !this.selected.isDisposed()) {
-      this.selected.showBoundingBox = false;
+  private isMeshInSet(mesh: AbstractMesh): boolean {
+    return this.meshes.includes(mesh);
+  }
+
+  private setBoundingBoxColor(color: Color3): void {
+    const renderer = this.scene.getBoundingBoxRenderer?.();
+    if (!renderer) return;
+    renderer.frontColor = color;
+    renderer.backColor = color;
+  }
+
+  private updateRotation(state: DragState, event: PointerEvent): void {
+    if (!state.startRotationQuaternion) {
+      return;
     }
-    this.selected = mesh;
-    if (this.selected && !this.selected.isDisposed()) {
-      this.selected.showBoundingBox = true;
+    const dx = event.clientX - state.pointerX;
+    const dy = event.clientY - state.pointerY;
+    const result = applyPreviewRotationDrag({
+      startPosition: toPreviewWorldPoint(state.startPosition),
+      pivot: toPreviewWorldPoint(state.pivot),
+      startRotationQuaternion: toPreviewQuaternion(state.startRotationQuaternion),
+      yawAxis: toPreviewWorldPoint(this.camera.getDirection(Vector3.Up()).normalize()),
+      pitchAxis: toPreviewWorldPoint(this.camera.getDirection(Vector3.Right()).normalize()),
+      deltaX: dx,
+      deltaY: dy,
+      sensitivity: 0.01,
+    });
+    if (!result) {
+      return;
     }
+    state.mesh.position = new Vector3(result.position.x, result.position.y, result.position.z);
+    state.mesh.rotationQuaternion = new Quaternion(
+      result.rotationQuaternion.x,
+      result.rotationQuaternion.y,
+      result.rotationQuaternion.z,
+      result.rotationQuaternion.w,
+    );
+    state.mesh.rotation.set(0, 0, 0);
+    state.mesh.computeWorldMatrix(true);
   }
 
   private getPointOnDragPlane(mesh: AbstractMesh, event: PointerEvent): Vector3 | null {
-    const bbox = mesh.getBoundingInfo().boundingBox;
-    const center = bbox.centerWorld.clone();
-    const plane = Plane.FromPositionAndNormal(center, this.camera.getForwardRay().direction);
-    return this.getRayPlanePoint(event, plane) ?? center;
+    const center = mesh.getBoundingInfo().boundingBox.centerWorld.clone();
+    const plane = createPreviewPlane(
+      toPreviewWorldPoint(center),
+      toPreviewWorldPoint(this.camera.getForwardRay().direction),
+    );
+    return plane ? this.getRayPlanePoint(event, plane) ?? center : center;
   }
 
-  private getRayPlanePoint(event: PointerEvent, plane: Plane): Vector3 | null {
+  private getRayPlanePoint(event: PointerEvent, plane: PreviewPlane): Vector3 | null {
     const canvas = this.scene.getEngine().getRenderingCanvas();
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
-    const distance = ray.intersectsPlane(plane);
-    if (distance === null) return null;
-    return ray.origin.add(ray.direction.scale(distance));
+    const point = intersectPreviewRayWithPlane(
+      {
+        origin: toPreviewWorldPoint(ray.origin),
+        direction: toPreviewWorldPoint(ray.direction),
+      },
+      plane,
+    );
+    return point ? new Vector3(point.x, point.y, point.z) : null;
   }
+}
 
-  private captureTransform(mesh: AbstractMesh): PartTransform {
-    return {
-      parent: mesh.parent,
-      position: mesh.position.clone(),
-      rotation: mesh.rotation.clone(),
-      rotationQuaternion: mesh.rotationQuaternion?.clone() ?? null,
-      scaling: mesh.scaling.clone(),
-    };
-  }
+export function createBabylonDisassemblyController(
+  scene: Scene,
+  camera: ArcRotateCamera,
+  meshes: AbstractMesh[],
+): PreviewDisassemblyController {
+  return createPreviewDisassemblyController(new BabylonDisassemblyAdapter(scene, camera, meshes));
 }

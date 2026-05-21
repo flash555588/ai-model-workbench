@@ -1,13 +1,10 @@
 import { App, Component, MarkdownRenderer } from "obsidian";
-import type { Scene } from "@babylonjs/core/scene.js";
-import type { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera.js";
-import type { Engine } from "@babylonjs/core/Engines/engine.js";
-import { Vector3, Matrix } from "@babylonjs/core/Maths/math.vector.js";
-import { Ray } from "@babylonjs/core/Culling/ray.js";
 import type { AnnotationPin, PluginSettings } from "../../domain/models";
 import type { HeadingSearchResult } from "../../utils/note-reader";
 import { formatT, t } from "../../i18n";
 import { getPortableStem } from "../../utils/resolve-path";
+import type { AnnotationViewportProvider, PreviewProjectionResult, PreviewWorldPoint } from "./types";
+import { clonePreviewWorldPoint } from "./geometry";
 
 const DEFAULT_COLORS = [
   "#4a9eff",
@@ -27,12 +24,8 @@ function generateId(): string {
   return `pin-${Date.now()}-${globalNextId++}`;
 }
 
-/** Any preview that exposes Babylon scene + camera for 3D→2D projection. */
-export interface AnnotationSceneProvider {
-  readonly scene: Scene;
-  readonly camera: ArcRotateCamera;
-  readonly engine: Engine;
-  readonly canvas: HTMLCanvasElement;
+function cloneWorldPoint(point: PreviewWorldPoint): PreviewWorldPoint {
+  return clonePreviewWorldPoint(point);
 }
 
 export type AnnotationMode = "edit" | "readonly";
@@ -44,7 +37,7 @@ export interface AnnotationPreviewOptions {
 
 export class AnnotationManager {
   private overlay: HTMLDivElement;
-  private pinEls = new Map<string, { el: HTMLDivElement; worldPos: Vector3 }>();
+  private pinEls = new Map<string, { el: HTMLDivElement; worldPos: PreviewWorldPoint }>();
   private observer: { remove: () => void } | null = null;
   private resizeObs: ResizeObserver | null = null;
   private annotations: AnnotationPin[] = [];
@@ -56,10 +49,7 @@ export class AnnotationManager {
   private idleFrames = 0;
   private cameraIdle = false;
   private static readonly IDLE_THRESHOLD = 15; // ~250ms at 60fps
-  // Pre-allocated scratch objects for updateProjections hot path (avoids per-frame GC)
-  private static readonly _identity = Matrix.Identity();
-  private static readonly _scratchDir = Vector3.Zero();
-  private static readonly _scratchRay = new Ray(Vector3.Zero(), Vector3.Zero(), 1);
+  private static readonly _scratchProjection: PreviewProjectionResult = { screenX: 0, screenY: 0, depth: 0 };
   private hoverPopover: HTMLDivElement | null = null;
   private hoverTimeout: number | null = null;
   private hoverRequestId = 0;
@@ -74,7 +64,7 @@ export class AnnotationManager {
   private readonly previewMode: PluginSettings["annotationPreviewMode"];
 
   constructor(
-    private provider: AnnotationSceneProvider,
+    private provider: AnnotationViewportProvider,
     private hostEl: HTMLElement,
     private mode: AnnotationMode,
     initial: AnnotationPin[],
@@ -123,7 +113,7 @@ export class AnnotationManager {
     this.updateProjections();
   }
 
-  addPin(worldPos: Vector3, label: string, color?: string): AnnotationPin {
+  addPin(worldPos: PreviewWorldPoint, label: string, color?: string): AnnotationPin {
     const pin: AnnotationPin = {
       id: generateId(),
       position: [worldPos.x, worldPos.y, worldPos.z],
@@ -154,7 +144,9 @@ export class AnnotationManager {
     Object.assign(pin, partial);
     const entry = this.pinEls.get(id);
     if (entry) {
-      if (partial.position) entry.worldPos = new Vector3(...partial.position);
+      if (partial.position) {
+        entry.worldPos = { x: partial.position[0], y: partial.position[1], z: partial.position[2] };
+      }
       const labelEl = entry.el.querySelector(".ai3d-pin-label");
       if (labelEl && partial.label !== undefined) labelEl.textContent = partial.label;
       const dotEl = entry.el.querySelector<HTMLElement>(".ai3d-pin-dot");
@@ -165,7 +157,7 @@ export class AnnotationManager {
   }
 
   /** Show inline editor at screen position for creating a new pin. */
-  showEditor(screenX: number, screenY: number, worldPos: Vector3): void {
+  showEditor(screenX: number, screenY: number, worldPos: PreviewWorldPoint): void {
     this.showEditorInternal(screenX, screenY, worldPos);
   }
 
@@ -181,13 +173,13 @@ export class AnnotationManager {
     const screenX = rect.left + rect.width / 2;
     const screenY = rect.top;
 
-    this.showEditorInternal(screenX, screenY, entry.worldPos, pin);
+    this.showEditorInternal(screenX, screenY, cloneWorldPoint(entry.worldPos), pin);
   }
 
   /** Get the world position of a pin (for camera focus). */
-  getPinPosition(id: string): Vector3 | null {
+  getPinPosition(id: string): PreviewWorldPoint | null {
     const entry = this.pinEls.get(id);
-    return entry ? entry.worldPos.clone() : null;
+    return entry ? cloneWorldPoint(entry.worldPos) : null;
   }
 
   /** Get all annotations (read-only snapshot). */
@@ -195,7 +187,7 @@ export class AnnotationManager {
     return this.annotations;
   }
 
-  private showEditorInternal(screenX: number, screenY: number, worldPos: Vector3, existingPin?: AnnotationPin): void {
+  private showEditorInternal(screenX: number, screenY: number, worldPos: PreviewWorldPoint, existingPin?: AnnotationPin): void {
     this.hideEditor();
     this._selectedHeading = null;
 
@@ -650,52 +642,30 @@ export class AnnotationManager {
       });
     }
 
-    this.pinEls.set(pin.id, { el, worldPos: new Vector3(...pin.position) });
+    this.pinEls.set(pin.id, {
+      el,
+      worldPos: { x: pin.position[0], y: pin.position[1], z: pin.position[2] },
+    });
   }
 
   private startProjectionLoop(): void {
-    const scene = this.provider.scene;
-    // Use the camera passed in the observable event (correct for multi-camera scenes)
-    const obs = scene.onAfterRenderCameraObservable.add((cam) => {
-      if (cam === this.provider.camera) {
-        this.updateProjections();
-      }
-    });
-    this.observer = { remove: () => scene.onAfterRenderCameraObservable.remove(obs) };
+    this.observer = this.provider.observeRender(() => this.updateProjections());
 
     // Also update on resize
     this.resizeObs = new ResizeObserver(() => this.updateProjections());
-    if (this.provider.canvas) {
-      this.resizeObs.observe(this.provider.canvas);
-    }
+    this.resizeObs.observe(this.provider.canvas);
   }
 
   private updateProjections(): void {
     if (this.pinEls.size === 0) return;
-    const { scene, camera, engine, canvas } = this.provider;
+    const { canvas } = this.provider;
 
     if (!this.hostEl.isConnected || !canvas.isConnected || canvas.clientWidth === 0 || canvas.clientHeight === 0) {
       return;
     }
 
-    // Guard: scene may have been disposed between frames
-    if (scene.isDisposed) return;
-
-    const rw = engine.getRenderWidth();
-    const rh = engine.getRenderHeight();
-    if (rw === 0 || rh === 0) return;
-
-    // Convert engine render coordinates → CSS pixels
-    const cw = canvas.clientWidth;
-    const ch = canvas.clientHeight;
-    const scaleX = cw / rw;
-    const scaleY = ch / rh;
-
-    const transform = scene.getTransformMatrix();
-    const viewport = camera.viewport.toGlobal(rw, rh);
-
     // Detect camera idle: hash alpha/beta/radius/target
-    const camState = `${camera.alpha.toFixed(3)}_${camera.beta.toFixed(3)}_${camera.radius.toFixed(3)}_${camera.target.x.toFixed(2)}_${camera.target.y.toFixed(2)}_${camera.target.z.toFixed(2)}`;
+    const camState = this.provider.getCameraStateKey();
     if (camState === this.lastCamState) {
       this.idleFrames++;
     } else {
@@ -717,42 +687,24 @@ export class AnnotationManager {
     }
 
     const checkOcclusion = this.cameraIdle && this.frameCount % 6 === 0;
-    const camPos = checkOcclusion ? camera.position : null;
-
-    const identity = AnnotationManager._identity;
-    const scratchDir = AnnotationManager._scratchDir;
-    const scratchRay = AnnotationManager._scratchRay;
+    const projected = AnnotationManager._scratchProjection;
 
     for (const [, entry] of this.pinEls) {
-      const projected = Vector3.Project(
-        entry.worldPos,
-        identity,
-        transform,
-        viewport,
-      );
+      if (!this.provider.projectWorldPoint(entry.worldPos, projected)) {
+        this.hidePin(entry.el);
+        continue;
+      }
 
       // Z > 1 means behind camera
-      if (projected.z > 1 || projected.z < 0) {
+      if (projected.depth > 1 || projected.depth < 0) {
         this.hidePin(entry.el);
       } else {
-        entry.el.style.setProperty("--pin-left", `${projected.x * scaleX}px`);
-        entry.el.style.setProperty("--pin-top", `${projected.y * scaleY}px`);
+        entry.el.style.setProperty("--pin-left", `${projected.screenX}px`);
+        entry.el.style.setProperty("--pin-top", `${projected.screenY}px`);
 
-        if (checkOcclusion && camPos) {
-          const pinDist = Vector3.Distance(camPos, entry.worldPos);
-          // Reuse scratch objects to avoid per-frame allocation
-          entry.worldPos.subtractToRef(camPos, scratchDir);
-          scratchDir.normalize();
-          scratchRay.origin = camPos;
-          scratchRay.direction = scratchDir;
-          scratchRay.length = pinDist;
-          const pickInfo = scene.pickWithRay(scratchRay);
-          // Relative epsilon: 1% of pin distance, min 0.01
-          const eps = Math.max(pinDist * 0.01, 0.01);
-          const occluded = !!pickInfo?.hit && pickInfo.distance < pinDist - eps;
-
+        if (checkOcclusion) {
+          const occluded = this.provider.isWorldPointOccluded(entry.worldPos);
           if (this.cameraIdle && occluded) {
-            // Camera idle + occluded → completely hide
             this.hidePin(entry.el);
           } else {
             this.showPin(entry.el);

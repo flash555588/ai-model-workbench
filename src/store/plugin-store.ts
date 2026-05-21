@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import type { PluginState, PersistedPluginState } from "../domain/models";
+import type { ModelAssetProfile, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 
@@ -64,7 +64,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       store.setState({
         settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
         convertedAssetRecords: saved.convertedAssetRecords ?? [],
-        modelAssetProfiles: saved.modelAssetProfiles ?? {},
+        modelAssetProfiles: normalizeModelAssetProfiles(saved.modelAssetProfiles),
         agentDraft: saved.agentDraft ?? "",
         agentPlan: saved.agentPlan ?? null,
       });
@@ -85,4 +85,28 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       }
     },
   };
+}
+
+function normalizeModelAssetProfiles(
+  saved: PersistedPluginState["modelAssetProfiles"] | undefined,
+): Record<string, ModelAssetProfile> {
+  if (!saved || typeof saved !== "object") {
+    return {};
+  }
+
+  const profiles: Record<string, ModelAssetProfile> = {};
+  for (const [path, profile] of Object.entries(saved as Record<string, Partial<ModelAssetProfile> | null | undefined>)) {
+    if (!profile || typeof profile !== "object") continue;
+    const now = new Date().toISOString();
+    profiles[path] = {
+      tags: Array.isArray(profile.tags) ? profile.tags : [],
+      notes: typeof profile.notes === "string" ? profile.notes : "",
+      annotations: Array.isArray(profile.annotations) ? profile.annotations : [],
+      analysisVersion: typeof profile.analysisVersion === "string" ? profile.analysisVersion : undefined,
+      reportNotePath: typeof profile.reportNotePath === "string" ? profile.reportNotePath : undefined,
+      createdAt: typeof profile.createdAt === "string" ? profile.createdAt : now,
+      updatedAt: typeof profile.updatedAt === "string" ? profile.updatedAt : now,
+    };
+  }
+  return profiles;
 }

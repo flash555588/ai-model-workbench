@@ -5,6 +5,8 @@
 
 // ── Plugin Settings ──────────────────────────────────────────────
 
+export type PreviewRendererRollout = "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
+
 export interface PluginSettings {
   analysisMode: "local" | "remote" | "hybrid";
   serviceBaseUrl: string;
@@ -16,6 +18,7 @@ export interface PluginSettings {
   maxFileSizeMb: number;
   autoGenerateKnowledgeNotes: boolean;
   annotationPreviewMode: "plain-text" | "markdown";
+  previewRendererRollout: PreviewRendererRollout;
   sendRawModelToRemote: boolean;
   sendPreviewImagesToRemote: boolean;
   sendGeometrySummaryToRemote: boolean;
@@ -99,6 +102,8 @@ export interface ModelAssetProfile {
   tags: string[];
   notes: string;
   annotations: AnnotationPin[];
+  analysisVersion?: string;
+  reportNotePath?: string;
   createdAt: string;
   updatedAt: string;
 }

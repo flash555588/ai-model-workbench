@@ -1,4 +1,4 @@
-import type { ModelConfig, PresetResult, CellLayout } from "../../../domain/models";
+import type { ModelConfig, PresetResult, CellLayout } from "../../domain/models";
 import type { PresetHandler, CameraPresetName } from "./base";
 import { cam, viewportGrid, ringPositions } from "./base";
 

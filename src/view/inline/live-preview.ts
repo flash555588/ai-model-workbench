@@ -5,11 +5,13 @@
 
 import type { App } from "obsidian";
 import { EditorView, Decoration, WidgetType } from "@codemirror/view";
-import { StateField, RangeSet, Range } from "@codemirror/state";
+import { Prec, StateField, RangeSet, Range } from "@codemirror/state";
 import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
-import type { BabylonModelPreview } from "../../render/babylon/scene";
-import { AnnotationManager } from "../../render/babylon/annotations";
+import { AnnotationManager } from "../../render/preview/annotations";
+import { createLoggedModelPreview } from "../../render/preview/selection";
+import type { ModelPreview } from "../../render/preview/types";
+import { supportsAnnotationPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { createConversionManager } from "../../io/conversion/factory";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
@@ -22,14 +24,20 @@ import { describeModelLoadFailure, isMissingConverterError } from "../../io/conv
 import { isMobile } from "../../utils/device";
 import { renderModelLoadFailure } from "../model-load-feedback";
 import { t } from "../../i18n";
+import { createLogger } from "../../utils/log";
+
+const log = createLogger("inline-live-preview");
 
 // ── Widget ────────────────────────────────────────────────────────
 
 class ModelEmbedWidget extends WidgetType {
-  private preview: BabylonModelPreview | null = null;
+  private preview: ModelPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
-  private mounted = false;
+  private readyObs: ResizeObserver | null = null;
   private pollId = 0;
+  private initStarted = false;
+  private destroyed = false;
+  private initGeneration = 0;
 
   constructor(
     private app: App,
@@ -45,6 +53,7 @@ class ModelEmbedWidget extends WidgetType {
     private preferObj2gltfForObj: boolean,
     private preferFbx2gltfForFbx: boolean,
     private annotationPreviewMode: PluginSettings["annotationPreviewMode"],
+    private previewRendererRollout: PluginSettings["previewRendererRollout"],
     private convertedAssetCache: ConvertedAssetCache,
     private getAnnotations?: (modelPath: string) => AnnotationPin[],
   ) {
@@ -65,13 +74,15 @@ class ModelEmbedWidget extends WidgetType {
       this.preferObj2gltfForObj === other.preferObj2gltfForObj &&
       this.preferFbx2gltfForFbx === other.preferFbx2gltfForFbx &&
       this.annotationPreviewMode === other.annotationPreviewMode &&
+      this.previewRendererRollout === other.previewRendererRollout &&
       this.convertedAssetCache === other.convertedAssetCache
     );
   }
 
   override toDOM(): HTMLElement {
     const mobile = isMobile();
-    const host = createStagedDiv("ai3d-embed-preview");
+    const host = createStagedDiv("ai3d-embed-preview ai3d-cm-widget");
+    host.setAttribute("contenteditable", "false");
     if (mobile) {
       host.classList.add("is-mobile", "is-mobile-scroll-mode");
     }
@@ -115,16 +126,24 @@ class ModelEmbedWidget extends WidgetType {
       host.appendChild(footer);
     }
 
-    // Poll host.isConnected via rAF — avoids O(N*M) MutationObserver on document.body
+    const tryInit = () => {
+      if (this.destroyed || this.initStarted) return;
+      if (!host.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
+      this.initStarted = true;
+      this.stopReadyWatch();
+      void this.initPreview(host, canvas, loading, error, ++this.initGeneration);
+    };
+
+    this.readyObs = new ResizeObserver(() => tryInit());
+    this.readyObs.observe(host);
+    this.readyObs.observe(canvas);
+
     let attempts = 0;
     const poll = () => {
-      if (this.mounted) return;
-      if (host.isConnected) {
-        this.mounted = true;
-        void this.initPreview(host, canvas, loading, error);
-        return;
-      }
-      if (++attempts > 120) return; // ~2s at 60fps, give up
+      if (this.destroyed || this.initStarted) return;
+      tryInit();
+      if (this.initStarted) return;
+      if (++attempts > 240) return; // ~4s at 60fps, then rely on resize observer only
       this.pollId = window.requestAnimationFrame(poll);
     };
     this.pollId = window.requestAnimationFrame(poll);
@@ -137,10 +156,9 @@ class ModelEmbedWidget extends WidgetType {
     canvas: HTMLCanvasElement,
     loading: LoadingOverlay,
     error: HTMLDivElement,
+    generation: number,
   ): Promise<void> {
     try {
-      const { BabylonModelPreview } = await import("../../render/babylon/scene");
-      this.preview = new BabylonModelPreview(canvas);
       const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
       const conversionManager = createConversionManager({
         enabledConverterIds: this.enabledConverterIds,
@@ -160,14 +178,41 @@ class ModelEmbedWidget extends WidgetType {
         conversionManager,
         convertedAssetCache: this.convertedAssetCache,
       });
+      const pins = this.getAnnotations?.(this.modelPath) ?? [];
+      const previewOptions = {
+        ext: prepared.effectiveExt,
+        annotationMode: pins.length > 0 ? "readonly" : "none",
+        rendererRollout: this.previewRendererRollout,
+      } as const;
+      const { preview } = await createLoggedModelPreview(
+        log,
+        { surface: "live-preview", modelPath: this.modelPath },
+        canvas,
+        previewOptions,
+      );
+      if (this.destroyed || generation !== this.initGeneration) {
+        preview.destroy();
+        return;
+      }
+      this.preview = preview;
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, prepared.effectivePath);
+      if (this.destroyed || generation !== this.initGeneration) {
+        this.preview?.destroy();
+        this.preview = null;
+        return;
+      }
       await this.preview.loadModel(
         data,
         prepared.effectiveExt,
         (path) => readBinaryPath(this.app, path),
         prepared.effectivePath,
       );
+      if (this.destroyed || generation !== this.initGeneration) {
+        this.preview?.destroy();
+        this.preview = null;
+        return;
+      }
 
       if (this.autoRotate) {
         this.preview.applyConfig({
@@ -177,28 +222,28 @@ class ModelEmbedWidget extends WidgetType {
       }
 
       // Readonly annotations
-      if (this.getAnnotations) {
-        const pins = this.getAnnotations(this.modelPath);
-        if (pins.length > 0) {
-          const canvasEl = this.preview.getCanvas();
-          if (canvasEl) {
-            this.annotationMgr = new AnnotationManager(
-              { scene: this.preview.getScene(), camera: this.preview.getCamera(), engine: this.preview.getEngine(), canvas: canvasEl },
-              host,
-              "readonly",
-              pins,
-              undefined,
-              createNoteReader(this.app),
-              undefined,
-              { app: this.app, previewMode: this.annotationPreviewMode },
-            );
-          }
+      if (pins.length > 0 && supportsAnnotationPreview(this.preview)) {
+        const provider = this.preview.getAnnotationProvider();
+        if (provider.canvas) {
+          this.annotationMgr = new AnnotationManager(
+            provider,
+            host,
+            "readonly",
+            pins,
+            undefined,
+            createNoteReader(this.app),
+            undefined,
+            { app: this.app, previewMode: this.annotationPreviewMode },
+          );
         }
       }
 
       loading.setProgress(100);
       loading.hide();
     } catch (err) {
+      if (this.destroyed || generation !== this.initGeneration) {
+        return;
+      }
       this.preview?.destroy();
       this.preview = null;
       loading.hide();
@@ -215,19 +260,26 @@ class ModelEmbedWidget extends WidgetType {
   }
 
   override destroy(): void {
+    this.destroyed = true;
     window.cancelAnimationFrame(this.pollId);
     this.pollId = 0;
+    this.stopReadyWatch();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     if (this.preview) {
       this.preview.destroy();
       this.preview = null;
     }
-    this.mounted = false;
+    this.initStarted = false;
+  }
+
+  private stopReadyWatch(): void {
+    this.readyObs?.disconnect();
+    this.readyObs = null;
   }
 
   override ignoreEvent(): boolean {
-    return false;
+    return true;
   }
 }
 
@@ -245,6 +297,7 @@ function findEmbeds(
   preferObj2gltfForObj: boolean,
   preferFbx2gltfForFbx: boolean,
   annotationPreviewMode: PluginSettings["annotationPreviewMode"],
+  previewRendererRollout: PluginSettings["previewRendererRollout"],
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
@@ -299,10 +352,10 @@ function findEmbeds(
       }
 
       const from = line.from + start;
+      const to = line.from + end + 2;
 
-      // Widget decorations require zero-length ranges — place at the start of the embed
       ranges.push(
-        Decoration.widget({
+        Decoration.replace({
           widget: new ModelEmbedWidget(
             app,
             modelPath,
@@ -317,12 +370,12 @@ function findEmbeds(
             preferObj2gltfForObj,
             preferFbx2gltfForFbx,
             annotationPreviewMode,
+            previewRendererRollout,
             convertedAssetCache,
             getAnnotations,
           ),
           block: true,
-          side: 1,
-        }).range(from),
+        }).range(from, to),
       );
 
       pos = end + 2;
@@ -364,6 +417,7 @@ export function registerLivePreviewExtension(
         s.preferObj2gltfForObj,
         s.preferFbx2gltfForFbx,
         s.annotationPreviewMode,
+        s.previewRendererRollout,
         convertedAssetCache,
         getAnnotations,
       );
@@ -384,6 +438,7 @@ export function registerLivePreviewExtension(
           s.preferObj2gltfForObj,
           s.preferFbx2gltfForFbx,
           s.annotationPreviewMode,
+          s.previewRendererRollout,
           convertedAssetCache,
           getAnnotations,
         );
@@ -394,5 +449,5 @@ export function registerLivePreviewExtension(
     provide: (f) => EditorView.decorations.from(f),
   });
 
-  return [embedField];
+  return [Prec.highest(embedField)];
 }

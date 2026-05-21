@@ -5,11 +5,14 @@ import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
 import { PointLight } from "@babylonjs/core/Lights/pointLight.js";
 import { SpotLight } from "@babylonjs/core/Lights/spotLight.js";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import { Vector3, Matrix } from "@babylonjs/core/Maths/math.vector.js";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
+import { Animation } from "@babylonjs/core/Animations/animation.js";
+import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing.js";
+import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator.js";
 import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js";
 import { AutoRotationBehavior } from "@babylonjs/core/Behaviors/Cameras/autoRotationBehavior.js";
@@ -35,7 +38,40 @@ import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
 import { getPortableBasename, getPortableDirname, getPortableStem } from "../../utils/resolve-path";
 import { OrientationGizmo } from "./orientation-gizmo";
-import { DisassemblyController } from "./disassembly";
+import { createBabylonDisassemblyController } from "./disassembly";
+import {
+  createBabylonModelPreviewSummary,
+  createBabylonPartPreviewSummary,
+  getBabylonRenderableMeshes,
+  getBabylonRenderablePreviewBounds,
+  getBabylonTriangleCount,
+  getBabylonVertexCount,
+} from "./mesh-preview";
+import {
+  getPreviewBoundsCenter,
+  getPreviewBoundsMaxSpan,
+  getPreviewBoundsRadius,
+  getPreviewBoundsSize,
+} from "../preview/bounds";
+import { createPreviewOrbitCameraFit } from "../preview/camera-fit";
+import type { PreviewDisassemblyController } from "../preview/disassembly";
+import {
+  createPreviewLineOfSight,
+  isPreviewHitOccluded,
+  toPreviewWorldPoint,
+} from "../preview/geometry";
+import {
+  createPreviewModelInfoMarkdown,
+  createPreviewPartInfoMarkdown,
+} from "../preview/report";
+import type {
+  AnnotationViewportProvider,
+  PreviewAxis,
+  PreviewPickResult,
+  PreviewProjectionResult,
+  PreviewWorldPoint,
+  WorkbenchPreview,
+} from "../preview/types";
 
 /** Guard against concurrent OBJ loads monkey-patching the same prototype. */
 let objMtlLock: Promise<void> | null = null;
@@ -49,11 +85,20 @@ function isGaussianSplattingMesh(mesh: AbstractMesh): boolean {
   return mesh.getClassName() === "GaussianSplattingMesh";
 }
 
-function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+function isBabylonMesh(value: unknown): value is AbstractMesh {
+  return !!value && typeof value === "object" && "getBoundingInfo" in value;
 }
 
-export class BabylonModelPreview {
+function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
+  return new Vector3(value.x, value.y, value.z);
+}
+
+export class BabylonModelPreview implements WorkbenchPreview {
+  private static readonly annotationIdentity = Matrix.Identity();
+  private static readonly annotationWorldPoint = Vector3.Zero();
+  private static readonly annotationProjection = Vector3.Zero();
+  private static readonly annotationDirection = Vector3.Zero();
+  private static readonly annotationRay = new Ray(Vector3.Zero(), Vector3.Zero(), 1);
   private engine: Engine;
   private scene: Scene;
   private camera: ArcRotateCamera;
@@ -72,8 +117,7 @@ export class BabylonModelPreview {
   private wireframeEnabled = false;
   private gizmo: OrientationGizmo | null = null;
   private gizmoEnabled = false;
-  private disassembly: DisassemblyController | null = null;
-  private disassemblyEnabled = false;
+  private disassembly: PreviewDisassemblyController | null = null;
   private focusSelectionEnabled = false;
   private focusedMesh: AbstractMesh | null = null;
   private readonly originalMeshVisibility = new Map<number, number>();
@@ -83,7 +127,7 @@ export class BabylonModelPreview {
   private animPlaying = false;
   private initialCamera = { alpha: Math.PI / 4, beta: Math.PI / 3, radius: 5, target: Vector3.Zero() };
   private _lastPickResult: PickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
-  private _onPickCallbacks: ((result: PickResult) => void)[] = [];
+  private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -92,6 +136,24 @@ export class BabylonModelPreview {
   private canRender(): boolean {
     const canvas = this.engine.getRenderingCanvas();
     return !!canvas?.isConnected && canvas.clientWidth > 0 && canvas.clientHeight > 0;
+  }
+
+  private ensureDisassemblyController(): PreviewDisassemblyController | null {
+    if (!this.rootMesh) {
+      return null;
+    }
+    if (!this.disassembly) {
+      this.disassembly = createBabylonDisassemblyController(
+        this.scene,
+        this.camera,
+        this.getRenderableMeshes(this.rootMesh),
+      );
+    }
+    return this.disassembly;
+  }
+
+  private isDisassemblyActive(): boolean {
+    return this.disassembly?.isEnabled() ?? false;
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -131,13 +193,18 @@ export class BabylonModelPreview {
     await ensureLoadersRegistered();
 
     if (this.rootMesh) {
-      this.rootMesh.dispose(true, true);
+      const previousRoot = this.rootMesh;
+      previousRoot.dispose(true, true);
+      for (const mesh of this.loadedMeshes) {
+        if (mesh !== previousRoot && !mesh.isDisposed()) {
+          mesh.dispose(true, true);
+        }
+      }
       this.rootMesh = null;
     }
     this.loadedMeshes = [];
     this.disassembly?.dispose();
     this.disassembly = null;
-    this.disassemblyEnabled = false;
     this.clearFocusedMesh();
     this.originalMeshVisibility.clear();
 
@@ -312,24 +379,20 @@ export class BabylonModelPreview {
       }
     }
 
-    this.rootMesh.computeWorldMatrix(true);
-    const bbox = this.rootMesh.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const radius = diag.length() / 2;
-    const center = bbox.min.add(diag.scale(0.5));
+    const fit = createPreviewOrbitCameraFit(this.getRenderableBounds(this.rootMesh));
 
-    this.camera.target = center;
-    this.camera.radius = radius * 2.5;
-    this.camera.lowerRadiusLimit = radius * 0.05;
-    this.camera.upperRadiusLimit = radius * 10;
-    this.camera.minZ = radius * 0.001;
-    this.camera.maxZ = radius * 20;
+    this.camera.target = toBabylonVector3(fit.target);
+    this.camera.radius = fit.radius;
+    this.camera.lowerRadiusLimit = fit.lowerRadiusLimit;
+    this.camera.upperRadiusLimit = fit.upperRadiusLimit;
+    this.camera.minZ = fit.near;
+    this.camera.maxZ = fit.far;
 
     this.initialCamera = {
       alpha: this.camera.alpha,
       beta: this.camera.beta,
       radius: this.camera.radius,
-      target: center.clone(),
+      target: this.camera.target.clone(),
     };
 
     this.startRenderLoop();
@@ -337,14 +400,14 @@ export class BabylonModelPreview {
 
     this.cleanupPicking?.();
     this.cleanupPicking = setupPicking(this.scene, (result) => {
-      if (this.disassemblyEnabled) return;
+      if (this.isDisassemblyActive()) return;
       this._lastPickResult = result;
       if (this.focusSelectionEnabled) {
         this.setFocusedMesh(result.mesh);
       }
       this._onPickCallbacks.forEach(cb => cb(result));
     }, () => !this.focusSelectionEnabled);
-    this.disassembly = new DisassemblyController(this.scene, this.camera, this.getRenderableMeshes(this.rootMesh));
+    this.ensureDisassemblyController();
 
     return this.computeSummary(this.rootMesh);
   }
@@ -489,8 +552,7 @@ export class BabylonModelPreview {
     const sg = new ShadowGenerator(1024, light);
     sg.useBlurExponentialShadowMap = true;
     sg.blurKernel = 32;
-    const children = this.rootMesh.getChildMeshes(true);
-    for (const m of children) {
+    for (const m of this.getRenderableMeshes(this.rootMesh)) {
       sg.addShadowCaster(m);
       m.receiveShadows = true;
     }
@@ -530,10 +592,10 @@ export class BabylonModelPreview {
 
   private createGround(): void {
     if (!this.rootMesh || this.groundMesh) return;
-    const bbox = this.rootMesh.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const size = Math.max(diag.x, diag.z) * 3;
-    const y = bbox.min.y;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const size = Math.max(boundsSize.x, boundsSize.z) * 3;
+    const y = bounds.min.y;
 
     this.groundMesh = MeshBuilder.CreateGround("ground", { width: size, height: size }, this.scene);
     this.groundMesh.position.y = y;
@@ -547,10 +609,10 @@ export class BabylonModelPreview {
 
   private createGrid(): void {
     if (!this.rootMesh || this.gridMesh) return;
-    const bbox = this.rootMesh.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const size = Math.max(diag.x, diag.z) * 2;
-    const y = bbox.min.y - 0.01;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const size = Math.max(boundsSize.x, boundsSize.z) * 2;
+    const y = bounds.min.y - 0.01;
 
     this.gridMesh = MeshBuilder.CreateGround("grid", { width: size, height: size, subdivisions: 20 }, this.scene);
     this.gridMesh.position.y = y;
@@ -563,10 +625,10 @@ export class BabylonModelPreview {
 
   private createAxis(): void {
     if (!this.rootMesh || this.axisMeshes.length > 0) return;
-    const bbox = this.rootMesh.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const len = Math.max(diag.x, diag.y, diag.z) * 1.5;
-    const origin = bbox.min;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    const len = getPreviewBoundsMaxSpan(bounds) * 1.5;
+    const origin = toBabylonVector3(bounds.min);
+    const radius = getPreviewBoundsRadius(bounds) * 0.01;
 
     const axes: [string, Color3, Vector3][] = [
       ["x", Color3.Red(), new Vector3(len, 0, 0)],
@@ -577,7 +639,7 @@ export class BabylonModelPreview {
     for (const [name, color, dir] of axes) {
       const tube = MeshBuilder.CreateTube(`axis-${name}`, {
         path: [origin, origin.add(dir)],
-        radius: diag.length() * 0.005,
+        radius,
         tessellation: 8,
       }, this.scene);
       const mat = new StandardMaterial(`axis-${name}-mat`, this.scene);
@@ -591,8 +653,7 @@ export class BabylonModelPreview {
   setSTLColor(hex: string): void {
     if (!this.rootMesh) return;
     const color = Color3.FromHexString(hex);
-    const children = this.rootMesh.getChildMeshes(true);
-    for (const m of children) {
+    for (const m of this.getRenderableMeshes(this.rootMesh)) {
       if (m.material && m.material.name === "stl-mat") {
         const mat = m.material as StandardMaterial;
         mat.diffuseColor = color;
@@ -669,10 +730,9 @@ export class BabylonModelPreview {
     if (this.bboxEnabled) {
       if (!this.rootMesh) return this.bboxEnabled;
       if (this.bboxMesh) this.bboxMesh.dispose();
-      this.rootMesh.computeWorldMatrix(true);
-      const bb = this.rootMesh.getHierarchyBoundingVectors();
-      const center = bb.min.add(bb.max.subtract(bb.min).scale(0.5));
-      const size = bb.max.subtract(bb.min);
+      const bounds = this.getRenderableBounds(this.rootMesh);
+      const center = toBabylonVector3(getPreviewBoundsCenter(bounds));
+      const size = toBabylonVector3(getPreviewBoundsSize(bounds));
 
       this.bboxMesh = MeshBuilder.CreateBox("bbox", {
         width: size.x, height: size.y, depth: size.z,
@@ -692,7 +752,11 @@ export class BabylonModelPreview {
   }
 
   toggleFocusSelection(): boolean {
-    this.focusSelectionEnabled = !this.focusSelectionEnabled;
+    const nextEnabled = !this.focusSelectionEnabled;
+    if (nextEnabled && this.isDisassemblyActive()) {
+      this.disassembly?.setEnabled(false);
+    }
+    this.focusSelectionEnabled = nextEnabled;
     if (!this.focusSelectionEnabled) {
       this.clearFocusedMesh();
     } else if (this._lastPickResult.mesh) {
@@ -701,35 +765,41 @@ export class BabylonModelPreview {
     return this.focusSelectionEnabled;
   }
 
+  isFocusSelectionEnabled(): boolean {
+    return this.focusSelectionEnabled;
+  }
+
   toggleDisassembly(): boolean {
-    if (!this.rootMesh) return false;
-    if (!this.disassembly) {
-      this.disassembly = new DisassemblyController(this.scene, this.camera, this.getRenderableMeshes(this.rootMesh));
-    }
-    if (!this.disassemblyEnabled) {
+    const controller = this.ensureDisassemblyController();
+    if (!controller) return false;
+    const nextEnabled = !controller.isEnabled();
+    if (nextEnabled) {
       this.focusSelectionEnabled = false;
       this.clearFocusedMesh();
     }
-    this.disassemblyEnabled = this.disassembly.toggle();
-    return this.disassemblyEnabled;
+    return controller.setEnabled(nextEnabled);
   }
 
   resetDisassembly(): void {
     this.disassembly?.reset();
   }
 
+  isDisassemblyEnabled(): boolean {
+    return this.isDisassemblyActive();
+  }
+
   // ── Existing API ─────────────────────────────────────────────────
 
-  setExplode(factor: number, axis: "x" | "y" | "z") {
-    if (this.rootMesh) setExplode(this.rootMesh, factor, axis);
+  setExplode(factor: number, axis: PreviewAxis) {
+    if (this.rootMesh) setExplode(this.rootMesh, factor, axis, this.loadedMeshes);
   }
 
   resetExplode() {
-    if (this.rootMesh) resetExplode(this.rootMesh);
+    if (this.rootMesh) resetExplode(this.rootMesh, this.loadedMeshes);
   }
 
   resetView(): void {
-    if (this.rootMesh) resetExplode(this.rootMesh);
+    if (this.rootMesh) resetExplode(this.rootMesh, this.loadedMeshes);
     this.resetDisassembly();
     this.clearFocusedMesh();
     this.camera.mode = 0; // perspective
@@ -744,55 +814,19 @@ export class BabylonModelPreview {
     const summary = this.computeSummary(this.rootMesh);
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
     const isSplat = isGaussianSplattingMesh(this.rootMesh);
-    const ext = this.loadedExt.toUpperCase();
-
     const name = modelPath ? getPortableBasename(modelPath) || summary.rootName : summary.rootName;
-    const countLabel = isSplat ? "Splats" : "Triangles";
-
-    const lines: string[] = [];
-    lines.push(`## ${name} — Model Info`);
-    lines.push("");
-    lines.push("| Property | Value |");
-    lines.push("|----------|-------|");
-    lines.push(`| Format | ${ext} |`);
-    lines.push(`| Meshes | ${summary.meshCount} |`);
-    lines.push(`| ${countLabel} | ${(summary.splatCount ?? summary.triangleCount).toLocaleString()} |`);
-    lines.push(`| Vertices | ${summary.vertexCount.toLocaleString()} |`);
-    lines.push(`| Materials | ${summary.materialCount} |`);
-    lines.push(`| Bounding Size | ${summary.boundingSize.x.toFixed(3)} x ${summary.boundingSize.y.toFixed(3)} x ${summary.boundingSize.z.toFixed(3)} |`);
-    lines.push("");
-
-    // Per-mesh breakdown (skip if > 50 meshes to avoid noise)
-    if (renderableMeshes.length > 1 && renderableMeshes.length <= 50) {
-      lines.push("### Mesh Breakdown");
-      lines.push("");
-      lines.push("| # | Name | Triangles | Vertices | Material |");
-      lines.push("|---|------|-----------|----------|----------|");
-      for (let i = 0; i < renderableMeshes.length; i++) {
-        const m = renderableMeshes[i];
-        const tris = isSplat ? "—" : Math.floor(m.getTotalIndices() / 3).toLocaleString();
-        const verts = m.getTotalVertices().toLocaleString();
-        const mat = m.material?.name ?? "—";
-        lines.push(`| ${i + 1} | ${escapeTableCell(m.name)} | ${tris} | ${verts} | ${escapeTableCell(mat)} |`);
-      }
-      lines.push("");
-    }
-
-    // Material list
-    const matNames = new Set<string>();
-    for (const m of renderableMeshes) {
-      if (m.material) matNames.add(m.material.name);
-    }
-    if (matNames.size > 0) {
-      lines.push("### Materials");
-      lines.push("");
-      for (const name of matNames) {
-        lines.push(`- ${name}`);
-      }
-      lines.push("");
-    }
-
-    return lines.join("\n");
+    return createPreviewModelInfoMarkdown({
+      title: name,
+      format: this.loadedExt.toUpperCase(),
+      summary,
+      meshBreakdown: renderableMeshes.map((mesh) => ({
+        name: mesh.name,
+        triangleCount: isSplat ? null : getBabylonTriangleCount(mesh),
+        vertexCount: getBabylonVertexCount(mesh),
+        materialName: mesh.material?.name ?? null,
+      })),
+      materialNames: renderableMeshes.map((mesh) => mesh.material?.name),
+    });
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
@@ -804,48 +838,134 @@ export class BabylonModelPreview {
 
   exportSelectedPartInfo(): string {
     const part = this.getSelectedPartInfo();
-    if (!part) return "";
-
-    const lines: string[] = [];
-    lines.push(`## ${part.name || "Selected Part"} — Part Info`);
-    lines.push("");
-    lines.push("| Property | Value |");
-    lines.push("|----------|-------|");
-    lines.push(`| Mesh | ${escapeTableCell(part.name || "—")} |`);
-    lines.push(`| Triangles | ${part.triangleCount.toLocaleString()} |`);
-    lines.push(`| Vertices | ${part.vertexCount.toLocaleString()} |`);
-    lines.push(`| Material | ${escapeTableCell(part.materialName ?? "—")} |`);
-    lines.push(`| Bounding Size | ${part.boundingSize.x.toFixed(3)} x ${part.boundingSize.y.toFixed(3)} x ${part.boundingSize.z.toFixed(3)} |`);
-    lines.push(`| Center | ${part.center.x.toFixed(3)}, ${part.center.y.toFixed(3)}, ${part.center.z.toFixed(3)} |`);
-    lines.push("");
-    return lines.join("\n");
+    return part ? createPreviewPartInfoMarkdown(part) : "";
   }
 
-  getRootMesh(): Mesh | null {
-    return this.rootMesh;
+  getPickWorldPoint(result: PreviewPickResult): PreviewWorldPoint | null {
+    if (result.pickedPoint && typeof result.pickedPoint === "object") {
+      return toPreviewWorldPoint(result.pickedPoint as { x: number; y: number; z: number });
+    }
+
+    if (isBabylonMesh(result.mesh)) {
+      const center = result.mesh.getBoundingInfo().boundingBox.centerWorld;
+      return toPreviewWorldPoint(center);
+    }
+
+    return null;
   }
 
-  getScene(): Scene {
-    return this.scene;
+  focusWorldPoint(point: PreviewWorldPoint): void {
+    const target = new Vector3(point.x, point.y, point.z);
+    const anim = new Animation(
+      "focus-point",
+      "target",
+      30,
+      Animation.ANIMATIONTYPE_VECTOR3,
+      Animation.ANIMATIONLOOPMODE_CONSTANT,
+    );
+    anim.setKeys([
+      { frame: 0, value: this.camera.target.clone() },
+      { frame: 20, value: target },
+    ]);
+    const ease = new CubicEase();
+    ease.setEasingMode(EasingFunction.EASINGMODE_EASEOUT);
+    anim.setEasingFunction(ease);
+    this.camera.animations = [anim];
+    this.scene.beginAnimation(this.camera, 0, 20, false);
   }
 
-  getEngine(): Engine {
-    return this.engine;
+  private getAnnotationCameraStateKey(): string {
+    return `${this.camera.alpha.toFixed(3)}_${this.camera.beta.toFixed(3)}_${this.camera.radius.toFixed(3)}_${this.camera.target.x.toFixed(2)}_${this.camera.target.y.toFixed(2)}_${this.camera.target.z.toFixed(2)}`;
   }
 
-  getCamera(): ArcRotateCamera {
-    return this.camera;
+  private projectAnnotationWorldPoint(point: PreviewWorldPoint, result: PreviewProjectionResult): boolean {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas || this.scene.isDisposed) {
+      return false;
+    }
+
+    const rw = this.engine.getRenderWidth();
+    const rh = this.engine.getRenderHeight();
+    if (rw === 0 || rh === 0 || canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+      return false;
+    }
+
+    const worldPoint = BabylonModelPreview.annotationWorldPoint;
+    worldPoint.set(point.x, point.y, point.z);
+
+    Vector3.ProjectToRef(
+      worldPoint,
+      BabylonModelPreview.annotationIdentity,
+      this.scene.getTransformMatrix(),
+      this.camera.viewport.toGlobal(rw, rh),
+      BabylonModelPreview.annotationProjection,
+    );
+
+    const scaleX = canvas.clientWidth / rw;
+    const scaleY = canvas.clientHeight / rh;
+    result.screenX = BabylonModelPreview.annotationProjection.x * scaleX;
+    result.screenY = BabylonModelPreview.annotationProjection.y * scaleY;
+    result.depth = BabylonModelPreview.annotationProjection.z;
+    return true;
+  }
+
+  private isAnnotationWorldPointOccluded(point: PreviewWorldPoint): boolean {
+    if (this.scene.isDisposed) {
+      return false;
+    }
+
+    const lineOfSight = createPreviewLineOfSight(
+      toPreviewWorldPoint(this.camera.position),
+      point,
+    );
+    if (!lineOfSight) {
+      return false;
+    }
+    const direction = BabylonModelPreview.annotationDirection;
+    const ray = BabylonModelPreview.annotationRay;
+
+    direction.set(lineOfSight.direction.x, lineOfSight.direction.y, lineOfSight.direction.z);
+    ray.origin = this.camera.position;
+    ray.direction = direction;
+    ray.length = lineOfSight.distance;
+
+    const pickInfo = this.scene.pickWithRay(ray);
+    return !!pickInfo?.hit
+      && isPreviewHitOccluded(pickInfo.distance, lineOfSight.distance, lineOfSight.epsilon);
+  }
+
+  getAnnotationProvider(): AnnotationViewportProvider {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) {
+      throw new Error("Preview canvas is unavailable");
+    }
+    return {
+      canvas,
+      observeRender: (callback) => {
+        const obs = this.scene.onAfterRenderCameraObservable.add((camera) => {
+          if (camera === this.camera) {
+            callback();
+          }
+        });
+        return {
+          remove: () => this.scene.onAfterRenderCameraObservable.remove(obs),
+        };
+      },
+      getCameraStateKey: () => this.getAnnotationCameraStateKey(),
+      projectWorldPoint: (point, result) => this.projectAnnotationWorldPoint(point, result),
+      isWorldPointOccluded: (point) => this.isAnnotationWorldPointOccluded(point),
+    };
   }
 
   getCanvas(): HTMLCanvasElement | null {
     return this.engine.getRenderingCanvas();
   }
 
-  getLastPickResult(): PickResult {
+  getLastPickResult(): PreviewPickResult {
     return this._lastPickResult;
   }
 
-  onPick(callback: (result: PickResult) => void): () => void {
+  onPick(callback: (result: PreviewPickResult) => void): () => void {
     this._onPickCallbacks.push(callback);
     return () => {
       this._onPickCallbacks = this._onPickCallbacks.filter(cb => cb !== callback);
@@ -930,13 +1050,11 @@ export class BabylonModelPreview {
   }
 
   private getRenderableMeshes(root: Mesh): AbstractMesh[] {
-    const candidates = [root, ...this.loadedMeshes, ...root.getChildMeshes(true)];
-    const seen = new Set<AbstractMesh>();
-    return candidates.filter((mesh) => {
-      if (!mesh || seen.has(mesh) || mesh.isDisposed()) return false;
-      seen.add(mesh);
-      return mesh.getTotalVertices() > 0 || mesh.getTotalIndices() > 0;
-    });
+    return getBabylonRenderableMeshes(root, this.loadedMeshes);
+  }
+
+  private getRenderableBounds(root: Mesh) {
+    return getBabylonRenderablePreviewBounds(root, this.loadedMeshes);
   }
 
   private setFocusedMesh(mesh: AbstractMesh | null): void {
@@ -995,50 +1113,22 @@ export class BabylonModelPreview {
   }
 
   private computePartSummary(mesh: AbstractMesh): ModelPartSummary {
-    mesh.computeWorldMatrix(true);
-    const bbox = mesh.getBoundingInfo().boundingBox;
-    const size = bbox.maximumWorld.subtract(bbox.minimumWorld);
-    const center = bbox.centerWorld;
-    return {
-      name: mesh.name || `mesh-${mesh.uniqueId}`,
-      triangleCount: Math.floor(mesh.getTotalIndices() / 3),
-      vertexCount: mesh.getTotalVertices(),
-      materialName: mesh.material?.name ?? null,
-      boundingSize: { x: size.x, y: size.y, z: size.z },
-      center: { x: center.x, y: center.y, z: center.z },
-    };
+    return createBabylonPartPreviewSummary(mesh);
   }
 
   private computeSummary(root: Mesh): ModelPreviewSummary {
     const allMeshes = this.getRenderableMeshes(root);
-    let triangleCount = 0;
-    let vertexCount = 0;
-    const materials = new Set<string>();
-
     const isSplat = isGaussianSplattingMesh(root);
-
-    for (const m of allMeshes) {
-      const indices = m.getTotalIndices();
-      const verts = m.getTotalVertices();
-      triangleCount += Math.floor(indices / 3);
-      vertexCount += verts;
-      if (m.material) materials.add(m.material.name);
-    }
-
-    // SPLAT has no index buffer — report splat count separately
-    const splatCount = isSplat ? vertexCount : undefined;
-
-    const bbox = root.getHierarchyBoundingVectors();
-    const size = bbox.max.subtract(bbox.min);
-
-    return {
-      meshCount: allMeshes.length,
-      triangleCount,
-      splatCount,
-      vertexCount,
-      materialCount: materials.size,
-      boundingSize: { x: size.x, y: size.y, z: size.z },
-      rootName: root.name,
-    };
+    const vertexCount = allMeshes.reduce((total, mesh) => total + getBabylonVertexCount(mesh), 0);
+    return createBabylonModelPreviewSummary(
+      root.name,
+      this.getRenderableBounds(root),
+      allMeshes,
+      { splatCount: isSplat ? vertexCount : undefined },
+    );
   }
+}
+
+export function createBabylonModelPreview(canvas: HTMLCanvasElement): WorkbenchPreview {
+  return new BabylonModelPreview(canvas);
 }

@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   maxFileSizeMb: 50,
   autoGenerateKnowledgeNotes: true,
   annotationPreviewMode: "plain-text",
+  previewRendererRollout: "three-direct-glb",
   sendRawModelToRemote: false,
   sendPreviewImagesToRemote: false,
   sendGeometrySummaryToRemote: false,

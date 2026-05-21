@@ -170,6 +170,22 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.previewRendererRollout"))
+      .setDesc(t("settings.previewRendererRollout.desc"))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("babylon-safe", t("settings.previewRendererRollout.babylonSafe"))
+          .addOption("three-readonly-glb", t("settings.previewRendererRollout.readonly"))
+          .addOption("three-direct-glb", t("settings.previewRendererRollout.direct"))
+          .setValue(this.plugin.getSettings().previewRendererRollout)
+          .onChange((val: string) => {
+            this.plugin.updateSettings({
+              previewRendererRollout: val as "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
+            });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.autoRotateDefault"))
       .setDesc(t("settings.autoRotateDefault.desc"))
       .addToggle((toggle) =>

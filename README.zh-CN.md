@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在 Babylon.js 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。常见网格格式可直接渲染，CAD、FBX 和交换格式可通过本地工具转换为 GLB。
+> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）现在默认走 Three.js 渲染路径，可通过”预览兼容模式”回退到 Babylon.js；而 workbench、`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
 
 [English](README.md) | **简体中文**
 
@@ -29,10 +29,10 @@
 
 ## 功能特性
 
-- **直接预览** GLB/GLTF、STL、OBJ、PLY
+- **直接预览** GLB/GLTF、STL、OBJ、PLY（默认全部走 Three.js 渲染路径）
 - **可选转换** CAD、FBX、3MF、DAE 等资产到 GLB
-- **Babylon.js 9.6** 引擎，WebGL 2 渲染
-- **三种嵌入方式**：实时预览、代码块、直接文件查看
+- **混合预览路由**：单模型预览（GLB/GLTF/STL/PLY/OBJ）默认走 Three.js，可在设置中回退到 Babylon.js
+- **内联与文件视图**：实时预览、代码块、直接文件查看
 - **网格系统**：在单个视口中渲染多个模型，支持预设布局
 - **3D 标注**：点击模型表面添加带标签和颜色的书签，支持深度遮挡
 - **知识笔记**：从已加载的模型生成结构化 Markdown
@@ -108,7 +108,7 @@ npm run build
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `main.js` | ~1.7 MB | 插件运行时（Babylon.js 核心） |
+| `main.js` | ~3.8 MB | 插件运行时 bundle |
 | `manifest.json` | ~1 KB | Obsidian 插件清单 |
 | `styles.css` | ~5 KB | 插件样式 |
 
@@ -125,9 +125,21 @@ npm install
 npm run build
 ```
 
-2. 如果 `<vault>/.obsidian/plugins/ai-model-workbench/` 还不存在，先创建它。
-3. 把 `main.js`、`manifest.json`、`styles.css` 复制到这个文件夹里。
-4. 在 Obsidian 的“设置 > 社区插件”中启用 `AI Model Workbench`。
+2. 把构建产物安装到 vault：
+
+```bash
+# 安装到仓库自带的测试 vault
+npm run install:vault
+
+# 或安装到你自己的 vault
+npm run install:vault -- --vault "C:\path\to\your-vault"
+```
+
+安装脚本会把 `main.js`、`manifest.json`、`styles.css` 复制到 `.obsidian/plugins/ai-model-workbench/`，并在 `community-plugins.json` 中启用 `ai-model-workbench`。
+
+3. 如果 Obsidian 已经打开，重新加载应用，或在“设置 > 社区插件”中禁用再启用 `AI Model Workbench`。
+
+手动备选：创建 `<vault>/.obsidian/plugins/ai-model-workbench/`，把 `main.js`、`manifest.json`、`styles.css` 复制进去，然后在 Obsidian 中启用 `AI Model Workbench`。
 
 ### 方式 B：下载发布版
 
@@ -323,6 +335,18 @@ ai-model-workbench/
 | 直接渲染 | `.glb` `.gltf` `.stl` `.obj` `.ply` |
 | 需转换 | `.step` `.stp` `.iges` `.igs` `.brep` `.sldprt` `.3mf` `.dae` `.fbx` |
 
+### 预览工具栏
+
+模型加载完成后，预览区域的工具栏提供以下检查和导出操作：
+
+| 按钮 | 用途 |
+|------|------|
+| 复制模型信息 | 将当前模型的网格、三角面、顶点和边界尺寸复制为 Markdown |
+| 复制选中部件信息 | 先点击模型中的一个部件，再复制该部件的名称、面数、顶点、材质和包围盒信息 |
+| 聚焦选中部件 | 开启后点击部件会弱化其他网格，方便检查类似 `cubie` 这类独立部件 |
+| 标签图标 | 进入标注模式，在模型表面添加可持久化的标签 |
+| 快照按钮 | 将当前视口复制、保存或下载为 PNG |
+
 ### 键盘快捷键（预览中）
 
 | 按键 | 功能 |
@@ -359,6 +383,8 @@ ai-model-workbench/
 | 设置项 | 默认值 | 说明 |
 |--------|--------|------|
 | 语言 | 自动 | 界面语言（英文 / 简体中文 / 自动检测） |
+| 标注预览模式 | plain-text | 控制已保存标注内容在只读预览中的渲染方式 |
+| 预览兼容模式 | 阅读 + 文件视图 | 控制新的单模型 GLB 预览路径启用范围 |
 | 画布高度 | 400 | 预览高度（像素） |
 | 自动旋转 | 关 | 启动时启用旋转动画 |
 | 自动旋转速度 | 0.5 | 旋转速度（0.1-2.0） |
@@ -501,14 +527,33 @@ src/
 ├── store/
 │   ├── create-store.ts        # 自定义 store 原语
 │   └── plugin-store.ts        # Obsidian saveData 桥接
-├── render/babylon/
-│   ├── scene.ts               # BabylonModelPreview 类
-│   ├── grid.ts                # GridRenderer 类
-│   ├── loaders/
-│   │   ├── stl-loader.ts      # 自定义二进制 STL 解析器
-│   │   ├── ply-loader.ts      # 自定义 ASCII/二进制 PLY 解析器
-│   │   └── register.ts        # Babylon SceneLoader 插件
-│   └── presets/               # 网格布局预设
+├── render/
+│   ├── preview/               # 渲染器无关抽象层
+│   │   ├── types.ts           # ModelPreview、AnnotationPreview、WorkbenchPreview 接口
+│   │   ├── routing.ts         # Three/Babylon 路由决策
+│   │   ├── factory.ts         # 渲染器动态导入工厂
+│   │   ├── selection.ts       # 预览选择与日志
+│   │   ├── annotations.ts     # AnnotationManager（标注叠层 + 遮挡）
+│   │   ├── geometry.ts        # 渲染器无关向量运算
+│   │   ├── bounds.ts          # 包围盒工具
+│   │   ├── camera-fit.ts      # 相机适配算法
+│   │   ├── disassembly.ts     # 拆解控制器（适配器模式）
+│   │   ├── explode.ts         # 爆炸视图（适配器模式）
+│   │   ├── report.ts          # Markdown 报告生成
+│   │   └── summary.ts         # 模型/零件摘要创建
+│   ├── three/                 # Three.js 渲染器
+│   │   ├── scene.ts           # ThreeModelPreview 类（GLB/GLTF/STL/PLY/OBJ）
+│   │   ├── loaders.ts         # 格式专用加载器，含 vault MTL 解析
+│   │   ├── disassembly.ts     # ThreeDisassemblyAdapter
+│   │   └── explode.ts         # ThreeExplodeAdapter
+│   ├── babylon/               # Babylon.js 渲染器
+│   │   ├── scene.ts           # BabylonModelPreview 类
+│   │   ├── grid.ts            # GridRenderer 类
+│   │   ├── loaders/
+│   │   │   ├── stl-loader.ts  # 自定义二进制 STL 解析器
+│   │   │   ├── ply-loader.ts  # 自定义 ASCII/二进制 PLY 解析器
+│   │   │   └── register.ts    # Babylon SceneLoader 插件
+│   │   └── presets/           # 网格布局预设
 ├── io/
 │   ├── formats/
 │   │   └── registry.ts        # 格式能力注册表
@@ -565,7 +610,6 @@ Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `Scene
 | 问题 | 受影响格式 | 解决方法 |
 |------|-----------|---------|
 | 需要外部转换器 | FBX | 安装并启用 FBX2glTF |
-| 仅支持二进制 STL | STL | 将 ASCII STL 转换为二进制 |
 | 需要外部工具 | STEP/IGES/BREP/SLDPRT | 安装 Python + CadQuery 或 FreeCAD |
 | 纹理路径解析 | OBJ | 将纹理放在 OBJ 同一目录 |
 | 转换超时 | SLDPRT | 复杂装配体有 10 分钟超时 |
@@ -587,13 +631,28 @@ npm install           # 安装依赖
 npm run dev           # 开发构建（监听模式）
 npm run build         # 生产构建
 npm run typecheck     # TypeScript 类型检查
+npm run verify:preview  # 定向浏览器预览冒烟验证
+npm run verify:preview:success  # 完整预览路由成功套件
 ```
+
+### 预览验证
+
+在提交预览相关改动前，建议运行 `npm run verify:preview:success`。如果只想检查当前默认路径，`npm run verify:preview` 仍然可用。完整成功套件会启动一个临时的 Playwright 验证页面，加载 `models/rubiks-cube-3x3.glb`，并验证：
+
+- 默认 simple `GLB` 预览
+- 默认 direct-edit `GLB` 预览
+- 默认 readonly saved-pin `GLB` 预览
+- “仅阅读场景”档位的路由行为
+- “兼容优先”回退档位的路由行为
+- helper toolbar 交互、聚焦模式、选中部件导出，以及滚轮不带动页面滚动
+
+如果验证失败，脚本会把截图以及包含预览状态和浏览器消息的日志保存到 `.tmp/preview-failures/`。
 
 ### 构建输出
 
 ```
 ai-model-workbench/
-├── main.js           # 1.7 MB（压缩后，Babylon.js 核心）
+├── main.js           # ~3.8 MB（压缩后的插件运行时 bundle）
 ├── manifest.json     # 插件清单
 ├── styles.css        # 插件样式
 └── src/              # 源代码
@@ -614,13 +673,13 @@ ai-model-workbench/
 
 ### 包体积优化
 
-Babylon.js 核心占包体积的 ~98%。项目使用：
+渲染运行时是当前包体积的主要来源。项目通过以下方式控制输出体积：
 
 - 子路径导入（`@babylonjs/core/Engines/engine.js`）而非桶导入
 - Tree-shaking 移除未使用的功能
 - esbuild 进行快速、优化的打包
 
-如果不使用子路径导入，包体积将从 1.7 MB 膨胀到 ~7 MB。
+由于当前发布包同时包含 Babylon 和 Three 的预览路径，最终体积会随着路由覆盖面变化而波动。以上构建输出更适合作为当前参考值，而不是固定上限。
 
 ---
 

@@ -7,12 +7,28 @@ import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Viewport } from "@babylonjs/core/Maths/math.viewport.js";
 import { ImportMeshAsync } from "@babylonjs/core/Loading/sceneLoader.js";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh.js";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import type { ModelConfig, GridBlockConfig, ModelPlacement, CellLayout, PresetResult } from "../../domain/models";
 import "./loaders/register";
 import { ensureLoadersRegistered } from "./loaders/register";
+import {
+  createBabylonModelPreviewSummary,
+  getBabylonMeshesPreviewBounds,
+  getBabylonRenderableMeshes,
+  getBabylonTopLevelImportedMeshes,
+} from "./mesh-preview";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
+import {
+  getPreviewBoundsCenter,
+  getPreviewBoundsRadius,
+} from "../preview/bounds";
+import {
+  createPreviewOrbitCameraFit,
+  createPreviewOrbitCameraFitFromRadius,
+} from "../preview/camera-fit";
+import type { PreviewGridRenderer } from "../preview/grid";
 
 /** Babylon.js uses 32-bit layerMask — one bit per cell, so max 32 cells. */
 const MAX_CELLS = 32;
@@ -21,14 +37,8 @@ function escapeTableCell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
-function getRenderableMeshes(root: AbstractMesh, importedMeshes: AbstractMesh[] = []): AbstractMesh[] {
-  const candidates = [root, ...importedMeshes, ...root.getChildMeshes(true)];
-  const seen = new Set<AbstractMesh>();
-  return candidates.filter((mesh) => {
-    if (!mesh || seen.has(mesh) || mesh.isDisposed()) return false;
-    seen.add(mesh);
-    return mesh.getTotalVertices() > 0 || mesh.getTotalIndices() > 0;
-  });
+function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
+  return new Vector3(value.x, value.y, value.z);
 }
 
 interface GridCell {
@@ -40,7 +50,7 @@ interface GridCell {
  * Renders multiple models in a single Babylon Scene using per-cell viewports.
  * One Engine / one WebGL context regardless of grid size.
  */
-export class GridRenderer {
+class BabylonGridRenderer implements PreviewGridRenderer {
   private engine: Engine;
   private scene: Scene;
   private cells: GridCell[] = [];
@@ -56,6 +66,14 @@ export class GridRenderer {
   private canRender(): boolean {
     const canvas = this.engine.getRenderingCanvas();
     return !!canvas?.isConnected && canvas.clientWidth > 0 && canvas.clientHeight > 0;
+  }
+
+  private getCellBounds(meshes: readonly AbstractMesh[]) {
+    const bounds = getBabylonMeshesPreviewBounds(meshes);
+    if (!bounds) {
+      throw new Error("Grid cell has no renderable meshes");
+    }
+    return bounds;
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -136,21 +154,13 @@ export class GridRenderer {
     }
 
     // Compute overall scene bounding box (for "gallery" mode cameras)
-    const allRoots = loadedMeshes.filter(m => m.length > 0).map(m => m[0]);
+    const allSceneMeshes = loadedMeshes.flat();
     let sceneCenter = Vector3.Zero();
     let sceneRadius = 1;
-    if (allRoots.length > 0) {
-      let min = new Vector3(Infinity, Infinity, Infinity);
-      let max = new Vector3(-Infinity, -Infinity, -Infinity);
-      for (const root of allRoots) {
-        root.computeWorldMatrix(true);
-        const bb = root.getHierarchyBoundingVectors();
-        min = Vector3.Minimize(min, bb.min);
-        max = Vector3.Maximize(max, bb.max);
-      }
-      const diag = max.subtract(min);
-      sceneCenter = min.add(diag.scale(0.5));
-      sceneRadius = diag.length() / 2;
+    const sceneBounds = getBabylonMeshesPreviewBounds(allSceneMeshes);
+    if (sceneBounds) {
+      sceneCenter = toBabylonVector3(getPreviewBoundsCenter(sceneBounds));
+      sceneRadius = getPreviewBoundsRadius(sceneBounds);
     }
 
     // Create cells from layout definitions.
@@ -186,10 +196,10 @@ export class GridRenderer {
 
       const camera = this.createCameraFromDef(
         cellDef,
-        primaryMeshes[0],
+        primaryMeshes,
         this.cells.length,
-        sceneCenter,
-        sceneRadius,
+        isSingleCell ? sceneCenter : undefined,
+        isSingleCell ? sceneRadius : undefined,
       );
       camera.layerMask = combinedMask;
 
@@ -208,7 +218,7 @@ export class GridRenderer {
     path: string,
     data: ArrayBuffer,
     index: number,
-  ): Promise<{ root: AbstractMesh; allMeshes: AbstractMesh[] }> {
+  ): Promise<{ root: AbstractMesh; renderableMeshes: AbstractMesh[]; topLevelMeshes: AbstractMesh[] }> {
     const ext = path.split(".").pop()?.replace(".", "").toLowerCase() ?? "glb";
     const dataUrl = `data:application/octet-stream;base64,${arrayBufferToBase64(data)}`;
     const extToLoader: Record<string, string> = {
@@ -220,13 +230,13 @@ export class GridRenderer {
     if (result.meshes.length === 0) throw new Error(`No mesh in ${path}`);
 
     const root = result.meshes[0];
-    const renderableMeshes = getRenderableMeshes(root, result.meshes);
-    const allMeshes = renderableMeshes.filter((mesh) => mesh !== root);
+    const renderableMeshes = getBabylonRenderableMeshes(root, result.meshes);
+    const topLevelMeshes = getBabylonTopLevelImportedMeshes(result.meshes);
     const cellMask = 1 << index;
     for (const m of renderableMeshes) m.layerMask = cellMask;
     if ("layerMask" in root) (root as unknown as { layerMask: number }).layerMask = cellMask;
 
-    return { root, allMeshes };
+    return { root, renderableMeshes, topLevelMeshes };
   }
 
   private async loadPlacementMesh(
@@ -235,55 +245,59 @@ export class GridRenderer {
     index: number,
   ): Promise<AbstractMesh[]> {
     const data = await readFile(placement.path);
-    const { root, allMeshes } = await this.importMesh(placement.path, data, index);
+    const { renderableMeshes, topLevelMeshes } = await this.importMesh(placement.path, data, index);
+    const placementRoot = new TransformNode(`placement-root-${index}`, this.scene);
+    for (const mesh of topLevelMeshes) {
+      mesh.parent = placementRoot;
+    }
 
     // Position in world space
     if (placement.position) {
-      root.position = new Vector3(...placement.position);
+      placementRoot.position = new Vector3(...placement.position);
     }
     if (placement.rotation) {
-      root.rotation = new Vector3(...placement.rotation);
+      placementRoot.rotation = new Vector3(...placement.rotation);
     }
     if (placement.scale !== undefined) {
-      root.scaling = new Vector3(placement.scale, placement.scale, placement.scale);
+      placementRoot.scaling = new Vector3(placement.scale, placement.scale, placement.scale);
     }
 
-    return [root, ...allMeshes];
+    return renderableMeshes;
   }
 
   private createCameraFromDef(
     cellDef: CellLayout,
-    anyMesh: AbstractMesh,
+    meshes: readonly AbstractMesh[],
     globalIndex: number,
     sceneCenter?: Vector3,
     sceneRadius?: number,
   ): ArcRotateCamera {
-    anyMesh.computeWorldMatrix(true);
-    const bbox = anyMesh.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const meshRadius = diag.length() / 2;
-    const meshCenter = bbox.min.add(diag.scale(0.5));
+    const bounds = this.getCellBounds(meshes);
     const def = cellDef.camera;
-
-    // Use scene-wide bounds if provided, otherwise per-mesh bounds
-    const radius = sceneRadius ?? meshRadius;
     const target = def.target
-      ? new Vector3(...def.target)
-      : sceneCenter ?? meshCenter;
+      ? { x: def.target[0], y: def.target[1], z: def.target[2] }
+      : sceneCenter
+        ? { x: sceneCenter.x, y: sceneCenter.y, z: sceneCenter.z }
+        : getPreviewBoundsCenter(bounds);
+    const fit = createPreviewOrbitCameraFitFromRadius(
+      target,
+      sceneRadius ?? getPreviewBoundsRadius(bounds),
+      { radiusMultiplier: def.radiusMultiplier ?? 2.5 },
+    );
 
     const camera = new ArcRotateCamera(
       `cell-cam-${globalIndex}`,
       def.alpha,
       def.beta,
-      radius * (def.radiusMultiplier ?? 2.5),
-      target,
+      fit.radius,
+      toBabylonVector3(fit.target),
       this.scene,
     );
     camera.fov = ((def.fov ?? 45) * Math.PI) / 180;
-    camera.minZ = radius * 0.001;
-    camera.maxZ = radius * 20;
-    camera.lowerRadiusLimit = radius * 0.05;
-    camera.upperRadiusLimit = radius * 10;
+    camera.minZ = fit.near;
+    camera.maxZ = fit.far;
+    camera.lowerRadiusLimit = fit.lowerRadiusLimit;
+    camera.upperRadiusLimit = fit.upperRadiusLimit;
     camera.wheelPrecision = 30;
     camera.viewport = new Viewport(
       cellDef.viewport.x,
@@ -312,12 +326,12 @@ export class GridRenderer {
   ): Promise<void> {
     const data = await readFile(model.path);
     const ext = model.path.split(".").pop()?.replace(".", "").toLowerCase() ?? "glb";
-    const { root, allMeshes } = await this.importMesh(model.path, data, index);
+    const { renderableMeshes } = await this.importMesh(model.path, data, index);
 
     // Apply STL color if specified
     if (ext === "stl" && model.color) {
       const color = Color3.FromHexString(model.color);
-      for (const m of allMeshes) {
+      for (const m of renderableMeshes) {
         if (m.material instanceof StandardMaterial && m.material.name === "stl-mat") {
           m.material.diffuseColor = color;
         }
@@ -326,44 +340,40 @@ export class GridRenderer {
 
     // Apply wireframe if specified
     if (ext === "stl" && model.wireframe !== undefined) {
-      for (const m of allMeshes) {
+      for (const m of renderableMeshes) {
         if (m.material instanceof StandardMaterial) m.material.wireframe = model.wireframe;
       }
     }
 
     // Create camera for this cell
-    const camera = this.createCellCamera(root, index, vx, vy, vw, vh);
+    const camera = this.createCellCamera(renderableMeshes, index, vx, vy, vw, vh);
 
-    this.cells.push({ meshes: [root, ...allMeshes], camera });
+    this.cells.push({ meshes: renderableMeshes, camera });
   }
 
   private createCellCamera(
-    root: AbstractMesh,
+    meshes: readonly AbstractMesh[],
     index: number,
     vx: number,
     vy: number,
     vw: number,
     vh: number,
   ): ArcRotateCamera {
-    root.computeWorldMatrix(true);
-    const bbox = root.getHierarchyBoundingVectors();
-    const diag = bbox.max.subtract(bbox.min);
-    const radius = diag.length() / 2;
-    const center = bbox.min.add(diag.scale(0.5));
+    const fit = createPreviewOrbitCameraFit(this.getCellBounds(meshes));
 
     const camera = new ArcRotateCamera(
       `cell-cam-${index}`,
       Math.PI / 4,
       Math.PI / 3,
-      radius * 2.5,
-      center,
+      fit.radius,
+      toBabylonVector3(fit.target),
       this.scene,
     );
     camera.fov = (45 * Math.PI) / 180;
-    camera.minZ = radius * 0.001;
-    camera.maxZ = radius * 20;
-    camera.lowerRadiusLimit = radius * 0.05;
-    camera.upperRadiusLimit = radius * 10;
+    camera.minZ = fit.near;
+    camera.maxZ = fit.far;
+    camera.lowerRadiusLimit = fit.lowerRadiusLimit;
+    camera.upperRadiusLimit = fit.upperRadiusLimit;
     camera.wheelPrecision = 30;
     camera.viewport = new Viewport(vx, vy, vw, vh);
     camera.layerMask = 1 << index;
@@ -475,17 +485,15 @@ export class GridRenderer {
       const cell = this.cells[i];
       const root = cell.meshes[0];
       if (!root) continue;
-      const renderableMeshes = getRenderableMeshes(root);
-      let tris = 0;
-      let verts = 0;
-      const mats = new Set<string>();
-      for (const m of renderableMeshes) {
-        tris += Math.floor(m.getTotalIndices() / 3);
-        verts += m.getTotalVertices();
-        if (m.material) mats.add(m.material.name);
-      }
       const name = root.name || `Model ${i + 1}`;
-      lines.push(`| ${i + 1} | ${escapeTableCell(name)} | ${renderableMeshes.length} | ${tris.toLocaleString()} | ${verts.toLocaleString()} | ${mats.size} |`);
+      const summary = createBabylonModelPreviewSummary(
+        name,
+        this.getCellBounds(cell.meshes),
+        cell.meshes,
+      );
+      lines.push(
+        `| ${i + 1} | ${escapeTableCell(name)} | ${summary.meshCount} | ${summary.triangleCount.toLocaleString()} | ${summary.vertexCount.toLocaleString()} | ${summary.materialCount} |`,
+      );
     }
     lines.push("");
     return lines.join("\n");
@@ -501,5 +509,9 @@ export class GridRenderer {
     this.engine.dispose();
     this.cells = [];
   }
+}
+
+export function createBabylonGridRenderer(canvas: HTMLCanvasElement): PreviewGridRenderer {
+  return new BabylonGridRenderer(canvas);
 }
 

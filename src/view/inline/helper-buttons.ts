@@ -2,6 +2,25 @@ import type { App } from "obsidian";
 import type { PluginSettings } from "../../domain/models";
 import { formatT, t } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
+import {
+  supportsAnimationPreview,
+  supportsBoundingBoxPreview,
+  supportsDisassemblyPreview,
+  supportsFocusSelectionPreview,
+  supportsOrientationGizmoPreview,
+  supportsRenderScalePreview,
+  supportsWireframePreview,
+} from "../../render/preview/types";
+import type {
+  AnimationPreview,
+  BoundingBoxPreview,
+  DisassemblyPreview,
+  FocusSelectionPreview,
+  ModelPreview,
+  OrientationGizmoPreview,
+  RenderScalePreview,
+  WireframePreview,
+} from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
 import { getPortableStem } from "../../utils/resolve-path";
 
@@ -32,22 +51,14 @@ function dataUrlToBlob(dataUrl: string): Blob {
 }
 
 /** Any preview that supports snapshot capture. */
-export interface SnapshotProvider {
-  captureSnapshot(): string | null;
-  resetView?(): void;
-  exportModelInfo?(modelPath?: string): string;
-  exportSelectedPartInfo?(): string;
-  toggleWireframe?(): boolean;
-  toggleOrientationGizmo?(): boolean;
-  toggleBoundingBox?(): boolean;
-  toggleFocusSelection?(): boolean;
-  toggleDisassembly?(): boolean;
-  resetDisassembly?(): void;
-  hasAnimations?(): boolean;
-  toggleAnimation?(): boolean;
-  /** Set render resolution scale (1.0 = native). Returns the applied scale. */
-  setRenderScale?(scale: number): number;
-}
+export type SnapshotProvider =
+  & Pick<ModelPreview, "captureSnapshot" | "resetView">
+  & Partial<Pick<
+    ModelPreview,
+    | "exportModelInfo"
+    | "exportSelectedPartInfo"
+  >>
+  & Partial<AnimationPreview & BoundingBoxPreview & DisassemblyPreview & FocusSelectionPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
 
 /** Handle returned by createHelperButtons — callers hold a direct reference. */
 export interface HelperToolbar {
@@ -55,6 +66,7 @@ export interface HelperToolbar {
   showAnnotateButton(): void;
   updateAnnotationBadge(count: number): void;
   setMobileInteractionMode(active: boolean): void;
+  syncCapabilities(): void;
 }
 
 interface AnnotationToggleCopy {
@@ -143,6 +155,31 @@ export function createHelperButtons(
     applyMobileInteractionMode(nextInteractive);
     showTooltip(interactBtn, nextInteractive ? t("helper.interactionOn") : t("helper.interactionOff"));
   });
+
+  const toggleCapabilityButton = (button: HTMLElement, enabled: boolean): void => {
+    button.classList.toggle("is-hidden", !enabled);
+  };
+
+  const syncCapabilities = (): void => {
+    const preview = getPreview();
+    const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
+    const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
+    toggleCapabilityButton(resetBtn, !!preview?.resetView);
+    toggleCapabilityButton(infoBtn, !!preview?.exportModelInfo);
+    toggleCapabilityButton(partInfoBtn, !!preview?.exportSelectedPartInfo);
+    toggleCapabilityButton(wireBtn, !!preview && supportsWireframePreview(preview));
+    toggleCapabilityButton(gizmoBtn, !!preview && supportsOrientationGizmoPreview(preview));
+    toggleCapabilityButton(bboxBtn, !!preview && supportsBoundingBoxPreview(preview));
+    toggleCapabilityButton(focusBtn, !!focusPreview);
+    toggleCapabilityButton(disassembleBtn, !!disassemblyPreview);
+    toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview);
+    toggleCapabilityButton(resBtn, !!preview && supportsRenderScalePreview(preview));
+    focusBtn.classList.toggle("ai3d-btn-active", !!focusPreview?.isFocusSelectionEnabled());
+    disassembleBtn.classList.toggle("ai3d-btn-active", !!disassemblyPreview?.isDisassemblyEnabled());
+    if (preview && !supportsAnimationPreview(preview)) {
+      animBtn.classList.add("is-hidden");
+    }
+  };
 
   // Reset view button (refresh arrow)
   const resetBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetViewLabel") } });
@@ -236,9 +273,9 @@ export function createHelperButtons(
   focusBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.93 4.93l2.12 2.12"/><path d="M16.95 16.95l2.12 2.12"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/>`));
   focusBtn.addEventListener("click", () => {
     const preview = getPreview();
-    if (!preview?.toggleFocusSelection) return;
+    if (!preview || !supportsFocusSelectionPreview(preview)) return;
     const on = preview.toggleFocusSelection();
-    focusBtn.classList.toggle("ai3d-btn-active", on);
+    syncCapabilities();
     showTooltip(focusBtn, on ? t("helper.focusSelectionOn") : t("helper.focusSelectionOff"));
   });
 
@@ -247,9 +284,9 @@ export function createHelperButtons(
   disassembleBtn.appendChild(createSvgIcon(`<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 17h6"/><path d="M17 14v6"/>`));
   disassembleBtn.addEventListener("click", () => {
     const preview = getPreview();
-    if (!preview?.toggleDisassembly) return;
+    if (!preview || !supportsDisassemblyPreview(preview)) return;
     const on = preview.toggleDisassembly();
-    disassembleBtn.classList.toggle("ai3d-btn-active", on);
+    syncCapabilities();
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
   });
 
@@ -429,6 +466,7 @@ export function createHelperButtons(
   parentEl.insertBefore(toolbar, previewHost.nextSibling);
 
   renderMobileButtons();
+  syncCapabilities();
 
   return {
     showAnimButton() { animBtn.classList.remove("is-hidden"); },
@@ -445,6 +483,7 @@ export function createHelperButtons(
       if (!mobile) return;
       applyMobileInteractionMode(active);
     },
+    syncCapabilities,
   };
 }
 
