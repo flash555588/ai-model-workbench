@@ -38,10 +38,7 @@ Entry point: `src/main.ts` → esbuild bundles to `main.js` (CJS, ES2018). `main
 | Loader registry | `src/render/babylon/loaders/register.ts` | Side-effect imports registering GLTF, OBJ, SPLAT loaders with Babylon SceneLoader |
 | Explode | `src/render/babylon/explode.ts` | Explosion view (world-space displacement) |
 | Picking | `src/render/babylon/picking.ts` | Click-to-highlight (clones material to avoid shared-material mutation) |
-| DOM helper | `src/view/workbench/dom.ts` | ~60-line hyperscript: createElement with class/style/events/ref |
-| htm binding | `src/view/workbench/h.ts` | `htm.bind(createElement)` → `html` tagged template |
-| Workbench UI | `src/view/workbench/app.ts` | Two-zone layout: stable preview host + replaceable panels |
-| FileView | `src/view/analysis-view.ts` | `FileView` subclass mounting the workbench |
+| Knowledge notes | `src/view/workbench/knowledge-note.ts` | Builds and writes local model report notes from current store state |
 | File picker | `src/view/model-file-suggest-modal.ts` | `FuzzySuggestModal` filtered to `SUPPORTED_MODEL_EXTENSIONS` |
 | Code block | `src/view/inline/code-block.ts` | ```` ```3d path ```` or JSON config processor with config application and helper buttons; ```` ```3dgrid ```` multi-model grid processor |
 | Live Preview | `src/view/inline/live-preview.ts` | CM6 StateField + Widget for `![[model.ext]]` embed rendering in Live Preview |
@@ -58,9 +55,8 @@ Entry point: `src/main.ts` → esbuild bundles to `main.js` (CJS, ES2018). `main
 
 2. **Model loading**: `BabylonModelPreview.loadModel(data, ext)` parses with Babylon's GLTF/OBJ/SPLAT loaders or self-written STL loader. Returns `ModelPreviewSummary` with mesh/triangle/material/bounding counts.
 
-3. **Knowledge notes**: `generateKnowledgeNote()` in app.ts builds Markdown with frontmatter + summary table + sections. Checks `vault.adapter.exists()` before creating to avoid duplicate errors.
+3. **Knowledge notes**: `generateKnowledgeNote()` in `src/view/workbench/knowledge-note.ts` builds Markdown with frontmatter + summary table + sections. It updates an existing report note or creates one in the configured report folder.
 
-4. **Two-zone rendering**: The preview host (canvas) stays in the DOM permanently. Panels (status, controls, summary, tags, actions) are re-rendered on store changes via `panelsEl.innerHTML = ""`.
 
 ### Bundle Size
 
@@ -72,9 +68,8 @@ esbuild config externalizes `obsidian`, `electron`, `@codemirror/*`, `@lezer/*`.
 
 ## Conventions
 
-- UI is written with `htm` tagged templates in `.ts` files (no SFCs, no JSX).
 - All state mutations go through `ps.store.setState()` — views subscribe and re-render.
-- `BabylonModelPreview` owns its render loop (`requestAnimationFrame`) and must be `destroy()`-ed. The workbench unmount cleans up.
+- `BabylonModelPreview` owns its render loop (`requestAnimationFrame`) and must be `destroy()`-ed by the view that created it.
 - `SUPPORTED_MODEL_EXTENSIONS` is defined once in `src/domain/constants.ts` — both `main.ts` and `model-file-suggest-modal.ts` import from there.
 - Tags are capped at 12 per field (`normalizeTagList`).
 - STL loader validates buffer bounds before parsing (84-byte header, triangle count × 50 bytes).

@@ -90,6 +90,11 @@ export class DirectModelView extends FileView {
     this.annotationMode = false;
     this.preview?.destroy();
     this.preview = null;
+    this.ps.store.setState({
+      currentModelPath: file.path,
+      modelPreview: null,
+      selectedPart: null,
+    });
 
     // Use a detached staging container to avoid "Only one element on document" error.
     // This happens because contentEl may be the document itself during onLoadFile.
@@ -116,7 +121,6 @@ export class DirectModelView extends FileView {
       }
       this.annotationMgr?.hideEditor();
       modeOverlay.classList.toggle("is-hidden", !active);
-      console.debug("[AI3D] DirectView annotation mode:", active);
     };
 
     // ESC key to exit annotation mode
@@ -192,11 +196,22 @@ export class DirectModelView extends FileView {
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, source.path);
       if (gen !== this.loadGeneration) { this.preview.destroy(); this.preview = null; return; }
-      console.debug(`[AI3D] DirectView loading: ${file.path} via ${source.path} (${source.ext}, ${data.byteLength} bytes)`);
       const readFile = async (p: string) => readBinaryPath(this.app, p);
-      await this.preview.loadModel(data, source.ext, readFile, source.path);
+      const summary = await this.preview.loadModel(data, source.ext, readFile, source.path);
       if (gen !== this.loadGeneration) { this.preview.destroy(); this.preview = null; return; }
-      console.debug(`[AI3D] DirectView loaded successfully: ${file.path}`);
+      this.ps.store.setState({
+        currentModelPath: file.path,
+        modelPreview: summary,
+        selectedPart: null,
+      });
+      log.info("direct view model loaded", {
+        path: file.path,
+        effectivePath: source.path,
+        effectiveExt: source.ext,
+        strategy: source.strategy,
+        meshCount: summary.meshCount,
+        triangleCount: summary.triangleCount,
+      });
       loading.setProgress(100);
 
       // Set up annotation manager (edit mode)
@@ -237,7 +252,6 @@ export class DirectModelView extends FileView {
           const worldPos = this.preview?.getPickWorldPoint(result) ?? null;
           if (!worldPos) return;
 
-          console.debug("[AI3D] Annotation: creating pin at", worldPos, "screen:", screenX, screenY);
           this.annotationMgr.showEditor(screenX, screenY, worldPos);
         });
       }
@@ -254,6 +268,9 @@ export class DirectModelView extends FileView {
         console.warn("[AI3D] Direct view blocked by converter settings:", failure.message);
       } else {
         console.error("[AI3D] Direct view failed:", err);
+      }
+      if (this.ps.store.getState().currentModelPath === file.path) {
+        this.ps.store.setState({ modelPreview: null, selectedPart: null });
       }
       renderModelLoadFailure(host, failure);
     }

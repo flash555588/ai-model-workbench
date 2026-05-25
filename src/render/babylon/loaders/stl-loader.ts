@@ -67,7 +67,6 @@ function parseBinarySTL(scene: Scene, buffer: ArrayBuffer): BabylonMesh {
 
   const view = new DataView(buffer);
   const triangleCount = view.getUint32(80, true);
-  console.debug(`[AI3D STL] Parsing ${buffer.byteLength} bytes, ${triangleCount} triangles`);
 
   if (triangleCount === 0) {
     throw new Error("STL file contains 0 triangles");
@@ -96,7 +95,6 @@ function parseBinarySTL(scene: Scene, buffer: ArrayBuffer): BabylonMesh {
   const indices = new Array<number>(triangleCount * 3).fill(0);
 
   let zeroNormalCount = 0;
-  let colorFaceCount = 0;
   let offset = 84;
   for (let i = 0; i < triangleCount; i++) {
     const base = i * 9;
@@ -130,7 +128,6 @@ function parseBinarySTL(scene: Scene, buffer: ArrayBuffer): BabylonMesh {
       colors[cBase + 0] = r; colors[cBase + 1] = g; colors[cBase + 2] = b; colors[cBase + 3] = 1;
       colors[cBase + 4] = r; colors[cBase + 5] = g; colors[cBase + 6] = b; colors[cBase + 7] = 1;
       colors[cBase + 8] = r; colors[cBase + 9] = g; colors[cBase + 10] = b; colors[cBase + 11] = 1;
-      colorFaceCount++;
     }
 
     // Recompute face normal from triangle vertices (cross product of two edges)
@@ -164,10 +161,6 @@ function parseBinarySTL(scene: Scene, buffer: ArrayBuffer): BabylonMesh {
   if (zeroNormalCount > 0) {
     console.warn(`[AI3D STL] ${zeroNormalCount} degenerate triangles with zero-area normals`);
   }
-  if (hasFaceColors) {
-    console.debug(`[AI3D STL] Detected per-face colors: ${colorFaceCount}/${triangleCount} faces colored`);
-  }
-
   const vertexData = new VertexData();
   vertexData.positions = positions;
   vertexData.normals = normals;

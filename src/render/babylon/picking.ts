@@ -54,14 +54,19 @@ export function setupPicking(
     const screenX = evt.clientX;
     const screenY = evt.clientY;
 
-    clearHighlight();
     const pickInfo = pointerInfo.pickInfo;
     if (pickInfo?.hit && pickInfo.pickedMesh) {
       if (shouldHighlight()) {
-        applyHighlight(pickInfo.pickedMesh);
+        if (outlinedMesh !== pickInfo.pickedMesh) {
+          clearHighlight();
+          applyHighlight(pickInfo.pickedMesh);
+        }
+      } else {
+        clearHighlight();
       }
       onPick({ mesh: pickInfo.pickedMesh, pickedPoint: pickInfo.pickedPoint ?? null, screenX, screenY });
     } else {
+      clearHighlight();
       onPick({ mesh: null, pickedPoint: null, screenX, screenY });
     }
   });

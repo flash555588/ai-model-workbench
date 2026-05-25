@@ -14,8 +14,8 @@ export interface PreviewWorldPoint {
 export type PreviewAxis = "x" | "y" | "z";
 
 export interface PreviewPickResult {
-  mesh: unknown | null;
-  pickedPoint: unknown | null;
+  mesh: object | null;
+  pickedPoint: object | null;
   screenX: number;
   screenY: number;
 }

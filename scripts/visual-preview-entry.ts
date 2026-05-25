@@ -11,11 +11,13 @@ interface DomCreateOptions {
   attr?: Record<string, string>;
 }
 
+type DomCreateInput = string | DomCreateOptions | DomElementInfo | undefined;
+
 declare global {
   interface HTMLElement {
-    createDiv(options?: DomCreateOptions): HTMLDivElement;
-    createSpan(options?: DomCreateOptions): HTMLSpanElement;
-    createEl<K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions): HTMLElementTagNameMap[K];
+    createDiv(options?: DomCreateInput): HTMLDivElement;
+    createSpan(options?: DomCreateInput): HTMLSpanElement;
+    createEl<K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateInput): HTMLElementTagNameMap[K];
     empty(): void;
     setText(text: string): void;
   }
@@ -37,12 +39,17 @@ declare global {
 
 type VerifyMode = "basic" | "direct-edit" | "readonly-pin";
 
-function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateOptions): T {
+function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateInput): T {
   if (!options) return el;
-  if (options.cls) el.className = options.cls;
-  if (options.text) el.textContent = options.text;
-  if (options.attr) {
-    for (const [key, value] of Object.entries(options.attr)) {
+  if (typeof options === "string") {
+    el.className = options;
+    return el;
+  }
+  const info = options as DomCreateOptions;
+  if (info.cls) el.className = info.cls;
+  if (info.text) el.textContent = info.text;
+  if (info.attr) {
+    for (const [key, value] of Object.entries(info.attr)) {
       el.setAttribute(key, value);
     }
   }
@@ -52,8 +59,8 @@ function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreate
 function installObsidianDomShims(): void {
   const globals = window as typeof window & {
     activeDocument: Document;
-    createDiv: (options?: DomCreateOptions) => HTMLDivElement;
-    createEl: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions) => HTMLElementTagNameMap[K];
+    createDiv: (options?: DomCreateInput) => HTMLDivElement;
+    createEl: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateInput) => HTMLElementTagNameMap[K];
     createSvg: <K extends keyof SVGElementTagNameMap>(tag: K) => SVGElementTagNameMap[K];
   };
   globals.activeDocument = document;
@@ -63,15 +70,15 @@ function installObsidianDomShims(): void {
     document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof globals.createSvg;
 
   const proto = HTMLElement.prototype as HTMLElement & {
-    createDiv?: (options?: DomCreateOptions) => HTMLDivElement;
-    createSpan?: (options?: DomCreateOptions) => HTMLSpanElement;
-    createEl?: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateOptions) => HTMLElementTagNameMap[K];
+    createDiv?: (options?: DomCreateInput) => HTMLDivElement;
+    createSpan?: (options?: DomCreateInput) => HTMLSpanElement;
+    createEl?: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateInput) => HTMLElementTagNameMap[K];
     empty?: () => void;
     setText?: (text: string) => void;
   };
 
   if (!proto.createDiv) {
-    proto.createDiv = function createDiv(options?: DomCreateOptions): HTMLDivElement {
+    proto.createDiv = function createDiv(options?: DomCreateInput): HTMLDivElement {
       const el = applyDomCreateOptions(document.createElement("div"), options);
       this.appendChild(el);
       return el;
@@ -79,7 +86,7 @@ function installObsidianDomShims(): void {
   }
 
   if (!proto.createSpan) {
-    proto.createSpan = function createSpan(options?: DomCreateOptions): HTMLSpanElement {
+    proto.createSpan = function createSpan(options?: DomCreateInput): HTMLSpanElement {
       const el = applyDomCreateOptions(document.createElement("span"), options);
       this.appendChild(el);
       return el;
@@ -89,7 +96,7 @@ function installObsidianDomShims(): void {
   if (!proto.createEl) {
     proto.createEl = function createEl<K extends keyof HTMLElementTagNameMap>(
       tag: K,
-      options?: DomCreateOptions,
+      options?: DomCreateInput,
     ): HTMLElementTagNameMap[K] {
       const el = applyDomCreateOptions(document.createElement(tag), options) as HTMLElementTagNameMap[K];
       this.appendChild(el);

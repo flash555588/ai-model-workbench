@@ -1,6 +1,8 @@
+import { Notice, TFile, type App } from "obsidian";
 import type { AnnotationPin, ModelAssetProfile, ModelPreviewSummary } from "../../domain/models";
+import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
-import { getPortableBasename } from "../../utils/resolve-path";
+import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
 
 export const LOCAL_ANALYSIS_VERSION = "local-preview-v2";
 
@@ -230,4 +232,86 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
     profile?.notes?.trim() ? profile.notes.trim() : "-",
     "",
   ].join("\n");
+}
+
+function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null | undefined): ModelAssetProfile {
+  const now = new Date().toISOString();
+  return {
+    tags: Array.isArray(profile?.tags) ? profile.tags : [],
+    notes: typeof profile?.notes === "string" ? profile.notes : "",
+    annotations: Array.isArray(profile?.annotations) ? profile.annotations : [],
+    analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
+    reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
+    createdAt: typeof profile?.createdAt === "string" ? profile.createdAt : now,
+    updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : now,
+  };
+}
+
+let noteGenerationLock: Promise<void> | null = null;
+
+export async function generateKnowledgeNote(app: App, ps: PluginStore): Promise<void> {
+  if (noteGenerationLock !== null) return;
+  let resolveLock!: () => void;
+  noteGenerationLock = new Promise<void>((resolve) => { resolveLock = resolve; });
+
+  try {
+    const state = ps.store.getState();
+    const path = state.currentModelPath;
+    if (!path) return;
+
+    const profile = state.modelAssetProfiles[path];
+    const preview = state.modelPreview;
+    const baseName = getPortableStem(path) || "model";
+    const reportFolder = state.settings.reportFolder;
+    const notePath = `${reportFolder}/${baseName} Report.md`;
+    const content = buildKnowledgeNoteContent({
+      baseName,
+      notePath,
+      sourcePath: path,
+      profile,
+      preview,
+    });
+
+    const existingFile = app.vault.getAbstractFileByPath(notePath);
+    let outputFile: TFile | null = existingFile instanceof TFile ? existingFile : null;
+    if (existingFile instanceof TFile) {
+      await app.vault.modify(existingFile, content);
+    } else {
+      const folder = app.vault.getAbstractFileByPath(reportFolder);
+      if (!folder) {
+        await app.vault.createFolder(reportFolder).catch(() => {});
+      }
+
+      try {
+        outputFile = await app.vault.create(notePath, content);
+      } catch {
+        const file = app.vault.getAbstractFileByPath(notePath);
+        if (file instanceof TFile) {
+          outputFile = file;
+          await app.vault.modify(file, content);
+        }
+      }
+    }
+
+    if (!outputFile) return;
+
+    const currentProfiles = ps.store.getState().modelAssetProfiles;
+    const existingProfile = normalizeModelAssetProfile(currentProfiles[path]);
+    ps.store.setState({
+      modelAssetProfiles: {
+        ...currentProfiles,
+        [path]: {
+          ...existingProfile,
+          analysisVersion: LOCAL_ANALYSIS_VERSION,
+          reportNotePath: outputFile.path,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    });
+    await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
+    new Notice(`Knowledge note updated: ${outputFile.path}`);
+  } finally {
+    resolveLock();
+    noteGenerationLock = null;
+  }
 }

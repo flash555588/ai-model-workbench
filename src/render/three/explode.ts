@@ -20,10 +20,14 @@ function clonePoint(point: PreviewWorldPoint): PreviewWorldPoint {
   return clonePreviewWorldPoint(point);
 }
 
+function isMesh(value: unknown): value is Mesh {
+  return value instanceof Mesh;
+}
+
 function getRenderableMeshes(root: Object3D): Mesh[] {
   const meshes: Mesh[] = [];
   root.traverse((object) => {
-    if (object instanceof Mesh && object.geometry) {
+    if (isMesh(object) && object.geometry) {
       meshes.push(object);
     }
   });

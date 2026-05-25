@@ -12,7 +12,6 @@ These are good sources for architecture ideas, UX patterns, utility snippets, an
 ## Already present but not MIT
 
 - `@babylonjs/*` - Apache-2.0
-- `htm` - Apache-2.0
 
 These are compatible dependencies for this project, but direct vendored code or copied files should preserve their license and notice requirements.
 

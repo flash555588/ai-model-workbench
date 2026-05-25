@@ -5,7 +5,6 @@ import {
   BoxHelper,
   Color,
   DirectionalLight,
-  Group,
   Material,
   Mesh,
   Object3D,
@@ -61,10 +60,14 @@ import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
-const FOCUS_DIM_OPACITY = 0.22;
+const FOCUS_DIM_OPACITY = 0.242;
 
-function isMesh(value: Object3D): value is Mesh {
+function isMesh(value: unknown): value is Mesh {
   return value instanceof Mesh;
+}
+
+function isDisposable(value: unknown): value is { dispose(): void } {
+  return !!value && typeof value === "object" && "dispose" in value && typeof value.dispose === "function";
 }
 
 function materialList(material: Material | Material[] | undefined | null): Material[] {
@@ -122,6 +125,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private wireframeEnabled = false;
   private focusSelectionEnabled = false;
   private focusedMesh: Mesh | null = null;
+  private highlightedMesh: Mesh | null = null;
   private selectionHelper: BoxHelper | null = null;
   private focusHelper: BoxHelper | null = null;
   private mixer: AnimationMixer | null = null;
@@ -309,7 +313,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getSelectedPartInfo(): ModelPartSummary | null {
     const mesh = this.focusedMesh
-      ?? (this._lastPickResult.mesh instanceof Mesh ? this._lastPickResult.mesh : null);
+      ?? (isMesh(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
     return mesh ? this.computePartSummary(mesh) : null;
   }
 
@@ -609,9 +613,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this._lastPickResult = result;
     if (this.focusSelectionEnabled && mesh) {
       this.clearSelectionHighlight();
-      this.setFocusedMesh(mesh);
+      if (this.focusedMesh !== mesh) {
+        this.setFocusedMesh(mesh);
+      }
     } else if (this.focusSelectionEnabled) {
-      this.clearFocusedMesh();
+      if (this.focusedMesh) {
+        this.clearFocusedMesh();
+      }
     } else {
       this.updateSelectionHighlight(mesh);
     }
@@ -641,8 +649,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
         const mat = material as unknown as Record<string, unknown>;
         for (const key of Object.keys(mat)) {
           const value = mat[key];
-          if (value && typeof value === "object" && "dispose" in value && typeof (value as { dispose: unknown }).dispose === "function") {
-            (value as { dispose: () => void }).dispose();
+          if (isDisposable(value)) {
+            value.dispose();
           }
         }
         material.dispose();
@@ -753,10 +761,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearSelectionHighlight();
       return;
     }
+    if (this.highlightedMesh === mesh && this.selectionHelper) {
+      return;
+    }
 
     this.selectionHelper?.removeFromParent();
     this.selectionHelper = new BoxHelper(mesh, 0x4a9eff);
     this.scene.add(this.selectionHelper);
+    this.highlightedMesh = mesh;
   }
 
   private setFocusedMesh(mesh: Mesh | null): void {
@@ -834,6 +846,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private clearSelectionHighlight(): void {
     this.selectionHelper?.removeFromParent();
     this.selectionHelper = null;
+    this.highlightedMesh = null;
   }
 
   private computePartSummary(mesh: Mesh): ModelPartSummary {

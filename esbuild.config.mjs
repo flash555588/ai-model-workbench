@@ -54,7 +54,7 @@ const patchBabylonRuntimePlugin = {
 
       contents = replaceOrThrow(
         contents,
-        /static _LoadScriptNative\(scriptUrl, onSuccess, onError\) \{[\s\S]*?\n    \}\n    static _LoadScriptWeb/,
+        /static _LoadScriptNative\(scriptUrl, onSuccess, onError\) \{[\s\S]*?\n {4}\}\n {4}static _LoadScriptWeb/,
         `static _LoadScriptNative(scriptUrl, onSuccess, onError) {
         const error = new Error(\`[AI3D] Babylon script loading is disabled in this plugin build. Refused script URL: \${scriptUrl}\`);
         onError?.(error.message, error);
@@ -65,7 +65,7 @@ const patchBabylonRuntimePlugin = {
 
       contents = replaceOrThrow(
         contents,
-        /static _LoadScriptWeb\(scriptUrl, onSuccess, onError, scriptId, useModule = false\) \{[\s\S]*?\n    \}\n    \/\*\*/,
+        /static _LoadScriptWeb\(scriptUrl, onSuccess, onError, scriptId, useModule = false\) \{[\s\S]*?\n {4}\}\n {4}\/\*\*/,
         `static _LoadScriptWeb(scriptUrl, onSuccess, onError, scriptId, useModule = false) {
         const error = new Error(\`[AI3D] Babylon script loading is disabled in this plugin build. Refused script URL: \${scriptUrl}\`);
         onError?.(error.message, error);

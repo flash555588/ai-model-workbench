@@ -1,9 +1,8 @@
-import { Notice, Plugin, type TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, type TFile } from "obsidian";
 import type { PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
-import { AnalysisView, VIEW_TYPE } from "./view/analysis-view";
 import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
 import { AI3DSettingTab } from "./settings";
@@ -46,20 +45,12 @@ export default class AI3DModelWorkbench extends Plugin {
     }
     setLocale(this.getSettings().locale);
 
-    this.registerView(VIEW_TYPE, (leaf) => new AnalysisView(leaf, this.ps, this.convertedAssetCache));
-
-    this.addRibbonIcon("box", t("main.ribbonOpenWorkbench"), () => this.activateView());
+    this.addRibbonIcon("box", t("main.commandImportModel"), () => this.importModel());
 
     this.addCommand({
       id: "import-model",
       name: t("main.commandImportModel"),
       callback: () => this.importModel(),
-    });
-
-    this.addCommand({
-      id: "open-workbench",
-      name: t("main.commandOpenWorkbench"),
-      callback: () => this.activateView(),
     });
 
     this.addCommand({
@@ -371,27 +362,6 @@ export default class AI3DModelWorkbench extends Plugin {
     scheduleScan(500);
   }
 
-  private async activateView() {
-    const { workspace } = this.app;
-
-    // Try to find existing leaf
-    let leaf: WorkspaceLeaf | null = null;
-    workspace.iterateAllLeaves((l) => {
-      if (l.getViewState().type === VIEW_TYPE) {
-        leaf = l;
-      }
-    });
-
-    if (!leaf) {
-      // Open in right split
-      leaf = workspace.getRightLeaf(false);
-      if (!leaf) return;
-      await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    }
-
-    workspace.setActiveLeaf(leaf, { focus: true });
-  }
-
   private importModel() {
     new ModelFileSuggestModal(this.app, (file: TFile) => {
       const ext = file.extension.toLowerCase();
@@ -399,28 +369,21 @@ export default class AI3DModelWorkbench extends Plugin {
         return;
       }
 
-      if (this.ps.store.getState().currentModelPath === file.path) {
-        this.ps.store.setState({
-          currentModelPath: null,
-          modelPreview: null,
-          selectedPart: null,
-        });
-      }
-
-      // Update store with new model path and reset preview
-      this.ps.store.setState({
-        currentModelPath: file.path,
-        modelPreview: null,
-        selectedPart: null,
-      });
-
-      // Open workbench if not already open
-      void this.activateView();
+      void this.openModelFile(file);
     }).open();
   }
 
+  private async openModelFile(file: TFile): Promise<void> {
+    this.ps.store.setState({
+      currentModelPath: file.path,
+      modelPreview: null,
+      selectedPart: null,
+    });
+    await this.app.workspace.getLeaf(true).openFile(file, { active: true });
+  }
+
   private async generateNote() {
-    const { generateKnowledgeNote } = await import("./view/workbench/app");
+    const { generateKnowledgeNote } = await import("./view/workbench/knowledge-note");
     await generateKnowledgeNote(this.app, this.ps);
   }
 

@@ -1,10 +1,10 @@
-import type { Object3D, Scene, AnimationClip } from "three";
+import type { Object3D, AnimationClip } from "three";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Mesh, MeshStandardMaterial, BufferGeometry, PointsMaterial, Points } from "three";
+import { Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
 
@@ -15,6 +15,15 @@ const IMAGE_MIME: Record<string, string> = {
 };
 
 const IMG_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
+
+interface GltfExternalResource {
+  uri?: string;
+}
+
+interface GltfJson {
+  buffers?: GltfExternalResource[];
+  images?: GltfExternalResource[];
+}
 
 function guessMime(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "png";
@@ -37,7 +46,7 @@ export async function loadThreeGLTF(
     // GLTF JSON may reference external .bin and textures.
     // Use a custom loader manager that resolves from the vault.
     const gltfText = new TextDecoder().decode(new Uint8Array(data));
-    const gltfJson = JSON.parse(gltfText);
+    const gltfJson = JSON.parse(gltfText) as GltfJson;
     const modelDir = getPortableDirname(modelPath);
 
     // Pre-load all external buffers and images as data URLs
@@ -132,8 +141,7 @@ export async function loadThreeOBJ(
   const objText = new TextDecoder().decode(new Uint8Array(data));
 
   // Try to resolve MTL from vault
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let materials: any = null;
+  let materials: MTLLoader.MaterialCreator | null = null;
   const mtlMatch = objText.match(/mtllib\s+(.+)/);
   if (mtlMatch && readFile && modelPath) {
     const mtlFilename = mtlMatch[1].trim().split(/\s+/)[0];
@@ -148,7 +156,6 @@ export async function loadThreeOBJ(
       const TEX_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/im;
       const lines = mtlText.split("\n");
       const objBasename = getPortableStem(modelPath);
-      let texCount = 0;
       const texCache = new Map<string, string>();
 
       for (let i = 0; i < lines.length; i++) {
@@ -177,7 +184,6 @@ export async function loadThreeOBJ(
         for (const cand of candidates) {
           if (texCache.has(cand)) {
             lines[i] = `${m[1]} ${texCache.get(cand)}`;
-            texCount++;
             resolved = true;
             break;
           }
@@ -186,7 +192,6 @@ export async function loadThreeOBJ(
             const dataUrl = `data:${guessMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
             texCache.set(cand, dataUrl);
             lines[i] = `${m[1]} ${dataUrl}`;
-            texCount++;
             resolved = true;
             break;
           } catch { /* try next candidate */ }
@@ -207,7 +212,7 @@ export async function loadThreeOBJ(
       const mtlLoader = new MTLLoader();
       const mtlResult = mtlLoader.parse(filtered.join("\n"), modelDir ? `${modelDir}/` : "");
       mtlResult.preload();
-      materials = mtlResult.materials;
+      materials = mtlResult;
     } catch {
       // No MTL found — OBJ will use default material
     }
@@ -215,7 +220,7 @@ export async function loadThreeOBJ(
 
   const objLoader = new OBJLoader();
   if (materials) {
-    objLoader.setMaterials(materials as Parameters<OBJLoader["setMaterials"]>[0]);
+    objLoader.setMaterials(materials);
   }
   return objLoader.parse(objText);
 }

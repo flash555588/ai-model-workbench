@@ -125,10 +125,6 @@ class ThreeDisassemblyAdapter
       subscriptions.onPointerUp(event);
     };
 
-    const handleRender = () => {
-      subscriptions.onRender();
-    };
-
     this.canvas.addEventListener("pointerdown", handlePointerDown);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);

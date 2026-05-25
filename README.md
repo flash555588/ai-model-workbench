@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in a local WebGL viewport, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) now use a configurable Three.js rendering path across reading surfaces and direct file view, while workbench, `3dgrid`, and SPLAT stay on the Babylon.js capability path that fits them best.
+> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use a configurable Three.js rendering path across reading surfaces and direct file view, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -39,7 +39,7 @@
 - **Snapshots**: copy, save, or download rendered previews as PNG
 - **i18n**: English and Simplified Chinese with auto-detect system locale
 - **Desktop support**: Obsidian Desktop on Windows, macOS, and Linux
-- **Mobile support**: iOS, iPadOS, and Android support direct formats and a simplified workbench layout
+- **Mobile support**: iOS, iPadOS, and Android support direct formats, inline previews, and direct file view
 
 ---
 
@@ -50,7 +50,6 @@
 | Direct formats (GLB, GLTF, OBJ, STL, PLY) | Yes | Yes |
 | Direct file view | Yes | Yes |
 | Inline embed / Live Preview for direct formats | Yes | Yes |
-| Workbench layout | Full desktop layout | Simplified single-column mobile layout |
 | Local conversion (CAD, FBX, 3MF, DAE, SLDPRT) | Yes | No |
 | Converter diagnostics and local CLI checks | Yes | No |
 | Already converted `.ai3d-converted.glb` assets | Yes | Yes |
@@ -350,15 +349,14 @@ Click any `.glb`/`.gltf`/`.stl`/`.obj`/`.ply` file in the file explorer.
 
 Add labeled bookmarks directly on model surfaces. Annotations persist per model file.
 
-**Direct View & Workbench** (edit mode):
+**Direct View** (edit mode):
 
-1. Click the **tag icon** in the toolbar (or "Annotate" button in the workbench panel)
+1. Click the **tag icon** in the toolbar
 2. A blue overlay indicates annotation mode is active
 3. Click anywhere on the model surface to place a pin
 4. Enter a label and pick a color in the popup editor
 5. Click an existing pin to edit its label/color or delete it
-6. Click a pin label in the workbench panel to animate the camera to that position
-7. Press `Esc` to exit annotation mode
+6. Press `Esc` to exit annotation mode
 
 **Depth-aware occlusion**: Pins behind geometry display blurred and dimmed. When the camera stops moving for ~250ms, fully occluded pins are automatically hidden, leaving only visible bookmarks.
 
@@ -551,7 +549,7 @@ src/
 │   │   └── adapters/          # Converter implementations
 │   └── model-pipeline.ts      # Format routing logic
 └── view/
-    ├── workbench/             # Main workbench UI
+    ├── workbench/             # Knowledge-note helpers
     ├── inline/                # Code blocks, live preview
     └── direct-view.ts         # Direct file opening
 ```
