@@ -395,6 +395,13 @@ async function runReadonlyPinPreview(
       color: "#4a9eff",
       createdAt: new Date().toISOString(),
     },
+    {
+      id: "verify-occluded-pin",
+      position: [0, 0, 0],
+      label: "Occluded Pin",
+      color: "#ff922b",
+      createdAt: new Date().toISOString(),
+    },
   ];
 
   const annotationMgr = new AnnotationManager(

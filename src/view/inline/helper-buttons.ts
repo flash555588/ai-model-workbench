@@ -106,47 +106,68 @@ export function createHelperButtons(
   };
 
   // Create on parentEl (in DOM) so Obsidian's createEl inherits CSS variables
-  const toolbar = parentEl.createDiv({ cls: "ai3d-helper-toolbar" });
+  const toolbar = parentEl.createDiv({ cls: "ai3d-helper-toolbar ai3d-helper-toolbar-adaptive" });
+  const viewGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-view" });
+  const inspectGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-inspect" });
+  const outputGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-output" });
+  const stopToolbarEvent = (event: Event): void => {
+    event.stopPropagation();
+  };
+  toolbar.addEventListener("pointerdown", stopToolbarEvent);
+  toolbar.addEventListener("mousedown", stopToolbarEvent);
+  toolbar.addEventListener("click", stopToolbarEvent);
   if (mobile) {
     toolbar.classList.add("is-mobile");
     setMobileInteractionMode(previewHost, false);
   }
 
   const markSecondary = <T extends HTMLButtonElement>(button: T): T => {
-    if (mobile) {
-      button.classList.add("is-secondary");
-    }
+    button.classList.add("is-secondary");
     return button;
+  };
+  const setTogglePressed = (button: HTMLButtonElement, active: boolean): void => {
+    button.classList.toggle("ai3d-btn-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  };
+  const syncGroupVisibility = (): void => {
+    for (const group of [viewGroup, inspectGroup, outputGroup]) {
+      const hasVisibleButton = Array
+        .from(group.querySelectorAll<HTMLElement>(".ai3d-inline-btn"))
+        .some((button) => !button.classList.contains("is-hidden"));
+      group.classList.toggle("is-hidden", !hasVisibleButton);
+    }
   };
 
   let mobileInteractive = false;
-  let mobileExpanded = false;
+  let toolbarExpanded = false;
 
   const interactBtn = mobile
-    ? toolbar.createEl("button", {
+    ? viewGroup.createEl("button", {
       cls: "ai3d-inline-btn ai3d-mobile-mode-btn",
-      attr: { "aria-label": t("helper.enableInteractionLabel") },
+      attr: { "aria-label": t("helper.enableInteractionLabel"), "aria-pressed": "false" },
     })
     : null;
   interactBtn?.appendChild(createSvgIcon(`<path d="M12 2v8"/><path d="M8 6l4-4 4 4"/><path d="M6 14a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z"/>`));
   const interactLabel = interactBtn?.createSpan({ cls: "ai3d-mobile-mode-btn-label" }) ?? null;
 
-  const renderMobileButtons = (): void => {
-    if (!mobile || !interactBtn) return;
-    setMobileInteractionMode(previewHost, mobileInteractive);
-    interactBtn.classList.toggle("ai3d-btn-active", mobileInteractive);
-    interactLabel?.setText(mobileInteractive ? t("helper.scrollAction") : t("helper.interactAction"));
-    interactBtn.setAttribute(
-      "aria-label",
-      mobileInteractive ? t("helper.disableInteractionLabel") : t("helper.enableInteractionLabel"),
-    );
-    showMoreBtn?.classList.toggle("ai3d-btn-active", mobileExpanded);
-    toolbar.classList.toggle("show-secondary", mobileExpanded);
+  const renderToolbarButtons = (): void => {
+    if (mobile && interactBtn) {
+      setMobileInteractionMode(previewHost, mobileInteractive);
+      setTogglePressed(interactBtn, mobileInteractive);
+      interactLabel?.setText(mobileInteractive ? t("helper.scrollAction") : t("helper.interactAction"));
+      interactBtn.setAttribute(
+        "aria-label",
+        mobileInteractive ? t("helper.disableInteractionLabel") : t("helper.enableInteractionLabel"),
+      );
+    }
+    setTogglePressed(showMoreBtn, toolbarExpanded);
+    toolbar.classList.toggle("show-secondary", toolbarExpanded);
+    syncGroupVisibility();
   };
 
   const applyMobileInteractionMode = (active: boolean): void => {
     mobileInteractive = active;
-    renderMobileButtons();
+    renderToolbarButtons();
   };
 
   interactBtn?.addEventListener("click", () => {
@@ -161,42 +182,56 @@ export function createHelperButtons(
   };
 
   let lastSyncedPreview: unknown = null;
-  const syncCapabilities = (): void => {
+  const syncToggleStates = (): void => {
     const preview = getPreview();
-    if (preview === lastSyncedPreview) return;
-    lastSyncedPreview = preview;
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
-    toggleCapabilityButton(resetBtn, !!preview?.resetView);
-    toggleCapabilityButton(infoBtn, !!preview?.exportModelInfo);
-    toggleCapabilityButton(partInfoBtn, !!preview?.exportSelectedPartInfo);
-    toggleCapabilityButton(wireBtn, !!preview && supportsWireframePreview(preview));
-    toggleCapabilityButton(gizmoBtn, !!preview && supportsOrientationGizmoPreview(preview));
-    toggleCapabilityButton(bboxBtn, !!preview && supportsBoundingBoxPreview(preview));
-    toggleCapabilityButton(focusBtn, !!focusPreview);
-    toggleCapabilityButton(disassembleBtn, !!disassemblyPreview);
-    toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview);
-    toggleCapabilityButton(resBtn, !!preview && supportsRenderScalePreview(preview));
-    focusBtn.classList.toggle("ai3d-btn-active", !!focusPreview?.isFocusSelectionEnabled());
-    disassembleBtn.classList.toggle("ai3d-btn-active", !!disassemblyPreview?.isDisassemblyEnabled());
-    if (preview && !supportsAnimationPreview(preview)) {
-      animBtn.classList.add("is-hidden");
+    setTogglePressed(focusBtn, !!focusPreview?.isFocusSelectionEnabled());
+    setTogglePressed(disassembleBtn, !!disassemblyPreview?.isDisassemblyEnabled());
+  };
+
+  const syncCapabilities = (): void => {
+    const preview = getPreview();
+    const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
+    const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
+    const animationPreview = preview && supportsAnimationPreview(preview) ? preview : null;
+    if (preview !== lastSyncedPreview) {
+      lastSyncedPreview = preview;
+      setTogglePressed(wireBtn, false);
+      setTogglePressed(gizmoBtn, false);
+      setTogglePressed(bboxBtn, false);
+      setTogglePressed(animBtn, false);
+      animBtn.replaceChildren(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
+      toggleCapabilityButton(resetBtn, !!preview?.resetView);
+      toggleCapabilityButton(infoBtn, !!preview?.exportModelInfo);
+      toggleCapabilityButton(partInfoBtn, !!preview?.exportSelectedPartInfo);
+      toggleCapabilityButton(wireBtn, !!preview && supportsWireframePreview(preview));
+      toggleCapabilityButton(gizmoBtn, !!preview && supportsOrientationGizmoPreview(preview));
+      toggleCapabilityButton(bboxBtn, !!preview && supportsBoundingBoxPreview(preview));
+      toggleCapabilityButton(focusBtn, !!focusPreview);
+      toggleCapabilityButton(disassembleBtn, !!disassemblyPreview);
+      toggleCapabilityButton(resBtn, !!preview && supportsRenderScalePreview(preview));
+      toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
+    toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview?.isDisassemblyEnabled());
+    syncToggleStates();
+    syncGroupVisibility();
   };
 
   // Reset view button (refresh arrow)
-  const resetBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetViewLabel") } });
+  const resetBtn = viewGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetViewLabel") } });
   resetBtn.appendChild(createSvgIcon(`<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>`));
   resetBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (preview?.resetView) {
       preview.resetView();
+      syncCapabilities();
       showTooltip(resetBtn, t("helper.resetViewDone"));
     }
   });
 
   // Export model info button (info circle)
-  const infoBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copyModelInfoLabel") } }));
+  const infoBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copyModelInfoLabel") } }));
   infoBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>`));
   infoBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -216,7 +251,7 @@ export function createHelperButtons(
   });
 
   // Export currently selected part info button (target/list icon)
-  const partInfoBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySelectedPartInfoLabel") } }));
+  const partInfoBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySelectedPartInfoLabel") } }));
   partInfoBtn.appendChild(createSvgIcon(`<path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/><path d="M17 19h5"/><path d="M17 16h5"/><path d="M17 22h5"/>`));
   partInfoBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -239,40 +274,52 @@ export function createHelperButtons(
   });
 
   // Wireframe toggle button (grid/square icon)
-  const wireBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleWireframeLabel") } });
+  const wireBtn = markSecondary(viewGroup.createEl("button", {
+    cls: "ai3d-inline-btn",
+    attr: { "aria-label": t("helper.toggleWireframeLabel"), "aria-pressed": "false" },
+  }));
   wireBtn.appendChild(createSvgIcon(`<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/>`));
   wireBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleWireframe) return;
     const on = preview.toggleWireframe();
-    wireBtn.classList.toggle("ai3d-btn-active", on);
+    setTogglePressed(wireBtn, on);
     showTooltip(wireBtn, on ? t("helper.wireframeOn") : t("helper.wireframeOff"));
   });
 
   // Orientation gizmo toggle button (compass/axis icon)
-  const gizmoBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleAxesLabel") } }));
+  const gizmoBtn = markSecondary(viewGroup.createEl("button", {
+    cls: "ai3d-inline-btn",
+    attr: { "aria-label": t("helper.toggleAxesLabel"), "aria-pressed": "false" },
+  }));
   gizmoBtn.appendChild(createSvgIcon(`<path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2l4 4"/><path d="M12 2l-4 4"/><path d="M22 12l-4-4"/><path d="M22 12l-4 4"/>`));
   gizmoBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleOrientationGizmo) return;
     const on = preview.toggleOrientationGizmo();
-    gizmoBtn.classList.toggle("ai3d-btn-active", on);
+    setTogglePressed(gizmoBtn, on);
     showTooltip(gizmoBtn, on ? t("helper.axesOn") : t("helper.axesOff"));
   });
 
   // Bounding box toggle button (cube outline icon)
-  const bboxBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleBoundingBoxLabel") } }));
+  const bboxBtn = markSecondary(viewGroup.createEl("button", {
+    cls: "ai3d-inline-btn",
+    attr: { "aria-label": t("helper.toggleBoundingBoxLabel"), "aria-pressed": "false" },
+  }));
   bboxBtn.appendChild(createSvgIcon(`<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>`));
   bboxBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleBoundingBox) return;
     const on = preview.toggleBoundingBox();
-    bboxBtn.classList.toggle("ai3d-btn-active", on);
+    setTogglePressed(bboxBtn, on);
     showTooltip(bboxBtn, on ? t("helper.boundingBoxOn") : t("helper.boundingBoxOff"));
   });
 
   // Focus selected mesh button (click a part to isolate it visually)
-  const focusBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleFocusSelectionLabel") } }));
+  const focusBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn",
+    attr: { "aria-label": t("helper.toggleFocusSelectionLabel"), "aria-pressed": "false" },
+  }));
   focusBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.93 4.93l2.12 2.12"/><path d="M16.95 16.95l2.12 2.12"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/>`));
   focusBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -283,7 +330,10 @@ export function createHelperButtons(
   });
 
   // Disassembly mode toggle button (separate parts by dragging)
-  const disassembleBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.toggleDisassemblyLabel") } }));
+  const disassembleBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn",
+    attr: { "aria-label": t("helper.toggleDisassemblyLabel"), "aria-pressed": "false" },
+  }));
   disassembleBtn.appendChild(createSvgIcon(`<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 17h6"/><path d="M17 14v6"/>`));
   disassembleBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -294,31 +344,40 @@ export function createHelperButtons(
   });
 
   // Reset disassembled parts button
-  const resetPartsBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetPartsLabel") } }));
+  const resetPartsBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetPartsLabel") } }));
   resetPartsBtn.appendChild(createSvgIcon(`<path d="M3 12a9 9 0 109-9"/><path d="M3 4v8h8"/><rect x="14" y="14" width="5" height="5" rx="1"/>`));
   resetPartsBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.resetDisassembly) return;
     preview.resetDisassembly();
+    syncCapabilities();
     showTooltip(resetPartsBtn, t("helper.partsReset"));
   });
 
   // Resolution scale cycle button (percentage display)
   const RES_PRESETS = [0.5, 0.75, 1.0, 1.5, 2.0];
-  let resIndex = 2; // default 1.0x
-  const resBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn ai3d-res-btn", attr: { "aria-label": t("helper.changeResolutionLabel") } }));
-  resBtn.textContent = "1.0x";
+  const configuredScale = getSettings?.().renderScale ?? 1.0;
+  let resIndex = RES_PRESETS.reduce((bestIndex, value, index) => {
+    const currentDelta = Math.abs(value - configuredScale);
+    const bestDelta = Math.abs(RES_PRESETS[bestIndex] - configuredScale);
+    return currentDelta < bestDelta ? index : bestIndex;
+  }, 2);
+  const resBtn = markSecondary(viewGroup.createEl("button", { cls: "ai3d-inline-btn ai3d-res-btn", attr: { "aria-label": t("helper.changeResolutionLabel") } }));
+  resBtn.textContent = `${RES_PRESETS[resIndex].toFixed(1)}x`;
   resBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.setRenderScale) return;
     resIndex = (resIndex + 1) % RES_PRESETS.length;
     const applied = preview.setRenderScale(RES_PRESETS[resIndex]);
-    resBtn.textContent = `${applied}x`;
+    resBtn.textContent = `${applied.toFixed(1)}x`;
     showTooltip(resBtn, formatT("helper.resolutionValue", { value: `${applied}x` }));
   });
 
   // Animation play/pause button (play triangle — hidden until animations detected)
-  const animBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn is-hidden", attr: { "aria-label": t("helper.toggleAnimationLabel") } }));
+  const animBtn = markSecondary(viewGroup.createEl("button", {
+    cls: "ai3d-inline-btn is-hidden",
+    attr: { "aria-label": t("helper.toggleAnimationLabel"), "aria-pressed": "false" },
+  }));
   animBtn.appendChild(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
   animBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -327,16 +386,17 @@ export function createHelperButtons(
     animBtn.replaceChildren(createSvgIcon(playing
       ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
       : `<polygon points="5 3 19 12 5 21 5 3"/>`));
+    setTogglePressed(animBtn, playing);
     showTooltip(animBtn, playing ? t("helper.playing") : t("helper.paused"));
   });
 
   // Remove button (trash)
-  const removeBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.removePreviewLabel") } });
+  const removeBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.removePreviewLabel") } }));
   removeBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>`));
   removeBtn.addEventListener("click", onRemove);
 
   // Copy snapshot button (clipboard)
-  const copyBtn = toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySnapshotLabel") } });
+  const copyBtn = outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySnapshotLabel") } });
   copyBtn.appendChild(createSvgIcon(`<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>`));
   copyBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -359,7 +419,7 @@ export function createHelperButtons(
   });
 
   // Save to vault button (disk)
-  const saveBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.saveSnapshotLabel") } }));
+  const saveBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.saveSnapshotLabel") } }));
   saveBtn.appendChild(createSvgIcon(`<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>`));
   saveBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -409,7 +469,7 @@ export function createHelperButtons(
   });
 
   // Download snapshot button (download arrow)
-  const downloadBtn = markSecondary(toolbar.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.downloadSnapshotLabel") } }));
+  const downloadBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.downloadSnapshotLabel") } }));
   downloadBtn.appendChild(createSvgIcon(`<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>`));
   downloadBtn.addEventListener("click", () => {
     const preview = getPreview();
@@ -435,45 +495,49 @@ export function createHelperButtons(
   });
 
   // Annotation toggle button (tag/label icon — hidden until explicitly shown)
-  const annotBtn = markSecondary(toolbar.createEl("button", {
+  const annotBtn = markSecondary(inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn is-hidden ai3d-annot-btn",
-    attr: { "aria-label": t(resolvedAnnotationCopy.labelKey) },
+    attr: { "aria-label": t(resolvedAnnotationCopy.labelKey), "aria-pressed": "false" },
   }));
   annotBtn.appendChild(createSvgIcon(`<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>`));
   const annotBadge = annotBtn.createSpan({ cls: "ai3d-pin-badge is-hidden" });
   annotBtn.addEventListener("click", () => {
     if (!onToggleAnnotate) return;
     const active = onToggleAnnotate();
-    annotBtn.classList.toggle("ai3d-btn-active", active);
+    setTogglePressed(annotBtn, active);
     showTooltip(
       annotBtn,
       active ? t(resolvedAnnotationCopy.activeTooltipKey) : t(resolvedAnnotationCopy.inactiveTooltipKey),
     );
   });
 
-  const showMoreBtn = mobile
-    ? toolbar.createEl("button", {
-      cls: "ai3d-inline-btn ai3d-mobile-more-toggle",
-      attr: { "aria-label": t("helper.showMoreActionsLabel") },
-    })
-    : null;
-  showMoreBtn?.appendChild(createSvgIcon(`<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>`));
-  showMoreBtn?.addEventListener("click", () => {
-    mobileExpanded = !mobileExpanded;
-    showMoreBtn.setAttribute("aria-label", mobileExpanded ? t("helper.hideMoreActionsLabel") : t("helper.showMoreActionsLabel"));
-    renderMobileButtons();
-    showTooltip(showMoreBtn, mobileExpanded ? t("helper.moreActionsShown") : t("helper.moreActionsHidden"));
+  const showMoreBtn = toolbar.createEl("button", {
+    cls: "ai3d-inline-btn ai3d-mobile-more-toggle",
+    attr: { "aria-label": t("helper.showMoreActionsLabel"), "aria-pressed": "false" },
+  });
+  showMoreBtn.appendChild(createSvgIcon(`<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>`));
+  showMoreBtn.addEventListener("click", () => {
+    toolbarExpanded = !toolbarExpanded;
+    showMoreBtn.setAttribute("aria-label", toolbarExpanded ? t("helper.hideMoreActionsLabel") : t("helper.showMoreActionsLabel"));
+    renderToolbarButtons();
+    showTooltip(showMoreBtn, toolbarExpanded ? t("helper.moreActionsShown") : t("helper.moreActionsHidden"));
   });
 
   // Move toolbar to sit right after previewHost
   parentEl.insertBefore(toolbar, previewHost.nextSibling);
 
-  renderMobileButtons();
+  renderToolbarButtons();
   syncCapabilities();
 
   return {
-    showAnimButton() { animBtn.classList.remove("is-hidden"); },
-    showAnnotateButton() { annotBtn.classList.remove("is-hidden"); },
+    showAnimButton() {
+      animBtn.classList.remove("is-hidden");
+      syncGroupVisibility();
+    },
+    showAnnotateButton() {
+      annotBtn.classList.remove("is-hidden");
+      syncGroupVisibility();
+    },
     updateAnnotationBadge(count: number) {
       if (count > 0) {
         annotBadge.textContent = String(count);
@@ -495,10 +559,7 @@ const activeTooltips = new WeakMap<HTMLElement, HTMLElement>();
 
 function showTooltip(anchor: HTMLElement, text: string): void {
   activeTooltips.get(anchor)?.remove();
-  // Create on anchor's parent (in DOM) to inherit Obsidian theme colors
-  const parent = anchor.parentElement;
-  if (!parent) return;
-  const tip = parent.createDiv({ cls: "ai3d-tooltip" });
+  const tip = anchor.createSpan({ cls: "ai3d-tooltip" });
   tip.textContent = text;
   activeTooltips.set(anchor, tip);
   window.setTimeout(() => { tip.remove(); activeTooltips.delete(anchor); }, 1500);

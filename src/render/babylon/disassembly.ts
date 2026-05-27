@@ -53,8 +53,12 @@ class BabylonDisassemblyAdapter
   private readonly scene: Scene;
   private readonly camera: ArcRotateCamera;
   private readonly meshes: AbstractMesh[];
+  private readonly occlusionDirection = Vector3.Zero();
+  private readonly occlusionRay = new Ray(Vector3.Zero(), Vector3.Zero(), 1);
   private lastOccluded = false;
   private selected: AbstractMesh | null = null;
+  private partPointerActive = false;
+  private activePointerId: number | null = null;
 
   constructor(scene: Scene, camera: ArcRotateCamera, meshes: AbstractMesh[]) {
     this.scene = scene;
@@ -95,14 +99,52 @@ class BabylonDisassemblyAdapter
   }
 
   subscribe(subscriptions: PreviewDisassemblySubscriptions): () => void {
+    const canvas = this.scene.getEngine().getRenderingCanvas();
+    canvas?.classList.add("ai3d-disassembly-active");
+
     const pointerObserver = this.scene.onPointerObservable.add((pointerInfo) => {
       const event = pointerInfo.event as PointerEvent;
+      if (event.isPrimary === false) return;
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
-        subscriptions.onPointerDown(pointerInfo.pickInfo?.pickedMesh ?? null, event);
+        if (event.button !== 0) return;
+        const target = pointerInfo.pickInfo?.pickedMesh ?? null;
+        this.partPointerActive = !!this.resolvePart(target);
+        if (this.partPointerActive) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.activePointerId = event.pointerId;
+          try {
+            canvas?.setPointerCapture?.(event.pointerId);
+          } catch {
+            // Synthetic verification events may not be active pointer captures.
+          }
+          this.camera.detachControl();
+        }
+        subscriptions.onPointerDown(target, event);
       } else if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
+        if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
+        if (this.partPointerActive) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         subscriptions.onPointerMove(event);
       } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
+        if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
+        if (this.partPointerActive) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         subscriptions.onPointerUp(event);
+        if (this.activePointerId !== null && canvas?.hasPointerCapture?.(this.activePointerId)) {
+          try {
+            canvas.releasePointerCapture(this.activePointerId);
+          } catch {
+            // Pointer capture may already be gone after canceled touch/pointer sequences.
+          }
+        }
+        this.partPointerActive = false;
+        this.activePointerId = null;
+        this.camera.attachControl(this.scene.getEngine().getRenderingCanvas(), true);
       }
     });
     const renderObserver = this.scene.onAfterRenderCameraObservable.add((camera) => {
@@ -114,6 +156,17 @@ class BabylonDisassemblyAdapter
     return () => {
       this.scene.onPointerObservable.remove(pointerObserver);
       this.scene.onAfterRenderCameraObservable.remove(renderObserver);
+      canvas?.classList.remove("ai3d-disassembly-active", "ai3d-disassembly-dragging");
+      if (this.activePointerId !== null && canvas?.hasPointerCapture?.(this.activePointerId)) {
+        try {
+          canvas.releasePointerCapture(this.activePointerId);
+        } catch {
+          // Pointer capture may already be gone after canceled touch/pointer sequences.
+        }
+      }
+      this.partPointerActive = false;
+      this.activePointerId = null;
+      this.camera.attachControl(canvas, true);
     };
   }
 
@@ -149,6 +202,7 @@ class BabylonDisassemblyAdapter
 
     event.preventDefault();
     event.stopPropagation();
+    this.scene.getEngine().getRenderingCanvas()?.classList.add("ai3d-disassembly-dragging");
 
     part.setParent(null);
     part.computeWorldMatrix(true);
@@ -200,8 +254,9 @@ class BabylonDisassemblyAdapter
   }
 
   endDrag(state: DragState | null): void {
-    if (!state) return;
+    this.scene.getEngine().getRenderingCanvas()?.classList.remove("ai3d-disassembly-dragging");
     this.camera.attachControl(this.scene.getEngine().getRenderingCanvas(), true);
+    if (!state) return;
   }
 
   updateSelectionOcclusion(part: AbstractMesh): void {
@@ -214,13 +269,16 @@ class BabylonDisassemblyAdapter
     if (!lineOfSight) {
       return;
     }
-    const direction = new Vector3(
+    const direction = this.occlusionDirection;
+    direction.set(
       lineOfSight.direction.x,
       lineOfSight.direction.y,
       lineOfSight.direction.z,
     );
-    const ray = new Ray(cameraPosition, direction, lineOfSight.distance);
-    const hit = this.scene.pickWithRay(ray);
+    this.occlusionRay.origin = cameraPosition;
+    this.occlusionRay.direction = direction;
+    this.occlusionRay.length = lineOfSight.distance;
+    const hit = this.scene.pickWithRay(this.occlusionRay);
     const occluded = !!hit?.hit
       && isPreviewHitOccluded(hit.distance, lineOfSight.distance, lineOfSight.epsilon);
 

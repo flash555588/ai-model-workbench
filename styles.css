@@ -57,6 +57,19 @@ body {
   display: block;
 }
 
+.ai3d-preview-host canvas.ai3d-disassembly-active,
+.ai3d-grid-host canvas.ai3d-disassembly-active,
+.ai3d-embed-preview canvas.ai3d-disassembly-active {
+  cursor: grab;
+  touch-action: none;
+}
+
+.ai3d-preview-host canvas.ai3d-disassembly-dragging,
+.ai3d-grid-host canvas.ai3d-disassembly-dragging,
+.ai3d-embed-preview canvas.ai3d-disassembly-dragging {
+  cursor: grabbing;
+}
+
 .ai3d-preview-host.is-mobile-scroll-mode canvas,
 .ai3d-grid-host.is-mobile-scroll-mode canvas,
 .ai3d-embed-preview.is-mobile-scroll-mode .ai3d-embed-canvas {
@@ -256,9 +269,11 @@ body {
 /* --- Inline Helper Toolbar (outside preview) --- */
 
 .ai3d-helper-toolbar {
+  container-type: inline-size;
   position: relative;
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 4px 2px;
   margin-top: -1px;
@@ -275,6 +290,28 @@ body {
   padding: 6px 4px;
 }
 
+.ai3d-helper-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ai3d-helper-group + .ai3d-helper-group {
+  margin-left: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.ai3d-helper-toolbar.is-mobile .ai3d-helper-group {
+  gap: 4px;
+}
+
+.ai3d-helper-toolbar.is-mobile .ai3d-helper-group + .ai3d-helper-group {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+}
+
 .ai3d-helper-toolbar.is-mobile .ai3d-inline-btn.is-secondary {
   display: none;
 }
@@ -283,7 +320,16 @@ body {
   display: flex;
 }
 
+.ai3d-helper-toolbar.is-mobile:not(.show-secondary) .ai3d-helper-group-inspect:not(:has(.ai3d-inline-btn:not(.is-secondary):not(.is-hidden))) {
+  display: none;
+}
+
+.ai3d-helper-toolbar .ai3d-mobile-more-toggle {
+  display: none;
+}
+
 .ai3d-inline-btn {
+  position: relative;
   width: 28px;
   height: 28px;
   display: flex;
@@ -322,7 +368,43 @@ body {
 }
 
 .ai3d-helper-toolbar.is-mobile .ai3d-mobile-more-toggle {
+  display: flex;
   margin-left: auto;
+}
+
+@container (max-width: 420px) {
+  .ai3d-helper-toolbar-adaptive {
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 6px 4px;
+  }
+
+  .ai3d-helper-toolbar-adaptive .ai3d-helper-group {
+    gap: 4px;
+  }
+
+  .ai3d-helper-toolbar-adaptive .ai3d-helper-group + .ai3d-helper-group {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .ai3d-helper-toolbar-adaptive .ai3d-inline-btn.is-secondary {
+    display: none;
+  }
+
+  .ai3d-helper-toolbar-adaptive.show-secondary .ai3d-inline-btn.is-secondary {
+    display: flex;
+  }
+
+  .ai3d-helper-toolbar-adaptive:not(.show-secondary) .ai3d-helper-group-inspect:not(:has(.ai3d-inline-btn:not(.is-secondary):not(.is-hidden))) {
+    display: none;
+  }
+
+  .ai3d-helper-toolbar-adaptive .ai3d-mobile-more-toggle {
+    display: flex;
+    margin-left: auto;
+  }
 }
 
 .ai3d-inline-btn:hover {
@@ -707,10 +789,10 @@ body {
 
 /* Occluded pin (behind model geometry) */
 .ai3d-annotation-pin.ai3d-pin-occluded {
-  opacity: 0.25;
-  filter: blur(1.5px) drop-shadow(0 0 4px rgba(255, 255, 255, 0.15));
-  background: rgba(0, 0, 0, 0.3);
-  border-color: rgba(255, 255, 255, 0.06);
+  opacity: 0.28;
+  filter: blur(1.2px) grayscale(0.35) drop-shadow(0 0 4px rgba(255, 255, 255, 0.15));
+  background: rgba(0, 0, 0, 0.32);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .ai3d-annotation-pin.ai3d-pin-occluded .ai3d-pin-dot {
@@ -718,10 +800,10 @@ body {
 }
 
 .ai3d-annotation-pin.ai3d-pin-occluded .ai3d-pin-label {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.54);
 }
 
-/* Fully hidden pin (camera idle + occluded) */
+/* Fully hidden pin (behind camera or outside the projected viewport) */
 .ai3d-annotation-pin.ai3d-pin-hidden {
   visibility: hidden;
   opacity: 0;

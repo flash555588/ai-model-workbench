@@ -57,12 +57,21 @@ class ThreeDisassemblyAdapter
   private readonly canvas: HTMLCanvasElement;
   private readonly meshes: Mesh[];
   private readonly controls: { enabled: boolean };
+  private readonly invalidate: () => void;
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
+  private readonly tempBox = new Box3();
+  private readonly tempCenter = new Vector3();
+  private readonly tempDirection = new Vector3();
+  private readonly tempCameraForward = new Vector3();
+  private readonly tempCameraRight = new Vector3();
+  private readonly tempCameraUp = new Vector3();
   private selectionHelper: BoxHelper | null = null;
   private lastOccluded = false;
   private selected: Mesh | null = null;
   private lastPointerDown: { x: number; y: number } | null = null;
+  private partPointerActive = false;
+  private activePointerId: number | null = null;
 
   constructor(
     scene: Scene,
@@ -70,12 +79,18 @@ class ThreeDisassemblyAdapter
     canvas: HTMLCanvasElement,
     meshes: Mesh[],
     controls: { enabled: boolean },
+    requestRender: () => void,
   ) {
     this.scene = scene;
     this.camera = camera;
     this.canvas = canvas;
     this.meshes = meshes;
     this.controls = controls;
+    this.invalidate = requestRender;
+  }
+
+  requestRender(): void {
+    this.invalidate();
   }
 
   getParts(): readonly Mesh[] {
@@ -107,22 +122,58 @@ class ThreeDisassemblyAdapter
     part.quaternion.copy(transform.quaternion);
     part.scale.copy(transform.scale);
     part.updateMatrixWorld(true);
+    this.requestRender();
   }
 
   subscribe(subscriptions: PreviewDisassemblySubscriptions): () => void {
+    this.canvas.classList.add("ai3d-disassembly-active");
+
     const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || event.isPrimary === false) return;
       this.lastPointerDown = { x: event.clientX, y: event.clientY };
       const target = this.resolvePickTarget(event);
+      this.partPointerActive = !!target;
+      if (this.partPointerActive) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.controls.enabled = false;
+        this.activePointerId = event.pointerId;
+        try {
+          this.canvas.setPointerCapture?.(event.pointerId);
+        } catch {
+          // Synthetic verification events may not be active pointer captures.
+        }
+      }
       subscriptions.onPointerDown(target, event);
     };
 
     const handlePointerMove = (event: PointerEvent) => {
+      if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
+      if (this.partPointerActive) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       subscriptions.onPointerMove(event);
     };
 
     const handlePointerUp = (event: PointerEvent) => {
+      if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
+      if (this.partPointerActive) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       this.lastPointerDown = null;
       subscriptions.onPointerUp(event);
+      this.partPointerActive = false;
+      if (this.activePointerId !== null && this.canvas.hasPointerCapture?.(this.activePointerId)) {
+        try {
+          this.canvas.releasePointerCapture(this.activePointerId);
+        } catch {
+          // Pointer capture may already be gone after canceled touch/pointer sequences.
+        }
+      }
+      this.activePointerId = null;
+      this.controls.enabled = true;
     };
 
     this.canvas.addEventListener("pointerdown", handlePointerDown);
@@ -133,6 +184,17 @@ class ThreeDisassemblyAdapter
       this.canvas.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+      this.canvas.classList.remove("ai3d-disassembly-active", "ai3d-disassembly-dragging");
+      this.partPointerActive = false;
+      if (this.activePointerId !== null && this.canvas.hasPointerCapture?.(this.activePointerId)) {
+        try {
+          this.canvas.releasePointerCapture(this.activePointerId);
+        } catch {
+          // Pointer capture may already be gone after canceled touch/pointer sequences.
+        }
+      }
+      this.activePointerId = null;
+      this.controls.enabled = true;
     };
   }
 
@@ -154,6 +216,7 @@ class ThreeDisassemblyAdapter
       this.selectionHelper = new BoxHelper(part, BBOX_VISIBLE);
       this.scene.add(this.selectionHelper);
     }
+    this.requestRender();
   }
 
   beginDrag(part: Mesh, event: PointerEvent): DragState | null {
@@ -165,20 +228,24 @@ class ThreeDisassemblyAdapter
 
     part.removeFromParent();
     this.scene.add(part);
+    this.canvas.classList.add("ai3d-disassembly-dragging");
 
     let mode: "move" | "rotate" = "move";
     if (event.shiftKey) {
       mode = "rotate";
     }
 
-    const pivot = new Box3().setFromObject(part).getCenter(new Vector3());
+    const pivot = this.tempBox.setFromObject(part).getCenter(this.tempCenter).clone();
+    const camForward = this.tempCameraForward;
+    this.camera.getWorldDirection(camForward);
     const plane = createPreviewPlane(
       toPreviewWorldPoint(startPoint),
-      toPreviewWorldPoint(this.camera.position.clone().normalize()),
+      toPreviewWorldPoint(camForward),
     );
     if (!plane) return null;
 
     this.controls.enabled = false;
+    this.requestRender();
     return {
       mesh: part,
       mode,
@@ -207,16 +274,19 @@ class ThreeDisassemblyAdapter
     const offset = point.clone().sub(state.startPoint);
     state.mesh.position.copy(state.startPosition).add(offset);
     state.mesh.updateMatrixWorld(true);
+    this.requestRender();
   }
 
   endDrag(state: DragState | null): void {
-    if (!state) return;
     this.controls.enabled = true;
+    this.canvas.classList.remove("ai3d-disassembly-dragging");
+    this.requestRender();
+    if (!state) return;
   }
 
   updateSelectionOcclusion(part: Mesh): void {
-    const box = new Box3().setFromObject(part);
-    const center = box.getCenter(new Vector3());
+    const box = this.tempBox.setFromObject(part);
+    const center = box.getCenter(this.tempCenter);
     const cameraPos = this.camera.position;
 
     const lineOfSight = createPreviewLineOfSight(
@@ -225,7 +295,7 @@ class ThreeDisassemblyAdapter
     );
     if (!lineOfSight) return;
 
-    const direction = new Vector3(
+    const direction = this.tempDirection.set(
       lineOfSight.direction.x,
       lineOfSight.direction.y,
       lineOfSight.direction.z,
@@ -241,6 +311,7 @@ class ThreeDisassemblyAdapter
       this.lastOccluded = occluded;
       if (this.selectionHelper) {
         this.selectionHelper.material.color.set(occluded ? BBOX_OCCLUDED : BBOX_VISIBLE);
+        this.requestRender();
       }
     }
   }
@@ -253,13 +324,13 @@ class ThreeDisassemblyAdapter
     const dx = event.clientX - state.pointerX;
     const dy = event.clientY - state.pointerY;
 
-    const camForward = new Vector3();
+    const camForward = this.tempCameraForward;
     this.camera.getWorldDirection(camForward);
-    const camRight = new Vector3().crossVectors(
-      this.camera.up.clone().normalize(),
+    const camUp = this.tempCameraUp.copy(this.camera.up).normalize();
+    const camRight = this.tempCameraRight.crossVectors(
+      camUp,
       camForward,
     ).normalize();
-    const camUp = this.camera.up.clone().normalize();
 
     const result = applyPreviewRotationDrag({
       startPosition: toPreviewWorldPoint(state.startPosition),
@@ -281,6 +352,7 @@ class ThreeDisassemblyAdapter
       result.rotationQuaternion.w,
     );
     state.mesh.updateMatrixWorld(true);
+    this.requestRender();
   }
 
   private resolvePickTarget(event: PointerEvent): Mesh | null {
@@ -293,9 +365,9 @@ class ThreeDisassemblyAdapter
   }
 
   private getPointOnDragPlane(mesh: Mesh, event: PointerEvent): Vector3 | null {
-    const box = new Box3().setFromObject(mesh);
-    const center = box.getCenter(new Vector3());
-    const camForward = new Vector3();
+    const box = this.tempBox.setFromObject(mesh);
+    const center = box.getCenter(this.tempCenter);
+    const camForward = this.tempCameraForward;
     this.camera.getWorldDirection(camForward);
     const plane = createPreviewPlane(
       toPreviewWorldPoint(center),
@@ -330,8 +402,9 @@ export function createThreeDisassemblyController(
   canvas: HTMLCanvasElement,
   meshes: Mesh[],
   controls: { enabled: boolean },
+  requestRender: () => void,
 ): PreviewDisassemblyController {
   return createPreviewDisassemblyController(
-    new ThreeDisassemblyAdapter(scene, camera, canvas, meshes, controls),
+    new ThreeDisassemblyAdapter(scene, camera, canvas, meshes, controls, requestRender),
   );
 }

@@ -5,19 +5,33 @@ import {
   BoxHelper,
   Color,
   DirectionalLight,
+  GridHelper,
+  HemisphereLight,
+  Light,
   Material,
   Mesh,
+  NoToneMapping,
   Object3D,
+  OrthographicCamera,
+  PCFSoftShadowMap,
   PerspectiveCamera,
+  PlaneGeometry,
+  PointLight,
+  PMREMGenerator,
   Raycaster,
   Scene,
+  ShadowMaterial,
+  SpotLight,
+  SRGBColorSpace,
+  Texture,
   Vector2,
   Vector3,
+  WebGLRenderTarget,
   WebGLRenderer,
   AxesHelper,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import {
   loadThreeGLTF,
   loadThreeSTL,
@@ -26,11 +40,13 @@ import {
 } from "./loaders";
 import type {
   CameraConfig,
+  LightConfig,
   ModelPartSummary,
   ModelPreviewSummary,
   SceneConfig,
   ThreeDBlockConfig,
 } from "../../domain/models";
+import { isMobile } from "../../utils/device";
 import {
   createPreviewBounds,
   getPreviewBoundsCenter,
@@ -60,7 +76,12 @@ import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
-const FOCUS_DIM_OPACITY = 0.242;
+const FOCUS_DIM_OPACITY = 0.68;
+const FOCUS_DIM_TINT = new Color("#dfe3ea");
+const FOCUS_DIM_TINT_MIX = 0.12;
+const DEFAULT_SHADOW_OPACITY = 0.28;
+
+type ShadowCastingLight = DirectionalLight | PointLight | SpotLight;
 
 function isMesh(value: unknown): value is Mesh {
   return value instanceof Mesh;
@@ -68,6 +89,10 @@ function isMesh(value: unknown): value is Mesh {
 
 function isDisposable(value: unknown): value is { dispose(): void } {
   return !!value && typeof value === "object" && "dispose" in value && typeof value.dispose === "function";
+}
+
+function isShadowCastingLight(light: Light): light is ShadowCastingLight {
+  return light instanceof DirectionalLight || light instanceof PointLight || light instanceof SpotLight;
 }
 
 function materialList(material: Material | Material[] | undefined | null): Material[] {
@@ -92,6 +117,19 @@ function describeMaterial(material: Material | null | undefined): string | null 
   return material.name || material.type || `material-${material.uuid}`;
 }
 
+function createFocusDimMaterial(material: Material): Material {
+  const clone = material.clone();
+  const record = clone as unknown as { color?: unknown };
+  clone.transparent = true;
+  clone.opacity = FOCUS_DIM_OPACITY;
+  clone.depthWrite = false;
+  if (record.color instanceof Color) {
+    record.color.lerp(FOCUS_DIM_TINT, FOCUS_DIM_TINT_MIX);
+  }
+  clone.needsUpdate = true;
+  return clone;
+}
+
 function getObjectPreviewBounds(object: Object3D) {
   const box = new Box3().setFromObject(object);
   return createPreviewBounds(
@@ -113,7 +151,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly annotationProjection = new Vector3();
   private readonly annotationDirection = new Vector3();
   private readonly clock = { last: performance.now() };
-  private readonly gltfLoader = new GLTFLoader();
+  private readonly defaultLights: Light[] = [];
+  private readonly configLights: Light[] = [];
+  private environmentTarget: WebGLRenderTarget | null = null;
   private rootObject: Object3D | null = null;
   private loadedExt = "";
   private renderHandle = 0;
@@ -121,8 +161,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private renderScale = 1;
   private axesHelper: AxesHelper | null = null;
   private bboxHelper: BoxHelper | null = null;
+  private groundShadowMesh: Mesh | null = null;
+  private gridHelper: GridHelper | null = null;
   private bboxEnabled = false;
   private wireframeEnabled = false;
+  private sceneConfig: SceneConfig = {};
   private focusSelectionEnabled = false;
   private focusedMesh: Mesh | null = null;
   private highlightedMesh: Mesh | null = null;
@@ -149,24 +192,34 @@ export class ThreeModelPreview implements WorkbenchPreview {
     event.stopPropagation();
   };
   private readonly handlePointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
     this.lastPointerDown = { x: event.clientX, y: event.clientY };
   };
   private readonly handlePointerUp = (event: PointerEvent) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
     const down = this.lastPointerDown;
     this.lastPointerDown = null;
     if (!down) return;
     if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4) return;
+    if (this.disassembly?.isEnabled()) return;
     this.dispatchPick(event);
   };
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    this.renderer.outputColorSpace = SRGBColorSpace;
+    this.renderer.toneMapping = NoToneMapping;
+    this.renderer.toneMappingExposure = 1;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = PCFSoftShadowMap;
     this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
 
     this.scene = new Scene();
+    this.installGlobalEnvironment();
     this.camera = new PerspectiveCamera(this.initialFov, 1, 0.01, 2000);
     this.camera.position.copy(this.initialPosition);
     this.camera.lookAt(this.initialTarget);
+    this.scene.add(this.camera);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -174,10 +227,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls.screenSpacePanning = true;
     this.controls.target.copy(this.initialTarget);
 
-    this.scene.add(new AmbientLight(0xffffff, 1.8));
-    const keyLight = new DirectionalLight(0xffffff, 1.2);
-    keyLight.position.set(4, 8, 6);
-    this.scene.add(keyLight);
+    this.installDefaultLighting();
 
     this.resizeObs = new ResizeObserver(() => this.resizeRenderer());
     this.resizeObs.observe(canvas);
@@ -218,6 +268,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.rootObject = root;
     this.scene.add(root);
     this.invalidateMeshCache();
+    this.prepareModelForQuality(root);
+    this.updateShadowFraming();
+    this.syncSceneHelpers();
     this.markDirty();
 
     if (animations.length > 0) {
@@ -245,6 +298,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   applyConfig(config: ThreeDBlockConfig): void {
     if (config.camera) this.applyCameraConfig(config.camera);
+    if (config.lights) this.applyLightConfig(config.lights);
     if (config.scene) this.applySceneConfig(config.scene);
   }
 
@@ -259,6 +313,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
     this.clearLoadedModel();
+    for (const light of this.configLights) {
+      this.disposeConfiguredLight(light);
+    }
+    this.configLights.length = 0;
+    for (const light of this.defaultLights) {
+      this.disposeConfiguredLight(light);
+    }
+    this.defaultLights.length = 0;
+    this.disposeGlobalEnvironment();
     this.controls.dispose();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("wheel", this.preventCanvasWheelScroll);
@@ -342,25 +405,36 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   resetView(): void {
+    if (this.rootObject) {
+      resetThreeExplode(this.rootObject);
+    }
+    this.resetDisassembly();
     this.clearFocusedMesh();
+    this.clearSelectionHighlight();
     this.camera.fov = this.initialFov;
     this.camera.position.copy(this.initialPosition);
     this.camera.updateProjectionMatrix();
     this.controls.target.copy(this.initialTarget);
     this.controls.update();
+    this.markDirty();
+    this.renderNow(performance.now());
   }
 
   toggleFocusSelection(): boolean {
-    this.focusSelectionEnabled = !this.focusSelectionEnabled;
+    const nextEnabled = !this.focusSelectionEnabled;
+    if (nextEnabled && this.disassembly?.isEnabled()) {
+      this.disassembly.setEnabled(false);
+    }
+    this.focusSelectionEnabled = nextEnabled;
     if (!this.focusSelectionEnabled) {
       this.clearFocusedMesh();
-      this.updateSelectionHighlight(this._lastPickResult.mesh instanceof Mesh ? this._lastPickResult.mesh : null);
-    } else if (this._lastPickResult.mesh instanceof Mesh) {
-      this.clearSelectionHighlight();
-      this.setFocusedMesh(this._lastPickResult.mesh);
     } else {
       this.clearSelectionHighlight();
+      if (this._lastPickResult.mesh instanceof Mesh) {
+        this.setFocusedMesh(this._lastPickResult.mesh);
+      }
     }
+    this.markDirty();
     return this.focusSelectionEnabled;
   }
 
@@ -424,6 +498,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.quality = quality;
     this.renderScale = renderScale;
+    this.applyShadowQuality();
     this.resizeRenderer();
   }
 
@@ -457,7 +532,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
   toggleDisassembly(): boolean {
     this.ensureDisassembly();
     if (!this.disassembly) return false;
-    const enabled = this.disassembly.toggle();
+    const nextEnabled = !this.disassembly.isEnabled();
+    if (nextEnabled) {
+      this.focusSelectionEnabled = false;
+      this.clearFocusedMesh();
+      this.clearSelectionHighlight();
+    }
+    const enabled = this.disassembly.setEnabled(nextEnabled);
     if (!enabled) {
       this.disassembly.reset();
     }
@@ -484,6 +565,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.renderer.domElement,
       meshes,
       this.controls,
+      () => this.markDirty(),
     );
   }
 
@@ -532,13 +614,20 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.mixer.update(deltaSeconds);
     }
 
-    if (!cameraMoved && !animating && !this.renderDirty) return;
+    if (!cameraMoved && !animating && !this.renderDirty) {
+      this.notifyRenderObservers();
+      return;
+    }
     this.renderDirty = false;
 
     this.bboxHelper?.update();
     this.selectionHelper?.update();
     this.focusHelper?.update();
     this.renderer.render(this.scene, this.camera);
+    this.notifyRenderObservers();
+  }
+
+  private notifyRenderObservers(): void {
     for (const callback of this.renderObservers) {
       callback();
     }
@@ -553,7 +642,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1));
     const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
     const qualityScale = this.quality === "low" ? 0.5 : this.quality === "medium" ? 0.75 : 1;
-    this.renderer.setPixelRatio(window.devicePixelRatio * qualityScale * this.renderScale);
+    const mobileScale = isMobile() ? 0.85 : 1;
+    const pixelRatio = Math.min(2.5, window.devicePixelRatio * qualityScale * mobileScale * this.renderScale);
+    this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
@@ -565,18 +656,65 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.camera.fov = config.fov;
       this.camera.updateProjectionMatrix();
     }
+    if (config.position) {
+      this.camera.position.set(...config.position);
+    }
+    if (config.lookAt) {
+      this.controls.target.set(...config.lookAt);
+      this.camera.lookAt(this.controls.target);
+    }
+    if (typeof config.near === "number" && Number.isFinite(config.near)) {
+      this.camera.near = config.near;
+    }
+    if (typeof config.far === "number" && Number.isFinite(config.far)) {
+      this.camera.far = config.far;
+    }
+    if (typeof config.zoom === "number" && Number.isFinite(config.zoom)) {
+      this.camera.zoom = config.zoom;
+    }
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.markDirty();
+  }
+
+  private applyLightConfig(lights: LightConfig[]): void {
+    for (const light of this.configLights) {
+      this.disposeConfiguredLight(light);
+    }
+    this.configLights.length = 0;
+
+    const hasConfiguredLights = lights.length > 0;
+    for (const light of this.defaultLights) {
+      light.visible = !hasConfiguredLights;
+    }
+
+    for (const config of lights) {
+      const light = this.createConfiguredLight(config);
+      if (!light) continue;
+      this.configLights.push(light);
+      if (light.parent !== this.camera) {
+        this.scene.add(light);
+      }
+    }
+    this.updateShadowFraming();
+    this.markDirty();
   }
 
   private applySceneConfig(config: SceneConfig): void {
-    if (config.transparent) {
-      this.scene.background = null;
-      this.renderer.setClearColor(DEFAULT_BACKGROUND, 0);
-    } else if (config.background) {
-      this.scene.background = new Color(config.background);
-      this.renderer.setClearColor(new Color(config.background), 1);
-    } else {
-      this.scene.background = DEFAULT_BACKGROUND;
-      this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
+    this.sceneConfig = { ...this.sceneConfig, ...config };
+
+    if (config.transparent !== undefined || config.background !== undefined) {
+      if (this.sceneConfig.transparent) {
+        this.scene.background = null;
+        this.renderer.setClearColor(DEFAULT_BACKGROUND, 0);
+      } else if (this.sceneConfig.background) {
+        const background = new Color(this.sceneConfig.background);
+        this.scene.background = background;
+        this.renderer.setClearColor(background, 1);
+      } else {
+        this.scene.background = DEFAULT_BACKGROUND;
+        this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
+      }
     }
 
     if (typeof config.autoRotate === "boolean") {
@@ -586,16 +724,278 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.controls.autoRotateSpeed = config.autoRotateSpeed;
     }
     if (typeof config.axis === "boolean") {
-      if (!this.axesHelper) {
-        this.axesHelper = new AxesHelper(1.2);
-        this.scene.add(this.axesHelper);
-      }
-      this.axesHelper.visible = config.axis;
+      this.syncAxisHelper(config.axis);
     }
+    this.syncSceneHelpers();
+    this.markDirty();
+  }
+
+  private installDefaultLighting(): void {
+    const ambient = new AmbientLight(0xffffff, 0.96);
+    ambient.name = "default-global-ambient";
+
+    const hemi = new HemisphereLight(0xffffff, 0x6d7280, 0.34);
+    hemi.name = "default-hemi";
+
+    this.defaultLights.push(ambient, hemi);
+    for (const light of this.defaultLights) {
+      this.scene.add(light);
+    }
+  }
+
+  private installGlobalEnvironment(): void {
+    this.disposeGlobalEnvironment();
+    const pmrem = new PMREMGenerator(this.renderer);
+    const room = new RoomEnvironment();
+    this.environmentTarget = pmrem.fromScene(room, 0.04);
+    this.scene.environment = this.environmentTarget.texture;
+    this.scene.environmentIntensity = 0.48;
+    room.dispose();
+    pmrem.dispose();
+  }
+
+  private disposeGlobalEnvironment(): void {
+    this.scene.environment = null;
+    this.environmentTarget?.dispose();
+    this.environmentTarget = null;
+  }
+
+  private createConfiguredLight(config: LightConfig): Light | null {
+    const color = config.color ? new Color(config.color) : new Color(0xffffff);
+    const intensity = config.intensity ?? 1;
+
+    switch (config.type) {
+      case "ambient":
+        return new AmbientLight(color, intensity);
+      case "hemisphere": {
+        const ground = config.groundColor ? new Color(config.groundColor) : new Color(0x444444);
+        return new HemisphereLight(color, ground, intensity);
+      }
+      case "directional": {
+        const light = new DirectionalLight(color, intensity);
+        const position = config.position ?? [-1, 2, 1];
+        const target = config.target ?? [0, 0, 0];
+        light.position.set(...position);
+        light.target.position.set(...target);
+        this.scene.add(light.target);
+        light.castShadow = !!config.castShadow;
+        return light;
+      }
+      case "point": {
+        const light = new PointLight(color, intensity);
+        const position = config.position ?? [0, 5, 0];
+        light.position.set(...position);
+        light.castShadow = !!config.castShadow;
+        if (typeof config.decay === "number") {
+          light.decay = config.decay;
+        }
+        return light;
+      }
+      case "spot": {
+        const light = new SpotLight(color, intensity);
+        const position = config.position ?? [0, 5, 0];
+        const target = config.target ?? [0, 0, 0];
+        light.position.set(...position);
+        light.target.position.set(...target);
+        this.scene.add(light.target);
+        light.angle = config.angle ? (config.angle * Math.PI) / 180 : Math.PI / 4;
+        light.penumbra = config.penumbra ?? 0.5;
+        if (typeof config.decay === "number") {
+          light.decay = config.decay;
+        }
+        light.castShadow = !!config.castShadow;
+        return light;
+      }
+      case "attachToCam": {
+        const light = new PointLight(color, intensity);
+        this.camera.add(light);
+        return light;
+      }
+      default:
+        return null;
+    }
+  }
+
+  private disposeConfiguredLight(light: Light): void {
+    if (light instanceof DirectionalLight || light instanceof SpotLight) {
+      light.target.removeFromParent();
+    }
+    light.removeFromParent();
+    light.dispose();
+  }
+
+  private prepareModelForQuality(root: Object3D): void {
+    const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    root.traverse((object) => {
+      if (!isMesh(object)) return;
+      object.castShadow = true;
+      object.receiveShadow = true;
+      for (const material of materialList(object.material)) {
+        this.prepareMaterialForQuality(material, anisotropy);
+      }
+    });
+  }
+
+  private prepareMaterialForQuality(material: Material, anisotropy: number): void {
+    const record = material as unknown as Record<string, unknown>;
+    for (const value of Object.values(record)) {
+      if (value instanceof Texture) {
+        value.anisotropy = Math.max(value.anisotropy, anisotropy);
+        value.needsUpdate = true;
+      }
+    }
+    material.needsUpdate = true;
+  }
+
+  private applyShadowQuality(): void {
+    const size = this.shadowMapSize();
+    for (const light of this.allLights()) {
+      if (!isShadowCastingLight(light) || !light.castShadow) continue;
+      light.shadow.mapSize.set(size, size);
+      light.shadow.bias = -0.00012;
+      light.shadow.normalBias = 0.018;
+      light.shadow.needsUpdate = true;
+    }
+    this.markDirty();
+  }
+
+  private updateShadowFraming(): void {
+    if (!this.rootObject) return;
+    const box = new Box3().setFromObject(this.rootObject);
+    const center = box.getCenter(new Vector3());
+    const size = box.getSize(new Vector3());
+    const radius = Math.max(size.x, size.y, size.z, 1) * 1.8;
+
+    for (const light of this.allLights()) {
+      if (!isShadowCastingLight(light) || !light.castShadow) continue;
+      light.shadow.mapSize.set(this.shadowMapSize(), this.shadowMapSize());
+      light.shadow.bias = -0.00012;
+      light.shadow.normalBias = 0.018;
+
+      if (light instanceof DirectionalLight) {
+        const direction = light.position.clone().sub(light.target.position);
+        if (direction.lengthSq() < 0.001) {
+          direction.set(4, 7, 5);
+        }
+        light.target.position.copy(center);
+        if (!light.target.parent) {
+          this.scene.add(light.target);
+        }
+        light.position.copy(center).add(direction.normalize().multiplyScalar(radius * 2.4));
+
+        if (light.shadow.camera instanceof OrthographicCamera) {
+          const camera = light.shadow.camera;
+          camera.left = -radius;
+          camera.right = radius;
+          camera.top = radius;
+          camera.bottom = -radius;
+          camera.near = 0.1;
+          camera.far = radius * 5;
+          camera.updateProjectionMatrix();
+        }
+      }
+      light.shadow.needsUpdate = true;
+    }
+  }
+
+  private shadowMapSize(): number {
+    if (this.quality === "low") return 512;
+    if (this.quality === "medium") return 1024;
+    return 2048;
+  }
+
+  private allLights(): Light[] {
+    return [...this.defaultLights, ...this.configLights];
+  }
+
+  private syncSceneHelpers(): void {
+    if (this.sceneConfig.groundShadow) {
+      this.createGroundShadow();
+    } else {
+      this.removeGroundShadow();
+    }
+
+    if (this.sceneConfig.grid) {
+      this.createGrid();
+    } else {
+      this.removeGrid();
+    }
+
+    if (typeof this.sceneConfig.axis === "boolean") {
+      this.syncAxisHelper(this.sceneConfig.axis);
+    }
+  }
+
+  private syncAxisHelper(visible: boolean): void {
+    if (!this.axesHelper) {
+      this.axesHelper = new AxesHelper(1.2);
+      this.scene.add(this.axesHelper);
+    }
+    this.axesHelper.visible = visible;
+  }
+
+  private createGroundShadow(): void {
+    if (!this.rootObject || this.groundShadowMesh) return;
+    const bounds = getObjectPreviewBounds(this.rootObject);
+    const center = getPreviewBoundsCenter(bounds);
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const size = Math.max(boundsSize.x, boundsSize.z, 1) * 3;
+    const y = bounds.min.y - Math.max(size * 0.002, 0.002);
+
+    const mesh = new Mesh(
+      new PlaneGeometry(size, size),
+      new ShadowMaterial({ color: 0x000000, opacity: DEFAULT_SHADOW_OPACITY, transparent: true }),
+    );
+    mesh.name = "ai3d-ground-shadow";
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(center.x, y, center.z);
+    mesh.receiveShadow = true;
+    mesh.renderOrder = -1;
+    this.scene.add(mesh);
+    this.groundShadowMesh = mesh;
+  }
+
+  private removeGroundShadow(): void {
+    if (!this.groundShadowMesh) return;
+    this.groundShadowMesh.removeFromParent();
+    this.groundShadowMesh.geometry.dispose();
+    for (const material of materialList(this.groundShadowMesh.material)) {
+      material.dispose();
+    }
+    this.groundShadowMesh = null;
+  }
+
+  private createGrid(): void {
+    if (!this.rootObject || this.gridHelper) return;
+    const bounds = getObjectPreviewBounds(this.rootObject);
+    const center = getPreviewBoundsCenter(bounds);
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const size = Math.max(boundsSize.x, boundsSize.z, 1) * 2;
+
+    const grid = new GridHelper(size, 20, 0x6f7785, 0x343b46);
+    grid.name = "ai3d-grid";
+    grid.position.set(center.x, bounds.min.y - Math.max(size * 0.003, 0.003), center.z);
+    for (const material of materialList(grid.material)) {
+      material.transparent = true;
+      material.opacity = 0.42;
+    }
+    this.scene.add(grid);
+    this.gridHelper = grid;
+  }
+
+  private removeGrid(): void {
+    if (!this.gridHelper) return;
+    this.gridHelper.removeFromParent();
+    this.gridHelper.geometry.dispose();
+    for (const material of materialList(this.gridHelper.material)) {
+      material.dispose();
+    }
+    this.gridHelper = null;
   }
 
   private dispatchPick(event: PointerEvent): void {
     if (!this.rootObject) return;
+    if (this.disassembly?.isEnabled()) return;
 
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -637,6 +1037,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.bboxHelper?.removeFromParent();
     this.bboxHelper = null;
     this.bboxEnabled = false;
+    this.removeGroundShadow();
+    this.removeGrid();
     this.mixer = null;
     this.animationPlaying = false;
     if (!this.rootObject) return;
@@ -668,6 +1070,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.camera.near = fit.near;
     this.camera.far = fit.far;
     this.camera.updateProjectionMatrix();
+    this.markDirty();
   }
 
   private getAnnotationCameraStateKey(): string {
@@ -769,6 +1172,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.selectionHelper = new BoxHelper(mesh, 0x4a9eff);
     this.scene.add(this.selectionHelper);
     this.highlightedMesh = mesh;
+    this.markDirty();
   }
 
   private setFocusedMesh(mesh: Mesh | null): void {
@@ -799,19 +1203,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
         continue;
       }
 
-      candidate.material = materialList(this.originalMaterials.get(candidate.id) as Material | Material[]).map((material) => {
-        const clone = material.clone();
-        clone.transparent = true;
-        clone.opacity = FOCUS_DIM_OPACITY;
-        clone.needsUpdate = true;
-        return clone;
-      });
+      candidate.material = materialList(this.originalMaterials.get(candidate.id) as Material | Material[])
+        .map(createFocusDimMaterial);
     }
 
     this.focusHelper?.removeFromParent();
     this.focusHelper = new BoxHelper(mesh, 0x2ec4ff);
     this.scene.add(this.focusHelper);
     this.focusedMesh = mesh;
+    this.markDirty();
   }
 
   private clearFocusedMesh(): void {
@@ -841,12 +1241,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.focusHelper?.removeFromParent();
     this.focusHelper = null;
     this.focusedMesh = null;
+    this.markDirty();
   }
 
   private clearSelectionHighlight(): void {
     this.selectionHelper?.removeFromParent();
     this.selectionHelper = null;
     this.highlightedMesh = null;
+    this.markDirty();
   }
 
   private computePartSummary(mesh: Mesh): ModelPartSummary {

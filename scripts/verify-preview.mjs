@@ -356,10 +356,12 @@ async function verifyReadonlyPinMode(page, state) {
   assert(state?.mode === "readonly-pin", `Expected readonly-pin mode, received ${state?.mode ?? "unknown"}`);
   await page.waitForFunction(() => {
     const verify = window.__ai3dPreviewVerify;
-    return verify?.pinCount === 1 && verify.pinLabels?.[0] === "Center Pin";
+    return verify?.pinCount === 2
+      && verify.pinLabels?.includes("Center Pin")
+      && verify.pinLabels?.includes("Occluded Pin");
   }, null, { timeout: 5000 });
 
-  const pin = page.locator(".ai3d-annotation-pin").first();
+  const pin = page.locator(".ai3d-annotation-pin", { hasText: "Center Pin" }).first();
   await pin.waitFor({ state: "visible", timeout: 5000 });
   const pinLabel = (await pin.locator(".ai3d-pin-label").textContent()) ?? "";
   assert(pinLabel.includes("Center Pin"), `Readonly pin label was unexpected: ${pinLabel}`);
@@ -368,6 +370,109 @@ async function verifyReadonlyPinMode(page, state) {
   await pin.click();
   await page.waitForTimeout(200);
   assert(await page.locator(".ai3d-annotation-editor").count() === 0, "Readonly pin unexpectedly opened editor");
+
+  const occludedPin = page.locator(".ai3d-annotation-pin", { hasText: "Occluded Pin" }).first();
+  await occludedPin.waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForFunction(() => {
+    const pins = Array.from(document.querySelectorAll(".ai3d-annotation-pin"));
+    const pin = pins.find((entry) => entry.textContent?.includes("Occluded Pin"));
+    return pin?.classList.contains("ai3d-pin-occluded") ?? false;
+  }, null, { timeout: 5000 });
+}
+
+async function verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown) {
+  const focusOn = await page.evaluate(() => window.__ai3dPreview?.toggleFocusSelection());
+  assert(focusOn === true, "Focus selection did not turn on");
+
+  const focusedPartMarkdown = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+  assert(focusedPartMarkdown.includes("Part Info"), "Focus mode did not preserve the existing selected part");
+  assert(
+    focusedPartMarkdown === selectedPartMarkdown,
+    "Focus mode did not align to the previously selected part",
+  );
+}
+
+async function verifyThreeResetViewImmediate(page, route, summary) {
+  if (route?.backend !== "three") return;
+  if ((summary?.meshCount ?? 0) <= 1) return;
+
+  const result = await page.evaluate(async () => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement) || typeof preview.setExplode !== "function") {
+      return { skipped: true };
+    }
+
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const before = canvas.toDataURL("image/png");
+    preview.setExplode(0.75, "x");
+    await nextFrame();
+    await nextFrame();
+    const exploded = canvas.toDataURL("image/png");
+    preview.resetView();
+    const reset = canvas.toDataURL("image/png");
+
+    return {
+      skipped: false,
+      changedByExplode: before !== exploded,
+      changedByReset: exploded !== reset,
+    };
+  });
+
+  assert(!result.skipped, "Three reset verification could not access the preview");
+  assert(result.changedByExplode, "Explode did not change the rendered canvas before reset");
+  assert(result.changedByReset, "Reset view did not refresh the Three canvas immediately");
+}
+
+async function verifyThreeDisassemblyDragResponsive(page, route, pickPoint) {
+  if (route?.backend !== "three") return;
+
+  const setup = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement) || typeof preview.toggleDisassembly !== "function") {
+      return { skipped: true };
+    }
+
+    if (typeof preview.isFocusSelectionEnabled === "function" && preview.isFocusSelectionEnabled()) {
+      preview.toggleFocusSelection();
+    }
+    const enabled = preview.toggleDisassembly();
+    return {
+      skipped: false,
+      enabled,
+      before: canvas.toDataURL("image/png"),
+    };
+  });
+
+  assert(!setup.skipped, "Three disassembly verification could not access the preview");
+  assert(setup.enabled === true, "Disassembly mode did not turn on");
+
+  await page.mouse.move(pickPoint.clientX, pickPoint.clientY);
+  await page.mouse.down();
+  await page.mouse.move(pickPoint.clientX + 96, pickPoint.clientY + 16, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+
+  const result = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement)) {
+      return { skipped: true };
+    }
+    const after = canvas.toDataURL("image/png");
+    preview.resetDisassembly?.();
+    if (typeof preview.isDisassemblyEnabled === "function" && preview.isDisassemblyEnabled()) {
+      preview.toggleDisassembly();
+    }
+    return {
+      skipped: false,
+      after,
+    };
+  });
+
+  assert(!result.skipped, "Three disassembly verification could not read the canvas after drag");
+  assert(setup.before !== result.after, "Disassembly drag did not refresh the Three canvas immediately");
 }
 
 async function saveFailureArtifacts(page, browserMessages, error) {
@@ -474,12 +579,18 @@ async function verify() {
       `Wheel over preview scrolled the page: before=${beforeScroll}, after=${afterScroll}`,
     );
 
-    const focusOn = await page.evaluate(() => window.__ai3dPreview?.toggleFocusSelection());
-    assert(focusOn === true, "Focus selection did not turn on");
     const selectedPartPick = await pickSelectedPartInfo(page, box);
     const selectedPartMarkdown = selectedPartPick.markdown;
     assert(selectedPartMarkdown.includes("Part Info"), "Selected part info was not exported");
     assert(selectedPartMarkdown.includes("| Triangles |"), "Selected part info is missing triangle count");
+    await verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown);
+    await verifyThreeResetViewImmediate(page, state.route, state.summary);
+    if (verifyMode === "basic") {
+      await verifyThreeDisassemblyDragResponsive(page, state.route, {
+        clientX: selectedPartPick.clientX,
+        clientY: selectedPartPick.clientY,
+      });
+    }
 
     await verifyHelperToolbar(page);
 

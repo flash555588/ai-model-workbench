@@ -623,6 +623,23 @@ export class AnnotationManager {
 
     // Enable pointer events on pin (overlay has pointer-events: none)
     el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    el.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.provider.canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        ctrlKey: e.ctrlKey,
+        deltaMode: e.deltaMode,
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaZ: e.deltaZ,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+      }));
+    }, { passive: false });
 
     // Hover popover for linked notes
     if (pin.notePath && pin.headingRef && this.noteReader) {
@@ -704,12 +721,8 @@ export class AnnotationManager {
 
         if (checkOcclusion) {
           const occluded = this.provider.isWorldPointOccluded(entry.worldPos);
-          if (this.cameraIdle && occluded) {
-            this.hidePin(entry.el);
-          } else {
-            this.showPin(entry.el);
-            entry.el.classList.toggle("ai3d-pin-occluded", occluded);
-          }
+          this.showPin(entry.el);
+          entry.el.classList.toggle("ai3d-pin-occluded", occluded);
         } else if (!checkOcclusion) {
           // Camera moved → ensure previously hidden pins (behind geometry but now
           // potentially visible) get shown again immediately instead of waiting
