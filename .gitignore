@@ -4,3 +4,7 @@ main.js.map
 data.json
 _pr_work/
 test-annotation.md
+*.zip
+.venv/
+_obsidian_test_vault/
+_tmp_obsidian_check.png

@@ -10,8 +10,6 @@ import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
-import { Animation } from "@babylonjs/core/Animations/animation.js";
-import { CubicEase, EasingFunction } from "@babylonjs/core/Animations/easing.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator.js";
 import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js";
@@ -76,6 +74,7 @@ import type {
 /** Guard against concurrent OBJ loads monkey-patching the same prototype. */
 let objMtlLock: Promise<void> | null = null;
 const FOCUS_DIM_VISIBILITY = 0.242;
+const FOCUS_WORLD_POINT_ANIMATION_MS = 320;
 
 function isShadowLight(light: Light): light is IShadowLight {
   const className = light.getClassName();
@@ -127,6 +126,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private currentQuality: "low" | "medium" | "high" = "high";
   private animPlaying = false;
   private initialCamera = { alpha: Math.PI / 4, beta: Math.PI / 3, radius: 5, target: Vector3.Zero() };
+  private focusWorldPointFrame = 0;
   private _lastPickResult: PickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
@@ -389,7 +389,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.cleanupPicking = setupPicking(this.scene, (result) => {
       if (this.isDisassemblyActive()) return;
       this._lastPickResult = result;
-      if (this.focusSelectionEnabled) {
+      if (this.focusSelectionEnabled && result.mesh) {
         this.setFocusedMesh(result.mesh);
       }
       this._onPickCallbacks.forEach(cb => cb(result));
@@ -700,6 +700,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return this.gizmoEnabled;
   }
 
+  isOrientationGizmoEnabled(): boolean {
+    return this.gizmoEnabled;
+  }
+
   /**
    * Set render resolution scale directly (1.0 = native).
    * Returns the applied scale value.
@@ -710,6 +714,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const mobileBoost = isMobile() ? 1.5 : 1;
     this.engine.setHardwareScalingLevel(qualityScale * mobileBoost / clamped);
     return clamped;
+  }
+
+  getPerformanceSnapshot() {
+    return {
+      backend: "babylon" as const,
+      renderScale: Number((1 / this.engine.getHardwareScalingLevel()).toFixed(2)),
+      quality: this.currentQuality,
+      meshCount: this.rootMesh ? this.getRenderableMeshes(this.rootMesh).length : 0,
+    };
   }
 
   toggleBoundingBox(): boolean {
@@ -843,22 +856,25 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   focusWorldPoint(point: PreviewWorldPoint): void {
     const target = new Vector3(point.x, point.y, point.z);
-    const anim = new Animation(
-      "focus-point",
-      "target",
-      30,
-      Animation.ANIMATIONTYPE_VECTOR3,
-      Animation.ANIMATIONLOOPMODE_CONSTANT,
-    );
-    anim.setKeys([
-      { frame: 0, value: this.camera.target.clone() },
-      { frame: 20, value: target },
-    ]);
-    const ease = new CubicEase();
-    ease.setEasingMode(EasingFunction.EASINGMODE_EASEOUT);
-    anim.setEasingFunction(ease);
-    this.camera.animations = [anim];
-    this.scene.beginAnimation(this.camera, 0, 20, false);
+    const start = this.camera.target.clone();
+    const startedAt = performance.now();
+
+    if (this.focusWorldPointFrame) {
+      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      this.focusWorldPointFrame = 0;
+    }
+
+    const tick = (now: number) => {
+      const t = Math.min(1, Math.max(0, (now - startedAt) / FOCUS_WORLD_POINT_ANIMATION_MS));
+      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      this.camera.target = Vector3.Lerp(start, target, ease);
+      if (t < 1 && !this.scene.isDisposed) {
+        this.focusWorldPointFrame = activeWindow.requestAnimationFrame(tick);
+        return;
+      }
+      this.focusWorldPointFrame = 0;
+    };
+    this.focusWorldPointFrame = activeWindow.requestAnimationFrame(tick);
   }
 
   private getAnnotationCameraStateKey(): string {
@@ -990,6 +1006,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   destroy() {
     this.engine.stopRenderLoop();
+    if (this.focusWorldPointFrame) {
+      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      this.focusWorldPointFrame = 0;
+    }
     this._onPickCallbacks = [];
     this.cleanupPicking?.();
     this.cleanupPicking = null;

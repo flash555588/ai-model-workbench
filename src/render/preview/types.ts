@@ -61,6 +61,19 @@ export interface ModelPreview {
   setWireframe?(enabled: boolean): void;
   setRenderQuality?(quality: "low" | "medium" | "high", renderScale?: number): void;
   setRenderScale?(scale: number): number;
+  getPerformanceSnapshot?(): ModelPreviewPerformanceSnapshot;
+}
+
+export interface ModelPreviewPerformanceSnapshot {
+  backend: "three" | "babylon";
+  renderScale: number;
+  quality: "low" | "medium" | "high";
+  pixelRatio?: number;
+  interactivePixelRatioActive?: boolean;
+  renderDirty?: boolean;
+  renderObserverCount?: number;
+  renderObserverSettleFrames?: number;
+  meshCount?: number;
 }
 
 export interface AnnotationPreview extends ModelPreview {
@@ -98,6 +111,7 @@ export interface WireframePreview {
 
 export interface OrientationGizmoPreview {
   toggleOrientationGizmo(): boolean;
+  isOrientationGizmoEnabled?(): boolean;
 }
 
 export interface BoundingBoxPreview {
@@ -125,6 +139,7 @@ export interface PreviewFactoryOptions {
   ext: string;
   annotationMode?: PreviewAnnotationMode;
   allowEditModeOnThree?: boolean;
+  allowWorkbenchFeaturesOnThree?: boolean;
   requireWorkbenchFeatures?: boolean;
   rendererRollout?: PreviewRendererRollout;
   useThreeRenderer?: boolean;

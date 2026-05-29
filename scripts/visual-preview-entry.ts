@@ -26,7 +26,7 @@ declare global {
     __ai3dPreview?: ModelPreview;
     __ai3dPreviewVerify?: {
       status: "loading" | "ready" | "error";
-      mode?: "basic" | "direct-edit" | "readonly-pin";
+      mode?: "basic" | "direct-edit" | "readonly-pin" | "workbench";
       rendererRollout?: "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
       summary?: unknown;
       route?: unknown;
@@ -37,7 +37,7 @@ declare global {
   }
 }
 
-type VerifyMode = "basic" | "direct-edit" | "readonly-pin";
+type VerifyMode = "basic" | "direct-edit" | "readonly-pin" | "workbench";
 
 function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateInput): T {
   if (!options) return el;
@@ -177,7 +177,7 @@ function createPreviewAppStub() {
   };
 }
 
-function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview): void {
+function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview) {
   const parentEl = host.parentElement;
   if (!(parentEl instanceof HTMLElement)) {
     throw new Error("Preview host parent is unavailable");
@@ -191,6 +191,7 @@ function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview): void 
     () => {},
   );
   toolbar.syncCapabilities();
+  return toolbar;
 }
 
 function findVisiblePinPosition(
@@ -300,6 +301,10 @@ function getRendererRollout(): "babylon-safe" | "three-readonly-glb" | "three-di
     return value;
   }
   return "three-direct-glb";
+}
+
+function allowsWorkbenchFeaturesOnThree(): boolean {
+  return new URLSearchParams(window.location.search).get("allowWorkbenchThree") === "1";
 }
 
 async function runBasicPreview(
@@ -429,6 +434,65 @@ async function runReadonlyPinPreview(
   });
 }
 
+async function runWorkbenchPreview(
+  host: HTMLDivElement,
+  canvas: HTMLCanvasElement,
+  rendererRollout: "babylon-safe" | "three-readonly-glb" | "three-direct-glb",
+): Promise<void> {
+  const ext = getModelExt();
+  const previewOptions = {
+    ext,
+    annotationMode: "edit",
+    allowEditModeOnThree: true,
+    allowWorkbenchFeaturesOnThree: allowsWorkbenchFeaturesOnThree(),
+    requireWorkbenchFeatures: true,
+    rendererRollout,
+  } as const;
+  const route = resolvePreviewRoute(previewOptions);
+  const preview = await createModelPreview(canvas, previewOptions);
+  const summary = await preview.loadModel(await loadSampleModel(), ext);
+  const toolbar = attachHelperToolbar(host, preview);
+  preview.applyConfig({
+    models: [{ path: `models/${getModelFilename()}` }],
+    scene: { grid: true, axis: true, groundShadow: true },
+  });
+  preview.setRenderQuality?.("medium", 1);
+  toolbar.syncCapabilities();
+  const annotationPreview = preview as AnnotationPreview;
+  const initialPins: AnnotationPin[] = [
+    {
+      id: "verify-workbench-pin",
+      position: [0, 0, 0],
+      label: "Workbench Pin",
+      color: "#2ec4ff",
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  const annotationMgr = new AnnotationManager(
+    annotationPreview.getAnnotationProvider(),
+    host,
+    "readonly",
+    initialPins,
+    (pins) => {
+      setVerifyState({
+        pinCount: pins.length,
+        pinLabels: pins.map((pin) => pin.label),
+      });
+    },
+  );
+  window.__ai3dPreview = preview;
+  window.addEventListener("beforeunload", () => annotationMgr.destroy(), { once: true });
+  setVerifyState({
+    status: "ready",
+    mode: "workbench",
+    rendererRollout,
+    summary,
+    route,
+    pinCount: initialPins.length,
+    pinLabels: initialPins.map((pin) => pin.label),
+  });
+}
+
 async function main() {
   installObsidianDomShims();
   window.__ai3dPreviewVerify = { status: "loading" };
@@ -443,6 +507,11 @@ async function main() {
 
   if (mode === "readonly-pin") {
     await runReadonlyPinPreview(host, canvas, rendererRollout);
+    return;
+  }
+
+  if (mode === "workbench") {
+    await runWorkbenchPreview(host, canvas, rendererRollout);
     return;
   }
 

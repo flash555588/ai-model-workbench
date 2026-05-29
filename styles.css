@@ -320,7 +320,7 @@ body {
   display: flex;
 }
 
-.ai3d-helper-toolbar.is-mobile:not(.show-secondary) .ai3d-helper-group-inspect:not(:has(.ai3d-inline-btn:not(.is-secondary):not(.is-hidden))) {
+.ai3d-helper-toolbar.is-mobile:not(.show-secondary) .ai3d-helper-group-inspect:not(.has-primary-visible) {
   display: none;
 }
 
@@ -397,7 +397,7 @@ body {
     display: flex;
   }
 
-  .ai3d-helper-toolbar-adaptive:not(.show-secondary) .ai3d-helper-group-inspect:not(:has(.ai3d-inline-btn:not(.is-secondary):not(.is-hidden))) {
+  .ai3d-helper-toolbar-adaptive:not(.show-secondary) .ai3d-helper-group-inspect:not(.has-primary-visible) {
     display: none;
   }
 

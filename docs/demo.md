@@ -419,7 +419,7 @@ Set quality in Settings or per-block:
 
 ### Mobile
 
-On mobile devices, the plugin automatically applies a 1.5x hardware scaling boost. No manual tuning needed.
+On mobile devices, the plugin automatically lowers render resolution to preserve interaction smoothness. The Three.js path also applies a temporary pixel-ratio cap while the camera is moving, then restores quality after interaction settles.
 
 ### Large CAD Files
 

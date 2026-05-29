@@ -19,6 +19,9 @@ const DEFAULT_COLORS = [
   "#ffa8a8",
 ];
 let globalNextId = 1;
+const MOVING_OCCLUSION_BATCH_SIZE = 4;
+const MOVING_OCCLUSION_STRIDE = 2;
+const IDLE_OCCLUSION_STRIDE = 6;
 
 function generateId(): string {
   return `pin-${Date.now()}-${globalNextId++}`;
@@ -48,6 +51,7 @@ export class AnnotationManager {
   private lastCamState = "";
   private idleFrames = 0;
   private cameraIdle = false;
+  private movingOcclusionCursor = 0;
   private static readonly IDLE_THRESHOLD = 15; // ~250ms at 60fps
   private static readonly _scratchProjection: PreviewProjectionResult = { screenX: 0, screenY: 0, depth: 0 };
   private hoverPopover: HTMLDivElement | null = null;
@@ -695,18 +699,26 @@ export class AnnotationManager {
     }
 
     // While the camera is moving, pin overlay updates can become a noticeable
-    // JS/DOM hotspot. Lower the overlay refresh rate in motion and only do
-    // occlusion raycasts once the camera settles again.
+    // JS/DOM hotspot. Lower the projection refresh rate in motion, but keep
+    // occlusion checks moving in small batches so the bookmark fade does not
+    // visibly lag behind model rotation.
     this.frameCount++;
     const projectionStride = this.cameraIdle ? 1 : this.pinEls.size >= 12 ? 3 : 2;
     if (!this.cameraIdle && this.frameCount % projectionStride !== 0) {
       return;
     }
 
-    const checkOcclusion = this.cameraIdle && this.frameCount % 6 === 0;
+    const entries = Array.from(this.pinEls.values());
+    const shouldCheckOcclusion = this.cameraIdle
+      ? this.frameCount % IDLE_OCCLUSION_STRIDE === 0
+      : this.frameCount % MOVING_OCCLUSION_STRIDE === 0;
+    const checkAllOcclusion = this.cameraIdle || entries.length <= MOVING_OCCLUSION_BATCH_SIZE;
+    const movingOcclusionStart = checkAllOcclusion ? 0 : this.movingOcclusionCursor % entries.length;
+    const movingOcclusionEnd = movingOcclusionStart + MOVING_OCCLUSION_BATCH_SIZE;
     const projected = AnnotationManager._scratchProjection;
 
-    for (const [, entry] of this.pinEls) {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
       if (!this.provider.projectWorldPoint(entry.worldPos, projected)) {
         this.hidePin(entry.el);
         continue;
@@ -719,11 +731,14 @@ export class AnnotationManager {
         entry.el.style.setProperty("--pin-left", `${projected.screenX}px`);
         entry.el.style.setProperty("--pin-top", `${projected.screenY}px`);
 
-        if (checkOcclusion) {
+        const inMovingOcclusionBatch = checkAllOcclusion
+          || (index >= movingOcclusionStart && index < movingOcclusionEnd)
+          || (movingOcclusionEnd > entries.length && index < movingOcclusionEnd % entries.length);
+        if (shouldCheckOcclusion && inMovingOcclusionBatch) {
           const occluded = this.provider.isWorldPointOccluded(entry.worldPos);
           this.showPin(entry.el);
           entry.el.classList.toggle("ai3d-pin-occluded", occluded);
-        } else if (!checkOcclusion) {
+        } else if (!shouldCheckOcclusion) {
           // Camera moved → ensure previously hidden pins (behind geometry but now
           // potentially visible) get shown again immediately instead of waiting
           // for the next occlusion check frame.
@@ -732,6 +747,9 @@ export class AnnotationManager {
           }
         }
       }
+    }
+    if (shouldCheckOcclusion && !checkAllOcclusion && entries.length > 0) {
+      this.movingOcclusionCursor = (movingOcclusionStart + MOVING_OCCLUSION_BATCH_SIZE) % entries.length;
     }
   }
 

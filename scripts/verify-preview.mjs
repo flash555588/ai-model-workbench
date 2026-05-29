@@ -40,8 +40,13 @@ function parseRollout() {
   return "three-direct-glb";
 }
 
+function parseAllowWorkbenchThree() {
+  return process.argv.includes("--allow-workbench-three");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
+const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -65,6 +70,29 @@ function candidateBrowsers() {
   const candidates = [];
   if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE) {
     candidates.push(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE);
+  }
+
+  candidates.push(
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/microsoft-edge",
+    "/usr/bin/microsoft-edge-stable",
+    "/snap/bin/chromium",
+  );
+
+  if (process.env.HOME) {
+    candidates.push(
+      join(process.env.HOME, "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
+      join(process.env.HOME, "Applications", "Microsoft Edge.app", "Contents", "MacOS", "Microsoft Edge"),
+      join(process.env.HOME, "Applications", "Chromium.app", "Contents", "MacOS", "Chromium"),
+      join(process.env.HOME, "Applications", "Brave Browser.app", "Contents", "MacOS", "Brave Browser"),
+    );
   }
 
   const programFiles = [
@@ -320,26 +348,22 @@ async function pickSelectedPartInfo(page, box) {
 async function verifyHelperToolbar(page) {
   await page.waitForSelector(".ai3d-helper-toolbar", { timeout: 5000 });
 
+  const verifyToggleButton = async (button, label) => {
+    const before = await button.evaluate((entry) => entry.classList.contains("ai3d-btn-active"));
+    await button.click();
+    await page.waitForTimeout(100);
+    const after = await button.evaluate((entry) => entry.classList.contains("ai3d-btn-active"));
+    assert(after !== before, `${label} toolbar button did not toggle`);
+  };
+
   const wireBtn = await getToolbarButton(page, toolbarLabels.wireframe);
-  await wireBtn.click();
-  assert(
-    await wireBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
-    "Wireframe toolbar button did not activate",
-  );
+  await verifyToggleButton(wireBtn, "Wireframe");
 
   const axesBtn = await getToolbarButton(page, toolbarLabels.axes);
-  await axesBtn.click();
-  assert(
-    await axesBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
-    "Orientation axes toolbar button did not activate",
-  );
+  await verifyToggleButton(axesBtn, "Orientation axes");
 
   const bboxBtn = await getToolbarButton(page, toolbarLabels.boundingBox);
-  await bboxBtn.click();
-  assert(
-    await bboxBtn.evaluate((button) => button.classList.contains("ai3d-btn-active")),
-    "Bounding box toolbar button did not activate",
-  );
+  await verifyToggleButton(bboxBtn, "Bounding box");
 
   const resBtn = await getToolbarButton(page, toolbarLabels.resolution);
   const beforeText = (await resBtn.textContent())?.trim();
@@ -378,6 +402,7 @@ async function verifyReadonlyPinMode(page, state) {
     const pin = pins.find((entry) => entry.textContent?.includes("Occluded Pin"));
     return pin?.classList.contains("ai3d-pin-occluded") ?? false;
   }, null, { timeout: 5000 });
+  await verifyOcclusionUpdatesWhileRotating(page);
 }
 
 async function verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown) {
@@ -390,6 +415,134 @@ async function verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown)
     focusedPartMarkdown === selectedPartMarkdown,
     "Focus mode did not align to the previously selected part",
   );
+}
+
+async function verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedPartMarkdown) {
+  const beforeFocus = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+  assert(beforeFocus === selectedPartMarkdown, "Focus mode changed selected part before blank-click verification");
+
+  await dispatchCanvasClick(page, box.x + 12, box.y + 12);
+  await page.waitForTimeout(150);
+
+  const afterFocus = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+  assert(afterFocus === selectedPartMarkdown, "Blank click cleared or changed the focused part");
+}
+
+async function verifyOcclusionUpdatesWhileRotating(page) {
+  const occludedPin = page.locator(".ai3d-annotation-pin", { hasText: "Occluded Pin" }).first();
+  await occludedPin.waitFor({ state: "visible", timeout: 5000 });
+  const before = await occludedPin.evaluate((pin) => ({
+    left: pin.style.getPropertyValue("--pin-left"),
+    top: pin.style.getPropertyValue("--pin-top"),
+    occluded: pin.classList.contains("ai3d-pin-occluded"),
+  }));
+
+  const moved = await page.evaluate(async () => {
+    const preview = window.__ai3dPreview;
+    const provider = preview?.getAnnotationProvider?.();
+    if (!preview || !provider || typeof preview.applyConfig !== "function") {
+      return { skipped: true };
+    }
+
+    preview.applyConfig({
+      models: [{ path: "models/rubiks-cube-3x3.glb" }],
+      camera: { position: [-4.8, 3.1, -4.8], lookAt: [0.45, 0.2, 0] },
+    });
+
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const projection = { screenX: 0, screenY: 0, depth: 0 };
+    const projected = provider.projectWorldPoint({ x: 0, y: 0, z: 0 }, projection);
+    return {
+      skipped: false,
+      projected,
+      occluded: provider.isWorldPointOccluded({ x: 0, y: 0, z: 0 }),
+      left: `${projection.screenX}px`,
+      top: `${projection.screenY}px`,
+    };
+  });
+  assert(!moved.skipped, "Occlusion rotation verification could not access annotation provider");
+  assert(moved.projected, "Occlusion rotation verification could not project the occluded pin");
+
+  await page.waitForFunction((expected) => {
+    const pins = Array.from(document.querySelectorAll(".ai3d-annotation-pin"));
+    const pin = pins.find((entry) => entry.textContent?.includes("Occluded Pin"));
+    if (!(pin instanceof HTMLElement)) return false;
+    return pin.style.getPropertyValue("--pin-left") === expected.left
+      && pin.style.getPropertyValue("--pin-top") === expected.top
+      && pin.classList.contains("ai3d-pin-occluded") === expected.occluded;
+  }, moved, { timeout: 5000 });
+
+  const after = await occludedPin.evaluate((pin) => ({
+    left: pin.style.getPropertyValue("--pin-left"),
+    top: pin.style.getPropertyValue("--pin-top"),
+    occluded: pin.classList.contains("ai3d-pin-occluded"),
+  }));
+  assert(
+    before.left !== after.left || before.top !== after.top || before.occluded !== after.occluded,
+    "Occluded pin projection/occlusion state did not update after camera rotation",
+  );
+}
+
+async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, selectedPartMarkdown) {
+  assert(state?.mode === "workbench", `Expected workbench mode, received ${state?.mode ?? "unknown"}`);
+  assert(state?.route?.requireWorkbenchFeatures === true, "Workbench route did not require workbench features");
+  assert(state?.pinCount === 1, "Workbench annotation provider did not mount initial pin");
+
+  const result = await page.evaluate(async () => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement)) {
+      return { missing: true };
+    }
+    const methods = [
+      "getAnnotationProvider",
+      "setExplode",
+      "resetExplode",
+      "focusWorldPoint",
+      "hasAnimations",
+      "setRenderQuality",
+      "captureSnapshot",
+      "exportModelInfo",
+      "exportSelectedPartInfo",
+    ];
+    const missingMethods = methods.filter((method) => typeof preview[method] !== "function");
+    const before = canvas.toDataURL("image/png");
+    preview.setExplode?.(0.55, "x");
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const exploded = canvas.toDataURL("image/png");
+    preview.resetExplode?.();
+    preview.focusWorldPoint?.({ x: 0.8, y: 0.8, z: 0.8 });
+    await new Promise((resolve) => activeWindow.setTimeout(resolve, 450));
+    const focused = canvas.toDataURL("image/png");
+    const snapshot = preview.captureSnapshot?.() ?? "";
+    return {
+      missing: false,
+      missingMethods,
+      explodeChanged: before !== exploded,
+      focusChanged: exploded !== focused,
+      snapshot,
+      modelInfo: preview.exportModelInfo?.("rubiks-cube-3x3.glb") ?? "",
+    };
+  });
+
+  assert(!result.missing, "Workbench preview was unavailable");
+  assert(result.missingMethods.length === 0, `Workbench preview is missing methods: ${result.missingMethods.join(", ")}`);
+  assert(result.explodeChanged, "Workbench explode did not change the rendered canvas");
+  assert(result.focusChanged, "Workbench focusWorldPoint did not change the rendered canvas");
+  assert(result.snapshot.startsWith("data:image/png;base64,"), "Workbench snapshot did not return a PNG data URL");
+  assert(result.modelInfo.includes("Model Info"), "Workbench model info export failed");
+
+  console.log("Workbench preview verification passed");
+  console.log(JSON.stringify({
+    mode: verifyMode,
+    rendererRollout: verifyRollout,
+    allowWorkbenchThree: verifyAllowWorkbenchThree,
+    route: state.route,
+    summary: state.summary,
+    pixelStats: stats,
+    performance: performanceSnapshot,
+    selectedPart: selectedPartMarkdown,
+  }, null, 2));
 }
 
 async function verifyThreeResetViewImmediate(page, route, summary) {
@@ -540,6 +693,9 @@ async function verify() {
       params.set("mode", verifyMode);
     }
     params.set("rollout", verifyRollout);
+    if (verifyAllowWorkbenchThree) {
+      params.set("allowWorkbenchThree", "1");
+    }
     // Pass model filename if not the default
     const modelFilename = modelPath.split(/[/\\]/).pop();
     if (modelFilename && modelFilename !== "rubiks-cube-3x3.glb") {
@@ -565,6 +721,11 @@ async function verify() {
     const stats = await canvasPixelStats(page);
     assert(stats.nonBackgroundRatio > 0.01, `Canvas looks blank: ${JSON.stringify(stats)}`);
     assert(stats.contrast > 12, `Canvas has too little contrast: ${JSON.stringify(stats)}`);
+    const performanceSnapshot = await page.evaluate(() => window.__ai3dPreview?.getPerformanceSnapshot?.() ?? null);
+    assert(
+      performanceSnapshot?.backend === state.route?.backend,
+      `Performance snapshot backend did not match route: ${JSON.stringify(performanceSnapshot)}`,
+    );
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     const beforeScroll = await page.evaluate(() => window.scrollY);
@@ -584,6 +745,7 @@ async function verify() {
     assert(selectedPartMarkdown.includes("Part Info"), "Selected part info was not exported");
     assert(selectedPartMarkdown.includes("| Triangles |"), "Selected part info is missing triangle count");
     await verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown);
+    await verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedPartMarkdown);
     await verifyThreeResetViewImmediate(page, state.route, state.summary);
     if (verifyMode === "basic") {
       await verifyThreeDisassemblyDragResponsive(page, state.route, {
@@ -593,6 +755,11 @@ async function verify() {
     }
 
     await verifyHelperToolbar(page);
+
+    if (verifyMode === "workbench") {
+      await verifyWorkbenchMode(page, state, stats, performanceSnapshot, selectedPartMarkdown);
+      return;
+    }
 
     if (verifyMode === "direct-edit") {
       assert(state?.mode === "direct-edit", `Expected direct-edit mode, received ${state?.mode ?? "unknown"}`);
@@ -638,6 +805,7 @@ async function verify() {
         route: state.route,
         summary: state.summary,
         pixelStats: stats,
+        performance: performanceSnapshot,
         selectedPart: selectedPartMarkdown,
       }, null, 2));
       return;
@@ -652,6 +820,7 @@ async function verify() {
         route: state.route,
         summary: state.summary,
         pixelStats: stats,
+        performance: performanceSnapshot,
         selectedPart: selectedPartMarkdown,
       }, null, 2));
       return;
@@ -664,6 +833,7 @@ async function verify() {
       route: state.route,
       summary: state.summary,
       pixelStats: stats,
+      performance: performanceSnapshot,
       selectedPart: selectedPartMarkdown,
     }, null, 2));
   } catch (error) {
@@ -680,6 +850,12 @@ async function verify() {
 }
 
 function expectedBackend(mode, rollout) {
+  if (mode === "workbench" && !verifyAllowWorkbenchThree) {
+    return "babylon";
+  }
+  if (mode === "workbench") {
+    return rollout === "babylon-safe" ? "babylon" : "three";
+  }
   if (mode === "direct-edit") {
     return rollout === "three-direct-glb" ? "three" : "babylon";
   }

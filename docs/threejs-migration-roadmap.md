@@ -225,13 +225,14 @@ workbench 当前依赖的不只是“显示模型”，还包括：
 ### 交付项
 
 - workbench 迁移 feasibility note
-- 必需接口缺口列表
+- 剩余迁移缺口列表
 - 原型验证结果
 
 ### 评估结论
 
 - 当前不建议继续迁移 workbench。
 - workbench 继续保留 Babylon.js 作为专项能力后端。
+- Three workbench 保留为隐藏能力探针，等真实工作流验证完成后再决定是否开放生产路由。
 - 结论详见 `docs/workbench-3dgrid-feasibility-note.md`。
 
 ### 预计投入

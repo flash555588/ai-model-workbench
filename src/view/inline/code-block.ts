@@ -303,6 +303,7 @@ export function registerCodeBlockProcessor(
           }
           preview.applyConfig(config);
           preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
+          toolbar.syncCapabilities();
 
           // Readonly annotations
           if (pins.length > 0 && supportsAnnotationPreview(preview)) {

@@ -30,6 +30,7 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
   const ext = options.ext.trim().toLowerCase();
   const annotationMode = options.annotationMode ?? "none";
   const allowEditModeOnThree = !!options.allowEditModeOnThree;
+  const allowWorkbenchFeaturesOnThree = !!options.allowWorkbenchFeaturesOnThree;
   const requireWorkbenchFeatures = !!options.requireWorkbenchFeatures;
   const rendererRollout = resolveRendererRollout(options.rendererRollout);
   const useThree = options.useThreeRenderer !== false; // default true
@@ -46,7 +47,7 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
     };
   }
 
-  if (THREE_FORMATS.has(ext) && !requireWorkbenchFeatures) {
+  if (THREE_FORMATS.has(ext) && (!requireWorkbenchFeatures || allowWorkbenchFeaturesOnThree)) {
     if (annotationMode === "edit" && rendererRollout !== "three-direct-glb") {
       return {
         backend: "babylon",
@@ -80,17 +81,21 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
       };
     }
 
+    const reason = requireWorkbenchFeatures
+      ? `${ext} workbench preview`
+      : annotationMode === "edit"
+        ? `${ext} direct view edit preview`
+        : annotationMode === "readonly"
+          ? `${ext} preview with readonly annotations`
+          : `simple ${ext} preview`;
+
     return {
       backend: "three",
       ext,
       annotationMode,
       requireWorkbenchFeatures,
       rendererRollout,
-      reason: annotationMode === "edit"
-        ? `${ext} direct view edit preview`
-        : annotationMode === "readonly"
-          ? `${ext} preview with readonly annotations`
-          : `simple ${ext} preview`,
+      reason,
     };
   }
 

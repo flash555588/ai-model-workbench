@@ -61,7 +61,7 @@ The plugin exposes a `Preview compatibility mode` setting:
   - Live Preview embed -> Three.js
   - direct file view -> Three.js
 
-Workbench and `3dgrid` remain on Babylon.js regardless of this setting.
+Workbench and `3dgrid` remain on Babylon.js regardless of this setting. The verification harness also has a hidden Three.js workbench capability probe, but production routing still keeps workbench on Babylon.
 
 ---
 
@@ -77,14 +77,17 @@ This automation covers:
 - readonly saved-pin overlay
 - direct file edit preview
 - helper toolbar interactions
+- focus blank-click, moving-pin occlusion, and performance snapshot checks
 - stage-1 reading-surface rollout for direct view rollback
 - compatibility-mode rollback for all single-model paths
+- workbench Babylon fallback and hidden Three.js capability probe
+- direct `STL`, `PLY`, and `OBJ` routes
 
 Manual checks remain required for:
 
-- workbench
 - `3dgrid`
-- non-GLB formats (STL, PLY, OBJ, GLTF)
+- real workbench conversion-chain inputs and full knowledge-panel workflow
+- `GLTF` assets with external resources
 
 ### 1. Simple inline `GLB` -> Three.js
 

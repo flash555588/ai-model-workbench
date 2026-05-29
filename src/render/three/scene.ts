@@ -76,10 +76,13 @@ import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
-const FOCUS_DIM_OPACITY = 0.68;
-const FOCUS_DIM_TINT = new Color("#dfe3ea");
-const FOCUS_DIM_TINT_MIX = 0.12;
+const FOCUS_DIM_OPACITY = 0.242;
 const DEFAULT_SHADOW_OPACITY = 0.28;
+const MAX_RENDER_PIXEL_RATIO = 2.5;
+const DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP = 1.5;
+const MOBILE_INTERACTIVE_PIXEL_RATIO_CAP = 1.15;
+const INTERACTIVE_PIXEL_RATIO_HOLD_MS = 180;
+const RENDER_OBSERVER_SETTLE_FRAMES = 30;
 
 type ShadowCastingLight = DirectionalLight | PointLight | SpotLight;
 
@@ -119,15 +122,23 @@ function describeMaterial(material: Material | null | undefined): string | null 
 
 function createFocusDimMaterial(material: Material): Material {
   const clone = material.clone();
-  const record = clone as unknown as { color?: unknown };
   clone.transparent = true;
-  clone.opacity = FOCUS_DIM_OPACITY;
+  clone.opacity = Math.max(0, Math.min(1, material.opacity)) * FOCUS_DIM_OPACITY;
   clone.depthWrite = false;
-  if (record.color instanceof Color) {
-    record.color.lerp(FOCUS_DIM_TINT, FOCUS_DIM_TINT_MIX);
-  }
   clone.needsUpdate = true;
   return clone;
+}
+
+function cloneFocusDimMaterialValue(material: Material | Material[]): Material | Material[] {
+  return Array.isArray(material)
+    ? material.map(createFocusDimMaterial)
+    : createFocusDimMaterial(material);
+}
+
+function disposeMaterialValue(material: Material | Material[] | undefined): void {
+  for (const entry of materialList(material)) {
+    entry.dispose();
+  }
 }
 
 function getObjectPreviewBounds(object: Object3D) {
@@ -159,6 +170,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private renderHandle = 0;
   private quality: "low" | "medium" | "high" = "high";
   private renderScale = 1;
+  private interactivePixelRatioActive = false;
+  private interactionPixelRatioDeadline = 0;
+  private renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
   private axesHelper: AxesHelper | null = null;
   private bboxHelper: BoxHelper | null = null;
   private groundShadowMesh: Mesh | null = null;
@@ -178,7 +192,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private initialFov = 45;
   private lastPointerDown: { x: number; y: number } | null = null;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
-  private readonly originalMaterialFlags = new Map<number, { transparent: boolean; opacity: number }[]>();
+  private readonly focusDimMaterials = new Map<number, Material | Material[]>();
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private disassembly: PreviewDisassemblyController | null = null;
@@ -190,6 +204,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
+  };
+  private readonly handleControlsChange = () => {
+    const now = performance.now();
+    this.interactionPixelRatioDeadline = now + INTERACTIVE_PIXEL_RATIO_HOLD_MS;
+    if (this.activateInteractivePixelRatio()) {
+      this.resizeRenderer();
+    }
+    this.markDirty();
   };
   private readonly handlePointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.isPrimary === false) return;
@@ -206,12 +228,20 @@ export class ThreeModelPreview implements WorkbenchPreview {
   };
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    this.renderer = new WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+      powerPreference: "high-performance",
+    });
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.toneMapping = NoToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
 
     this.scene = new Scene();
@@ -224,8 +254,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
+    this.controls.zoomSpeed = 0.85;
     this.controls.screenSpacePanning = true;
     this.controls.target.copy(this.initialTarget);
+    this.controls.addEventListener("change", this.handleControlsChange);
 
     this.installDefaultLighting();
 
@@ -322,6 +354,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     this.defaultLights.length = 0;
     this.disposeGlobalEnvironment();
+    this.controls.removeEventListener("change", this.handleControlsChange);
     this.controls.dispose();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("wheel", this.preventCanvasWheelScroll);
@@ -469,6 +502,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return this.axesHelper.visible;
   }
 
+  isOrientationGizmoEnabled(): boolean {
+    return !!this.axesHelper?.visible;
+  }
+
   toggleBoundingBox(): boolean {
     this.bboxEnabled = !this.bboxEnabled;
     if (!this.bboxEnabled) {
@@ -508,15 +545,31 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return Number(this.renderScale.toFixed(2));
   }
 
+  getPerformanceSnapshot() {
+    return {
+      backend: "three" as const,
+      renderScale: Number(this.renderScale.toFixed(2)),
+      quality: this.quality,
+      pixelRatio: Number(this.renderer.getPixelRatio().toFixed(2)),
+      interactivePixelRatioActive: this.interactivePixelRatioActive,
+      renderDirty: this.renderDirty,
+      renderObserverCount: this.renderObservers.size,
+      renderObserverSettleFrames: this.renderObserverSettleFrames,
+      meshCount: this.rootObject ? this.getRenderableMeshes(this.rootObject).length : 0,
+    };
+  }
+
   setExplode(factor: number, axis: PreviewAxis): void {
     if (!this.rootObject) return;
     setThreeExplode(this.rootObject, factor, axis);
+    this.markShadowDirty();
     this.markDirty();
   }
 
   resetExplode(): void {
     if (!this.rootObject) return;
     resetThreeExplode(this.rootObject);
+    this.markShadowDirty();
     this.markDirty();
   }
 
@@ -565,7 +618,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.renderer.domElement,
       meshes,
       this.controls,
-      () => this.markDirty(),
+      () => {
+        this.markShadowDirty();
+        this.markDirty();
+      },
     );
   }
 
@@ -612,13 +668,19 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const animating = !!this.mixer && this.animationPlaying;
     if (animating && this.mixer) {
       this.mixer.update(deltaSeconds);
+      this.markShadowDirty();
     }
+    this.restoreInteractivePixelRatioIfIdle(now, cameraMoved);
 
     if (!cameraMoved && !animating && !this.renderDirty) {
-      this.notifyRenderObservers();
+      if (this.renderObserverSettleFrames > 0) {
+        this.renderObserverSettleFrames--;
+        this.notifyRenderObservers();
+      }
       return;
     }
     this.renderDirty = false;
+    this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
 
     this.bboxHelper?.update();
     this.selectionHelper?.update();
@@ -637,14 +699,39 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderDirty = true;
   }
 
+  private markShadowDirty(): void {
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  private activateInteractivePixelRatio(): boolean {
+    if (this.interactivePixelRatioActive) return false;
+    const normalPixelRatio = this.computePixelRatio(false);
+    const interactivePixelRatio = this.computePixelRatio(true);
+    if (interactivePixelRatio >= normalPixelRatio) return false;
+    this.interactivePixelRatioActive = true;
+    return true;
+  }
+
+  private restoreInteractivePixelRatioIfIdle(now: number, cameraMoved: boolean): void {
+    if (!this.interactivePixelRatioActive || cameraMoved || now < this.interactionPixelRatioDeadline) return;
+    this.interactivePixelRatioActive = false;
+    this.resizeRenderer();
+  }
+
+  private computePixelRatio(interactive = this.interactivePixelRatioActive): number {
+    const qualityScale = this.quality === "low" ? 0.5 : this.quality === "medium" ? 0.75 : 1;
+    const mobile = isMobile();
+    const mobileScale = mobile ? 0.85 : 1;
+    const base = Math.min(MAX_RENDER_PIXEL_RATIO, window.devicePixelRatio * qualityScale * mobileScale * this.renderScale);
+    if (!interactive) return base;
+    return Math.min(base, mobile ? MOBILE_INTERACTIVE_PIXEL_RATIO_CAP : DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP);
+  }
+
   private resizeRenderer(): void {
     const canvas = this.renderer.domElement;
     const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1));
     const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
-    const qualityScale = this.quality === "low" ? 0.5 : this.quality === "medium" ? 0.75 : 1;
-    const mobileScale = isMobile() ? 0.85 : 1;
-    const pixelRatio = Math.min(2.5, window.devicePixelRatio * qualityScale * mobileScale * this.renderScale);
-    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.setPixelRatio(this.computePixelRatio());
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
@@ -697,6 +784,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
     }
     this.updateShadowFraming();
+    this.markShadowDirty();
     this.markDirty();
   }
 
@@ -856,6 +944,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       light.shadow.normalBias = 0.018;
       light.shadow.needsUpdate = true;
     }
+    this.markShadowDirty();
     this.markDirty();
   }
 
@@ -896,6 +985,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
       light.shadow.needsUpdate = true;
     }
+    this.markShadowDirty();
   }
 
   private shadowMapSize(): number {
@@ -1017,9 +1107,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.setFocusedMesh(mesh);
       }
     } else if (this.focusSelectionEnabled) {
-      if (this.focusedMesh) {
-        this.clearFocusedMesh();
-      }
+      this.clearSelectionHighlight();
     } else {
       this.updateSelectionHighlight(mesh);
     }
@@ -1059,13 +1147,20 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
     });
     this.rootObject = null;
+    this.markShadowDirty();
   }
 
   private fitCameraToObject(root: Object3D): void {
-    const fit = createPreviewPerspectiveCameraFit(getObjectPreviewBounds(root));
+    const bounds = getObjectPreviewBounds(root);
+    const fit = createPreviewPerspectiveCameraFit(bounds);
     this.initialTarget.set(fit.target.x, fit.target.y, fit.target.z);
     this.initialPosition.set(fit.position.x, fit.position.y, fit.position.z);
     this.initialFov = 45;
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const maxSpan = Math.max(boundsSize.x, boundsSize.y, boundsSize.z, 1);
+    const fitDistance = this.initialPosition.distanceTo(this.initialTarget);
+    this.controls.minDistance = Math.max(fit.near * 4, maxSpan * 0.02, 0.001);
+    this.controls.maxDistance = Math.max(fitDistance * 8, this.controls.minDistance * 10);
     this.resetView();
     this.camera.near = fit.near;
     this.camera.far = fit.far;
@@ -1176,35 +1271,34 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private setFocusedMesh(mesh: Mesh | null): void {
-    if (!this.rootObject || !mesh) return;
+    if (!this.rootObject || !mesh) {
+      this.clearFocusedMesh();
+      return;
+    }
+    if (this.focusedMesh === mesh) return;
+
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
+    if (!renderableMeshes.includes(mesh)) {
+      this.clearFocusedMesh();
+      return;
+    }
+    this.restoreFocusedMaterials();
+    this.disposeFocusDimMaterials();
 
     for (const candidate of renderableMeshes) {
       if (!this.originalMaterials.has(candidate.id)) {
         this.originalMaterials.set(candidate.id, candidate.material);
-        this.originalMaterialFlags.set(
-          candidate.id,
-          materialList(candidate.material).map((material) => ({
-            transparent: material.transparent,
-            opacity: material.opacity,
-          })),
-        );
       }
 
       if (candidate === mesh) {
         candidate.material = this.originalMaterials.get(candidate.id) ?? candidate.material;
-        materialList(candidate.material).forEach((material, index) => {
-          const flags = this.originalMaterialFlags.get(candidate.id)?.[index];
-          if (!flags) return;
-          material.transparent = flags.transparent;
-          material.opacity = flags.opacity;
-          material.needsUpdate = true;
-        });
         continue;
       }
 
-      candidate.material = materialList(this.originalMaterials.get(candidate.id) as Material | Material[])
-        .map(createFocusDimMaterial);
+      const originalMaterial = this.originalMaterials.get(candidate.id) ?? candidate.material;
+      const dimMaterial = cloneFocusDimMaterialValue(originalMaterial);
+      this.focusDimMaterials.set(candidate.id, dimMaterial);
+      candidate.material = dimMaterial;
     }
 
     this.focusHelper?.removeFromParent();
@@ -1215,33 +1309,30 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private clearFocusedMesh(): void {
-    if (this.rootObject) {
-      for (const mesh of this.getRenderableMeshes(this.rootObject)) {
-        const originalMaterial = this.originalMaterials.get(mesh.id);
-        if (originalMaterial) {
-          materialList(mesh.material).forEach((material) => {
-            if (material !== originalMaterial && !materialList(originalMaterial).includes(material)) {
-              material.dispose();
-            }
-          });
-          mesh.material = originalMaterial;
-          materialList(mesh.material).forEach((material, index) => {
-            const flags = this.originalMaterialFlags.get(mesh.id)?.[index];
-            if (!flags) return;
-            material.transparent = flags.transparent;
-            material.opacity = flags.opacity;
-            material.needsUpdate = true;
-          });
-        }
-      }
-    }
-
+    this.restoreFocusedMaterials();
+    this.disposeFocusDimMaterials();
     this.originalMaterials.clear();
-    this.originalMaterialFlags.clear();
     this.focusHelper?.removeFromParent();
     this.focusHelper = null;
     this.focusedMesh = null;
     this.markDirty();
+  }
+
+  private restoreFocusedMaterials(): void {
+    if (!this.rootObject) return;
+    for (const mesh of this.getRenderableMeshes(this.rootObject)) {
+      const originalMaterial = this.originalMaterials.get(mesh.id);
+      if (originalMaterial) {
+        mesh.material = originalMaterial;
+      }
+    }
+  }
+
+  private disposeFocusDimMaterials(): void {
+    for (const material of this.focusDimMaterials.values()) {
+      disposeMaterialValue(material);
+    }
+    this.focusDimMaterials.clear();
   }
 
   private clearSelectionHighlight(): void {

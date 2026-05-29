@@ -358,7 +358,7 @@ Add labeled bookmarks directly on model surfaces. Annotations persist per model 
 5. Click an existing pin to edit its label/color or delete it
 6. Press `Esc` to exit annotation mode
 
-**Depth-aware occlusion**: Pins behind geometry display blurred and dimmed. When the camera stops moving for ~250ms, fully occluded pins are automatically hidden, leaving only visible bookmarks.
+**Depth-aware occlusion**: Pins behind geometry display blurred and dimmed. During camera movement, occlusion refreshes in small batches so existing bookmarks do not visibly lag behind model rotation; when idle, the overlay catches up with a full refresh cadence.
 
 **Code blocks & Live Preview**: Saved annotations display as read-only overlays with the same occlusion behavior.
 
@@ -624,14 +624,16 @@ npm run verify:preview:success  # Full preview routing success suite
 
 ### Preview Verification
 
-Run `npm run verify:preview:success` before shipping preview changes. For a focused default-route check, `npm run verify:preview` still works. The success suite launches a temporary Playwright harness, loads `models/rubiks-cube-3x3.glb`, and verifies:
+Run `npm run verify:preview:success` before shipping preview changes. For a focused default-route check, `npm run verify:preview` still works. The harness auto-detects common Chrome, Edge, Chromium, and Brave installs on Windows, macOS, and Linux; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` only when using a custom browser path. The success suite launches a temporary Playwright harness, loads `models/rubiks-cube-3x3.glb`, and verifies:
 
 - default simple `GLB` preview
 - default direct-edit `GLB` preview
 - default readonly saved-pin `GLB` preview
 - reading-surfaces-only rollout behavior
 - compatibility-mode rollback behavior
-- helper toolbar interactions, focus mode, selected-part export, and wheel-scroll containment
+- workbench fallback routing and hidden Three.js workbench capability probe
+- direct-format `STL`, `PLY`, and `OBJ` preview routing
+- helper toolbar interactions, focus mode, moving-pin occlusion, selected-part export, performance snapshots, and wheel-scroll containment
 
 If verification fails, the script saves a screenshot and a log with preview state plus browser messages under `.tmp/preview-failures/`.
 
@@ -647,7 +649,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `v0.1.7`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, and generates GitHub artifact attestations for the published files.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.2.3`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, and generates GitHub artifact attestations for the published files.
 
 ### Platform Support
 

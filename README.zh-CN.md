@@ -372,7 +372,7 @@ ai-model-workbench/
 6. 点击工作台面板中的标签文字，相机自动平滑旋转到该位置
 7. 按 `Esc` 退出标注模式
 
-**深度遮挡**：被模型遮挡的标注显示为半透明模糊状态。相机静止约 250ms 后，完全被遮挡的标注自动隐藏，仅保留可见书签。
+**深度遮挡**：被模型遮挡的标注显示为半透明模糊状态。相机移动时遮挡会分批刷新，避免已有书签在旋转模型时明显延迟；空闲后叠层会按完整刷新节奏补齐。
 
 **代码块 & 实时预览**：已保存的标注以只读方式显示，具有相同的遮挡效果。
 
@@ -637,14 +637,16 @@ npm run verify:preview:success  # 完整预览路由成功套件
 
 ### 预览验证
 
-在提交预览相关改动前，建议运行 `npm run verify:preview:success`。如果只想检查当前默认路径，`npm run verify:preview` 仍然可用。完整成功套件会启动一个临时的 Playwright 验证页面，加载 `models/rubiks-cube-3x3.glb`，并验证：
+在提交预览相关改动前，建议运行 `npm run verify:preview:success`。如果只想检查当前默认路径，`npm run verify:preview` 仍然可用。验证脚本会自动识别 Windows、macOS 和 Linux 上常见的 Chrome、Edge、Chromium 与 Brave；只有使用自定义浏览器路径时才需要设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`。完整成功套件会启动一个临时的 Playwright 验证页面，加载 `models/rubiks-cube-3x3.glb`，并验证：
 
 - 默认 simple `GLB` 预览
 - 默认 direct-edit `GLB` 预览
 - 默认 readonly saved-pin `GLB` 预览
 - “仅阅读场景”档位的路由行为
 - “兼容优先”回退档位的路由行为
-- helper toolbar 交互、聚焦模式、选中部件导出，以及滚轮不带动页面滚动
+- workbench Babylon 回退路由和隐藏 Three.js workbench 能力探针
+- `STL`、`PLY`、`OBJ` 直读格式预览路由
+- helper toolbar 交互、聚焦模式、旋转时标注遮挡刷新、选中部件导出、性能快照，以及滚轮不带动页面滚动
 
 如果验证失败，脚本会把截图以及包含预览状态和浏览器消息的日志保存到 `.tmp/preview-failures/`。
 
@@ -660,7 +662,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `v0.1.7`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，并为发布文件生成 GitHub artifact attestation。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.2.3`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，并为发布文件生成 GitHub artifact attestation。
 
 ### 平台支持
 

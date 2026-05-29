@@ -39,6 +39,14 @@ const cases = [
     label: "Rollback readonly-pin GLB preview",
     args: ["--mode", "readonly-pin", "--rollout", "babylon-safe"],
   },
+  {
+    label: "Workbench GLB fallback preview",
+    args: ["--mode", "workbench"],
+  },
+  {
+    label: "Workbench GLB Three.js capability probe",
+    args: ["--mode", "workbench", "--allow-workbench-three"],
+  },
   // STL format test
   {
     label: "STL preview (Three.js)",

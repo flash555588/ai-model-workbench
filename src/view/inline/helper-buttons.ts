@@ -131,10 +131,13 @@ export function createHelperButtons(
   };
   const syncGroupVisibility = (): void => {
     for (const group of [viewGroup, inspectGroup, outputGroup]) {
-      const hasVisibleButton = Array
+      const visibleButtons = Array
         .from(group.querySelectorAll<HTMLElement>(".ai3d-inline-btn"))
-        .some((button) => !button.classList.contains("is-hidden"));
+        .filter((button) => !button.classList.contains("is-hidden"));
+      const hasVisibleButton = visibleButtons.length > 0;
+      const hasPrimaryButton = visibleButtons.some((button) => !button.classList.contains("is-secondary"));
       group.classList.toggle("is-hidden", !hasVisibleButton);
+      group.classList.toggle("has-primary-visible", hasPrimaryButton);
     }
   };
 
@@ -188,6 +191,9 @@ export function createHelperButtons(
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
     setTogglePressed(focusBtn, !!focusPreview?.isFocusSelectionEnabled());
     setTogglePressed(disassembleBtn, !!disassemblyPreview?.isDisassemblyEnabled());
+    if (preview && supportsOrientationGizmoPreview(preview)) {
+      setTogglePressed(gizmoBtn, !!preview.isOrientationGizmoEnabled?.());
+    }
   };
 
   const syncCapabilities = (): void => {
@@ -198,7 +204,6 @@ export function createHelperButtons(
     if (preview !== lastSyncedPreview) {
       lastSyncedPreview = preview;
       setTogglePressed(wireBtn, false);
-      setTogglePressed(gizmoBtn, false);
       setTogglePressed(bboxBtn, false);
       setTogglePressed(animBtn, false);
       animBtn.replaceChildren(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
