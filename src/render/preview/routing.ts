@@ -21,6 +21,7 @@ const DEFAULT_RENDERER_ROLLOUT: PreviewRendererRollout = "three-direct-glb";
 
 /** Formats that the Three.js renderer can load directly. */
 const THREE_FORMATS = new Set(["glb", "gltf", "stl", "ply", "obj"]);
+const THREE_WORKBENCH_FORMATS = new Set(["glb", "gltf"]);
 
 function resolveRendererRollout(value: PreviewFactoryOptions["rendererRollout"]): PreviewRendererRollout {
   return value ?? DEFAULT_RENDERER_ROLLOUT;
@@ -48,6 +49,17 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
   }
 
   if (THREE_FORMATS.has(ext) && (!requireWorkbenchFeatures || allowWorkbenchFeaturesOnThree)) {
+    if (requireWorkbenchFeatures && !THREE_WORKBENCH_FORMATS.has(ext)) {
+      return {
+        backend: "babylon",
+        ext,
+        annotationMode,
+        requireWorkbenchFeatures,
+        rendererRollout,
+        reason: `workbench experimental Three supports GLB/GLTF only, ext=${ext}`,
+      };
+    }
+
     if (annotationMode === "edit" && rendererRollout !== "three-direct-glb") {
       return {
         backend: "babylon",

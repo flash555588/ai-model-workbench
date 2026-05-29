@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use a configurable Three.js rendering path across reading surfaces and direct file view, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
+> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use a configurable Three.js rendering path across reading surfaces and direct file view; the file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -371,6 +371,7 @@ Add labeled bookmarks directly on model surfaces. Annotations persist per model 
 | Language | auto | UI language (English / Simplified Chinese / auto-detect) |
 | Annotation preview mode | plain-text | How saved annotation content renders inside readonly previews |
 | Preview compatibility mode | Reading + file view | Controls how widely the newer single-model GLB preview path is used |
+| Experimental Three workbench | off | Tries the Three.js workbench path for direct GLB/GLTF file views, with automatic Babylon.js fallback |
 | Canvas height | 400 | Preview height in pixels |
 | Auto-rotate | off | Start with turntable animation |
 | Auto-rotate speed | 0.5 | Rotation speed (0.1-2.0) |
@@ -620,6 +621,8 @@ npm run build         # Production build
 npm run typecheck     # TypeScript type check
 npm run verify:preview  # Targeted browser preview smoke test
 npm run verify:preview:success  # Full preview routing success suite
+npm run verify:obsidian  # End-to-end Obsidian app smoke test
+npm run verify:release   # Release asset version/hash/size check
 ```
 
 ### Preview Verification
@@ -631,11 +634,15 @@ Run `npm run verify:preview:success` before shipping preview changes. For a focu
 - default readonly saved-pin `GLB` preview
 - reading-surfaces-only rollout behavior
 - compatibility-mode rollback behavior
-- workbench fallback routing and hidden Three.js workbench capability probe
+- workbench Babylon fallback routing and experimental Three.js workbench probe
 - direct-format `STL`, `PLY`, and `OBJ` preview routing
 - helper toolbar interactions, focus mode, moving-pin occlusion, selected-part export, performance snapshots, and wheel-scroll containment
 
 If verification fails, the script saves a screenshot and a log with preview state plus browser messages under `.tmp/preview-failures/`.
+
+### Obsidian Verification
+
+Run `npm run verify:obsidian` on macOS before release when Obsidian is installed. The script builds a temporary test vault under `/tmp/ai-model-workbench-verify-vault`, installs the packaged plugin, opens a note in Obsidian through a remote debugging port, trusts the temporary vault when prompted, confirms that GLB/STL preview canvases are loaded, checks converter feedback for an FBX route without FBX2glTF enabled, then opens the real GLB file view with Experimental Three workbench enabled and checks backend selection, focus/disassembly controls, panel explode controls, annotation mode, and knowledge-note generation.
 
 ### Build Output
 
@@ -649,7 +656,11 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.2.3`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, and generates GitHub artifact attestations for the published files.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.3.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files.
+
+### Release Token Safety
+
+Prefer GitHub CLI browser login or short-lived fine-grained tokens for manual publishing. If a personal access token is used, scope it only to this repository with `Contents: Read and write` and revoke it immediately after the push. Never paste tokens into issues, release notes, commits, or documentation.
 
 ### Platform Support
 

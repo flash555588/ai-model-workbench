@@ -19,7 +19,7 @@ import { createLoadingOverlay } from "./loading-overlay";
 import { createNoteReader } from "../../utils/note-reader";
 import { describeModelLoadFailure, isMissingConverterError } from "../../io/conversion/errors";
 import { formatT, t } from "../../i18n";
-import { renderModelLoadFailure } from "../model-load-feedback";
+import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
 import { isMobile } from "../../utils/device";
 import { createLogger } from "../../utils/log";
 
@@ -294,8 +294,9 @@ export function registerCodeBlockProcessor(
           const readFile = async (p: string) => readBinaryPath(app, p);
 
           if (destroyed) { loading.hide(); return; }
-          await preview.loadModel(data, source.ext, readFile, source.path);
+          const summary = await preview.loadModel(data, source.ext, readFile, source.path);
           loading.setProgress(100);
+          renderModelPerformanceFeedback(host, summary);
 
           if (destroyed) { loading.hide(); return; }
           if (config.scene?.autoRotate === undefined && settings.autoRotateDefault) {

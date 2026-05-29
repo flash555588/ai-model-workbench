@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）现在默认走 Three.js 渲染路径，可通过”预览兼容模式”回退到 Babylon.js；而 workbench、`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
+> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）现在默认走 Three.js 渲染路径，可通过“预览兼容模式”回退到 Babylon.js；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
 
 [English](README.md) | **简体中文**
 
@@ -385,6 +385,7 @@ ai-model-workbench/
 | 语言 | 自动 | 界面语言（英文 / 简体中文 / 自动检测） |
 | 标注预览模式 | plain-text | 控制已保存标注内容在只读预览中的渲染方式 |
 | 预览兼容模式 | 阅读 + 文件视图 | 控制新的单模型 GLB 预览路径启用范围 |
+| 实验性 Three 工作台 | 关 | 仅对直读 GLB/GLTF 文件视图尝试 Three.js workbench，失败时自动回退 Babylon.js |
 | 画布高度 | 400 | 预览高度（像素） |
 | 自动旋转 | 关 | 启动时启用旋转动画 |
 | 自动旋转速度 | 0.5 | 旋转速度（0.1-2.0） |
@@ -633,6 +634,8 @@ npm run build         # 生产构建
 npm run typecheck     # TypeScript 类型检查
 npm run verify:preview  # 定向浏览器预览冒烟验证
 npm run verify:preview:success  # 完整预览路由成功套件
+npm run verify:obsidian  # Obsidian 应用端到端冒烟验证
+npm run verify:release   # 发布资产版本/hash/体积检查
 ```
 
 ### 预览验证
@@ -644,11 +647,15 @@ npm run verify:preview:success  # 完整预览路由成功套件
 - 默认 readonly saved-pin `GLB` 预览
 - “仅阅读场景”档位的路由行为
 - “兼容优先”回退档位的路由行为
-- workbench Babylon 回退路由和隐藏 Three.js workbench 能力探针
+- workbench Babylon 回退路由和实验性 Three.js workbench 能力探针
 - `STL`、`PLY`、`OBJ` 直读格式预览路由
 - helper toolbar 交互、聚焦模式、旋转时标注遮挡刷新、选中部件导出、性能快照，以及滚轮不带动页面滚动
 
 如果验证失败，脚本会把截图以及包含预览状态和浏览器消息的日志保存到 `.tmp/preview-failures/`。
+
+### Obsidian 验证
+
+在 macOS 且已安装 Obsidian 时，发布前运行 `npm run verify:obsidian`。脚本会在 `/tmp/ai-model-workbench-verify-vault` 下创建临时测试库，安装当前打包插件，通过远程调试端口打开测试笔记，按需信任临时 vault，确认 GLB/STL 预览 canvas 已加载，检查未启用 FBX2glTF 时的 FBX 转换反馈，然后打开真实 GLB 文件视图并启用实验性 Three workbench，检查 backend 选择、聚焦/分解控件、面板爆炸控件、标注模式和知识笔记生成。
 
 ### 构建输出
 
@@ -662,7 +669,11 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.2.3`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，并为发布文件生成 GitHub artifact attestation。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.3.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。
+
+### 发布 Token 安全
+
+手动发布优先使用 GitHub CLI 浏览器登录，或使用短期 fine-grained token。如果必须使用 personal access token，只给当前仓库 `Contents: Read and write` 权限，并在推送后立即撤销。不要把 token 粘贴到 issue、release notes、commit 或文档里。
 
 ### 平台支持
 

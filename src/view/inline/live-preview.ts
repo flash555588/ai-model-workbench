@@ -22,7 +22,7 @@ import { createNoteReader } from "../../utils/note-reader";
 import { createStagedDiv, createStagedEl } from "../../utils/dom";
 import { describeModelLoadFailure, isMissingConverterError } from "../../io/conversion/errors";
 import { isMobile } from "../../utils/device";
-import { renderModelLoadFailure } from "../model-load-feedback";
+import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
 import { t } from "../../i18n";
 import { createLogger } from "../../utils/log";
 
@@ -204,7 +204,7 @@ class ModelEmbedWidget extends WidgetType {
         this.preview = null;
         return;
       }
-      await this.preview.loadModel(
+      const summary = await this.preview.loadModel(
         data,
         prepared.effectiveExt,
         (path) => readBinaryPath(this.app, path),
@@ -215,6 +215,7 @@ class ModelEmbedWidget extends WidgetType {
         this.preview = null;
         return;
       }
+      renderModelPerformanceFeedback(host, summary);
 
       if (this.autoRotate) {
         this.preview.applyConfig({

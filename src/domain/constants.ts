@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   annotationPreviewMode: "plain-text",
   previewRendererRollout: "three-direct-glb",
   useThreeRenderer: true,
+  experimentalThreeWorkbench: false,
   sendRawModelToRemote: false,
   sendPreviewImagesToRemote: false,
   sendGeometrySummaryToRemote: false,

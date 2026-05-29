@@ -70,6 +70,20 @@ export interface ModelPreviewPerformanceSnapshot {
   quality: "low" | "medium" | "high";
   pixelRatio?: number;
   interactivePixelRatioActive?: boolean;
+  frameBudgetPixelRatioScale?: number;
+  frameBudgetObserverStride?: number;
+  frameBudgetShadowDeferred?: boolean;
+  lastFrameDurationMs?: number;
+  viewportVisible?: boolean;
+  disposalAudit?: {
+    reason: "initial" | "model-switch" | "destroy";
+    meshCount: number;
+    geometryCount: number;
+    materialCount: number;
+    textureCount: number;
+    objectCount: number;
+    timestamp: number;
+  };
   renderDirty?: boolean;
   renderObserverCount?: number;
   renderObserverSettleFrames?: number;

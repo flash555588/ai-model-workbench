@@ -47,6 +47,19 @@ const cases = [
     label: "Workbench GLB Three.js capability probe",
     args: ["--mode", "workbench", "--allow-workbench-three"],
   },
+  {
+    label: "Workbench STL remains Babylon with experimental Three enabled",
+    args: [
+      "--mode",
+      "workbench",
+      "--allow-workbench-three",
+      "--model",
+      join(rootDir, "models", "test.stl"),
+      "--expect-backend",
+      "babylon",
+      "--route-only",
+    ],
+  },
   // STL format test
   {
     label: "STL preview (Three.js)",

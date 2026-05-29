@@ -22,6 +22,9 @@ let globalNextId = 1;
 const MOVING_OCCLUSION_BATCH_SIZE = 4;
 const MOVING_OCCLUSION_STRIDE = 2;
 const IDLE_OCCLUSION_STRIDE = 6;
+const LABEL_AVOIDANCE_PADDING = 6;
+const LABEL_AVOIDANCE_MAX_SHIFT = 72;
+const LABEL_AVOIDANCE_MAX_PINS = 80;
 
 function generateId(): string {
   return `pin-${Date.now()}-${globalNextId++}`;
@@ -31,7 +34,21 @@ function cloneWorldPoint(point: PreviewWorldPoint): PreviewWorldPoint {
   return clonePreviewWorldPoint(point);
 }
 
+function rectsOverlap(a: DOMRect, b: DOMRect, padding: number): boolean {
+  return a.left < b.right + padding
+    && a.right > b.left - padding
+    && a.top < b.bottom + padding
+    && a.bottom > b.top - padding;
+}
+
 export type AnnotationMode = "edit" | "readonly";
+
+interface ProjectedPinEntry {
+  el: HTMLDivElement;
+  screenX: number;
+  screenY: number;
+  depth: number;
+}
 
 export interface AnnotationPreviewOptions {
   app?: App;
@@ -716,6 +733,7 @@ export class AnnotationManager {
     const movingOcclusionStart = checkAllOcclusion ? 0 : this.movingOcclusionCursor % entries.length;
     const movingOcclusionEnd = movingOcclusionStart + MOVING_OCCLUSION_BATCH_SIZE;
     const projected = AnnotationManager._scratchProjection;
+    const projectedPins: ProjectedPinEntry[] = [];
 
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index];
@@ -730,6 +748,13 @@ export class AnnotationManager {
       } else {
         entry.el.style.setProperty("--pin-left", `${projected.screenX}px`);
         entry.el.style.setProperty("--pin-top", `${projected.screenY}px`);
+        this.updatePinPriority(entry.el, projected.depth);
+        projectedPins.push({
+          el: entry.el,
+          screenX: projected.screenX,
+          screenY: projected.screenY,
+          depth: projected.depth,
+        });
 
         const inMovingOcclusionBatch = checkAllOcclusion
           || (index >= movingOcclusionStart && index < movingOcclusionEnd)
@@ -750,6 +775,46 @@ export class AnnotationManager {
     }
     if (shouldCheckOcclusion && !checkAllOcclusion && entries.length > 0) {
       this.movingOcclusionCursor = (movingOcclusionStart + MOVING_OCCLUSION_BATCH_SIZE) % entries.length;
+    }
+    this.applyLabelAvoidance(projectedPins);
+  }
+
+  private updatePinPriority(el: HTMLDivElement, depth: number): void {
+    const depthScore = Math.max(0, Math.min(1, 1 - depth));
+    const movingBoost = this.cameraIdle ? 0 : 160;
+    const occlusionPenalty = el.classList.contains("ai3d-pin-occluded") ? 80 : 0;
+    el.style.zIndex = String(100 + movingBoost + Math.round(depthScore * 120) - occlusionPenalty);
+  }
+
+  private applyLabelAvoidance(projectedPins: ProjectedPinEntry[]): void {
+    if (projectedPins.length === 0) return;
+    if (projectedPins.length > LABEL_AVOIDANCE_MAX_PINS) {
+      for (const pin of projectedPins) {
+        pin.el.style.removeProperty("--pin-offset-y");
+      }
+      return;
+    }
+
+    const placed: DOMRect[] = [];
+    const ordered = projectedPins
+      .filter((pin) => !pin.el.classList.contains("ai3d-pin-hidden"))
+      .sort((a, b) => a.depth - b.depth);
+
+    for (const pin of ordered) {
+      let offset = 0;
+      pin.el.setCssProps({ "--pin-offset-y": "0px" });
+      let rect = pin.el.getBoundingClientRect();
+      for (const placedRect of placed) {
+        if (!rectsOverlap(rect, placedRect, LABEL_AVOIDANCE_PADDING)) continue;
+        const direction = pin.screenY >= placedRect.top + placedRect.height / 2 ? 1 : -1;
+        offset = Math.max(
+          -LABEL_AVOIDANCE_MAX_SHIFT,
+          Math.min(LABEL_AVOIDANCE_MAX_SHIFT, offset + direction * (placedRect.height + LABEL_AVOIDANCE_PADDING)),
+        );
+        pin.el.setCssProps({ "--pin-offset-y": `${offset}px` });
+        rect = pin.el.getBoundingClientRect();
+      }
+      placed.push(rect);
     }
   }
 

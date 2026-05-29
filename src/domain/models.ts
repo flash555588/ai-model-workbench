@@ -21,6 +21,11 @@ export interface PluginSettings {
   previewRendererRollout: PreviewRendererRollout;
   /** Simple toggle: true = Three.js, false = Babylon.js (compatibility). */
   useThreeRenderer: boolean;
+  /**
+   * Experimental workbench route: allow Three.js for direct GLB/GLTF workbench
+   * surfaces with automatic Babylon fallback.
+   */
+  experimentalThreeWorkbench: boolean;
   sendRawModelToRemote: boolean;
   sendPreviewImagesToRemote: boolean;
   sendGeometrySummaryToRemote: boolean;
@@ -118,6 +123,8 @@ export interface ModelPreviewSummary {
   splatCount?: number;
   vertexCount: number;
   materialCount: number;
+  performanceTier?: "light" | "medium" | "heavy" | "extreme";
+  performanceHint?: string;
   boundingSize: { x: number; y: number; z: number };
   rootName: string;
 }

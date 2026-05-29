@@ -75,6 +75,7 @@ function installObsidianDomShims(): void {
     createEl?: <K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateInput) => HTMLElementTagNameMap[K];
     empty?: () => void;
     setText?: (text: string) => void;
+    setCssProps?: (props: Record<string, string>) => void;
   };
 
   if (!proto.createDiv) {
@@ -113,6 +114,14 @@ function installObsidianDomShims(): void {
   if (!proto.setText) {
     proto.setText = function setText(text: string): void {
       this.textContent = text;
+    };
+  }
+
+  if (!proto.setCssProps) {
+    proto.setCssProps = function setCssProps(props: Record<string, string>): void {
+      for (const [key, value] of Object.entries(props)) {
+        this.style.setProperty(key, value);
+      }
     };
   }
 }

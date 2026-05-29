@@ -83,15 +83,33 @@ const DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP = 1.5;
 const MOBILE_INTERACTIVE_PIXEL_RATIO_CAP = 1.15;
 const INTERACTIVE_PIXEL_RATIO_HOLD_MS = 180;
 const RENDER_OBSERVER_SETTLE_FRAMES = 30;
+const RENDER_OBSERVER_SETTLE_MIN_FRAMES = 8;
+const FRAME_BUDGET_SLOW_MS = 28;
+const FRAME_BUDGET_FAST_MS = 18;
+const FRAME_BUDGET_SLOW_STREAK = 2;
+const FRAME_BUDGET_FAST_STREAK = 28;
+const FRAME_BUDGET_PIXEL_RATIO_STEP = 0.86;
+const FRAME_BUDGET_PIXEL_RATIO_RECOVERY_STEP = 1.08;
+const FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE = 0.62;
+const FRAME_BUDGET_SHADOW_SCALE = 0.86;
+const FRAME_BUDGET_MAX_OBSERVER_STRIDE = 4;
+
+type DisposalReason = "initial" | "model-switch" | "destroy";
+
+interface ThreeDisposalAudit {
+  reason: DisposalReason;
+  meshCount: number;
+  geometryCount: number;
+  materialCount: number;
+  textureCount: number;
+  objectCount: number;
+  timestamp: number;
+}
 
 type ShadowCastingLight = DirectionalLight | PointLight | SpotLight;
 
 function isMesh(value: unknown): value is Mesh {
   return value instanceof Mesh;
-}
-
-function isDisposable(value: unknown): value is { dispose(): void } {
-  return !!value && typeof value === "object" && "dispose" in value && typeof value.dispose === "function";
 }
 
 function isShadowCastingLight(light: Light): light is ShadowCastingLight {
@@ -173,6 +191,24 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private interactivePixelRatioActive = false;
   private interactionPixelRatioDeadline = 0;
   private renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+  private frameBudgetPixelRatioScale = 1;
+  private frameBudgetSlowStreak = 0;
+  private frameBudgetFastStreak = 0;
+  private frameBudgetObserverStride = 1;
+  private frameBudgetObserverCursor = 0;
+  private frameBudgetShadowDeferred = false;
+  private lastFrameDurationMs = 0;
+  private viewportVisible = true;
+  private viewportObserver: IntersectionObserver | null = null;
+  private lastDisposalAudit: ThreeDisposalAudit = {
+    reason: "initial",
+    meshCount: 0,
+    geometryCount: 0,
+    materialCount: 0,
+    textureCount: 0,
+    objectCount: 0,
+    timestamp: performance.now(),
+  };
   private axesHelper: AxesHelper | null = null;
   private bboxHelper: BoxHelper | null = null;
   private groundShadowMesh: Mesh | null = null;
@@ -212,6 +248,22 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.resizeRenderer();
     }
     this.markDirty();
+  };
+  private readonly handleViewportIntersection: IntersectionObserverCallback = (entries) => {
+    const entry = entries[entries.length - 1];
+    if (!entry) return;
+    const visible = entry.isIntersecting && entry.intersectionRatio > 0;
+    if (visible === this.viewportVisible) return;
+    this.viewportVisible = visible;
+    if (visible) {
+      this.clock.last = performance.now();
+      this.markDirty();
+      this.markShadowDirty();
+      this.startRenderLoop();
+    } else {
+      cancelAnimationFrame(this.renderHandle);
+      this.renderHandle = 0;
+    }
   };
   private readonly handlePointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.isPrimary === false) return;
@@ -263,6 +315,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     this.resizeObs = new ResizeObserver(() => this.resizeRenderer());
     this.resizeObs.observe(canvas);
+    if (typeof IntersectionObserver !== "undefined") {
+      this.viewportObserver = new IntersectionObserver(this.handleViewportIntersection, {
+        root: null,
+        threshold: [0, 0.01],
+      });
+      this.viewportObserver.observe(canvas);
+    }
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     canvas.addEventListener("pointerdown", this.handlePointerDown);
     canvas.addEventListener("pointerup", this.handlePointerUp);
@@ -277,7 +336,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     readFile?: (path: string) => Promise<ArrayBuffer>,
     modelPath?: string,
   ): Promise<ModelPreviewSummary> {
-    this.clearLoadedModel();
+    this.clearLoadedModel("model-switch");
     this.loadedExt = ext.toLowerCase();
 
     let root: Object3D;
@@ -344,7 +403,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disassemblySetup = false;
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
-    this.clearLoadedModel();
+    this.clearLoadedModel("destroy");
     for (const light of this.configLights) {
       this.disposeConfiguredLight(light);
     }
@@ -361,6 +420,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.removeEventListener("pointerdown", this.handlePointerDown);
     canvas.removeEventListener("pointerup", this.handlePointerUp);
     this.resizeObs.disconnect();
+    this.viewportObserver?.disconnect();
+    this.viewportObserver = null;
     this.renderer.dispose();
   }
 
@@ -555,6 +616,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
       renderDirty: this.renderDirty,
       renderObserverCount: this.renderObservers.size,
       renderObserverSettleFrames: this.renderObserverSettleFrames,
+      frameBudgetPixelRatioScale: Number(this.frameBudgetPixelRatioScale.toFixed(2)),
+      frameBudgetObserverStride: this.frameBudgetObserverStride,
+      frameBudgetShadowDeferred: this.frameBudgetShadowDeferred,
+      lastFrameDurationMs: Number(this.lastFrameDurationMs.toFixed(2)),
+      viewportVisible: this.viewportVisible,
+      disposalAudit: { ...this.lastDisposalAudit },
       meshCount: this.rootObject ? this.getRenderableMeshes(this.rootObject).length : 0,
     };
   }
@@ -650,16 +717,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private startRenderLoop(): void {
+    if (this.renderHandle || !this.viewportVisible) return;
     const tick = () => {
-      this.renderNow(performance.now());
+      if (!this.viewportVisible) {
+        this.renderHandle = 0;
+        return;
+      }
       this.renderHandle = requestAnimationFrame(tick);
+      this.renderNow(performance.now());
     };
     this.renderHandle = requestAnimationFrame(tick);
   }
 
   private renderNow(now: number): void {
     const canvas = this.renderer.domElement;
-    if (!canvas.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
+    if (!this.viewportVisible || !canvas.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
 
     const deltaSeconds = Math.max(0, (now - this.clock.last) / 1000);
     this.clock.last = now;
@@ -685,11 +757,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.bboxHelper?.update();
     this.selectionHelper?.update();
     this.focusHelper?.update();
+    const renderStartedAt = performance.now();
     this.renderer.render(this.scene, this.camera);
+    this.updateFrameBudget(performance.now() - renderStartedAt);
     this.notifyRenderObservers();
   }
 
   private notifyRenderObservers(): void {
+    if (this.frameBudgetObserverStride > 1) {
+      this.frameBudgetObserverCursor = (this.frameBudgetObserverCursor + 1) % this.frameBudgetObserverStride;
+      if (this.frameBudgetObserverCursor !== 0) return;
+    }
     for (const callback of this.renderObservers) {
       callback();
     }
@@ -697,9 +775,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private markDirty(): void {
     this.renderDirty = true;
+    this.startRenderLoop();
   }
 
   private markShadowDirty(): void {
+    if (this.shouldDeferShadowRefresh()) {
+      this.frameBudgetShadowDeferred = true;
+      return;
+    }
+    this.frameBudgetShadowDeferred = false;
     this.renderer.shadowMap.needsUpdate = true;
   }
 
@@ -715,6 +799,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private restoreInteractivePixelRatioIfIdle(now: number, cameraMoved: boolean): void {
     if (!this.interactivePixelRatioActive || cameraMoved || now < this.interactionPixelRatioDeadline) return;
     this.interactivePixelRatioActive = false;
+    this.resetFrameBudget();
+    if (this.frameBudgetShadowDeferred) {
+      this.frameBudgetShadowDeferred = false;
+      this.renderer.shadowMap.needsUpdate = true;
+    }
     this.resizeRenderer();
   }
 
@@ -724,7 +813,74 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const mobileScale = mobile ? 0.85 : 1;
     const base = Math.min(MAX_RENDER_PIXEL_RATIO, window.devicePixelRatio * qualityScale * mobileScale * this.renderScale);
     if (!interactive) return base;
-    return Math.min(base, mobile ? MOBILE_INTERACTIVE_PIXEL_RATIO_CAP : DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP);
+    const interactiveCap = mobile ? MOBILE_INTERACTIVE_PIXEL_RATIO_CAP : DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP;
+    return Math.min(base, interactiveCap) * this.frameBudgetPixelRatioScale;
+  }
+
+  private updateFrameBudget(frameDurationMs: number): void {
+    this.lastFrameDurationMs = frameDurationMs;
+    if (!this.interactivePixelRatioActive) return;
+
+    if (frameDurationMs >= FRAME_BUDGET_SLOW_MS) {
+      this.frameBudgetSlowStreak++;
+      this.frameBudgetFastStreak = 0;
+    } else if (frameDurationMs <= FRAME_BUDGET_FAST_MS) {
+      this.frameBudgetFastStreak++;
+      this.frameBudgetSlowStreak = 0;
+    } else {
+      this.frameBudgetSlowStreak = 0;
+      this.frameBudgetFastStreak = 0;
+    }
+
+    if (this.frameBudgetSlowStreak >= FRAME_BUDGET_SLOW_STREAK) {
+      this.frameBudgetSlowStreak = 0;
+      const nextScale = Math.max(
+        FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE,
+        this.frameBudgetPixelRatioScale * FRAME_BUDGET_PIXEL_RATIO_STEP,
+      );
+      if (nextScale < this.frameBudgetPixelRatioScale - 0.01) {
+        this.frameBudgetPixelRatioScale = nextScale;
+        this.frameBudgetObserverStride = Math.min(
+          FRAME_BUDGET_MAX_OBSERVER_STRIDE,
+          this.frameBudgetObserverStride + 1,
+        );
+        this.renderObserverSettleFrames = Math.max(
+          RENDER_OBSERVER_SETTLE_MIN_FRAMES,
+          Math.floor(RENDER_OBSERVER_SETTLE_FRAMES / this.frameBudgetObserverStride),
+        );
+        this.resizeRenderer();
+      }
+      return;
+    }
+
+    if (this.frameBudgetFastStreak >= FRAME_BUDGET_FAST_STREAK && this.frameBudgetPixelRatioScale < 1) {
+      this.frameBudgetFastStreak = 0;
+      this.frameBudgetPixelRatioScale = Math.min(
+        1,
+        this.frameBudgetPixelRatioScale * FRAME_BUDGET_PIXEL_RATIO_RECOVERY_STEP,
+      );
+      this.frameBudgetObserverStride = Math.max(1, this.frameBudgetObserverStride - 1);
+      this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+      this.resizeRenderer();
+    }
+  }
+
+  private resetFrameBudget(): void {
+    const changed = this.frameBudgetPixelRatioScale !== 1 || this.frameBudgetObserverStride !== 1;
+    this.frameBudgetPixelRatioScale = 1;
+    this.frameBudgetSlowStreak = 0;
+    this.frameBudgetFastStreak = 0;
+    this.frameBudgetObserverStride = 1;
+    this.frameBudgetObserverCursor = 0;
+    this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+    if (changed) {
+      this.markDirty();
+    }
+  }
+
+  private shouldDeferShadowRefresh(): boolean {
+    return this.interactivePixelRatioActive
+      && this.frameBudgetPixelRatioScale <= FRAME_BUDGET_SHADOW_SCALE;
   }
 
   private resizeRenderer(): void {
@@ -1114,7 +1270,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this._onPickCallbacks.forEach((callback) => callback(result));
   }
 
-  private clearLoadedModel(): void {
+  private clearLoadedModel(reason: DisposalReason = "model-switch"): void {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
@@ -1129,25 +1285,83 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.removeGrid();
     this.mixer = null;
     this.animationPlaying = false;
-    if (!this.rootObject) return;
+    if (!this.rootObject) {
+      this.lastDisposalAudit = {
+        reason,
+        meshCount: 0,
+        geometryCount: 0,
+        materialCount: 0,
+        textureCount: 0,
+        objectCount: 0,
+        timestamp: performance.now(),
+      };
+      return;
+    }
 
     this.scene.remove(this.rootObject);
-    this.rootObject.traverse((object) => {
-      if (!isMesh(object)) return;
-      object.geometry.dispose();
-      for (const material of materialList(object.material)) {
-        const mat = material as unknown as Record<string, unknown>;
-        for (const key of Object.keys(mat)) {
-          const value = mat[key];
-          if (isDisposable(value)) {
-            value.dispose();
-          }
-        }
-        material.dispose();
-      }
-    });
+    this.lastDisposalAudit = this.disposeObjectGraph(this.rootObject, reason);
     this.rootObject = null;
     this.markShadowDirty();
+  }
+
+  private disposeObjectGraph(root: Object3D, reason: DisposalReason): ThreeDisposalAudit {
+    const geometryIds = new Set<string>();
+    const materialIds = new Set<string>();
+    const textureIds = new Set<string>();
+    let meshCount = 0;
+    let objectCount = 0;
+
+    root.traverse((object) => {
+      objectCount++;
+      if (!isMesh(object)) return;
+      meshCount++;
+
+      const geometry = object.geometry;
+      if (geometry && !geometryIds.has(geometry.uuid)) {
+        geometry.dispose();
+        geometryIds.add(geometry.uuid);
+      }
+
+      for (const material of materialList(object.material)) {
+        this.disposeMaterialWithTextures(material, materialIds, textureIds);
+      }
+    });
+
+    return {
+      reason,
+      meshCount,
+      geometryCount: geometryIds.size,
+      materialCount: materialIds.size,
+      textureCount: textureIds.size,
+      objectCount,
+      timestamp: performance.now(),
+    };
+  }
+
+  private disposeMaterialWithTextures(
+    material: Material,
+    materialIds: Set<string>,
+    textureIds: Set<string>,
+  ): void {
+    const record = material as unknown as Record<string, unknown>;
+    for (const value of Object.values(record)) {
+      if (value instanceof Texture && !textureIds.has(value.uuid)) {
+        value.dispose();
+        textureIds.add(value.uuid);
+      } else if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (entry instanceof Texture && !textureIds.has(entry.uuid)) {
+            entry.dispose();
+            textureIds.add(entry.uuid);
+          }
+        }
+      }
+    }
+
+    if (!materialIds.has(material.uuid)) {
+      material.dispose();
+      materialIds.add(material.uuid);
+    }
   }
 
   private fitCameraToObject(root: Object3D): void {

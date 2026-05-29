@@ -3,12 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
       - "*.*.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish, for example 0.1.7 or v0.1.7"
+        description: "Release tag to publish, for example 0.3.0"
         required: false
 
 permissions:
@@ -40,11 +39,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Validate release asset set
+      - name: Verify release assets
+        run: npm run verify:release
+
+      - name: Prepare release notes
         run: |
-          test -f main.js
-          test -f manifest.json
-          test -f styles.css
+          mkdir -p .tmp
+          node scripts/verify-release-assets.mjs --format markdown > .tmp/release-notes.md
 
       - name: Attest release assets
         uses: actions/attest@v4
@@ -66,7 +67,7 @@ jobs:
               TAG="${VERSION}"
             fi
           fi
-          TAG_VERSION="${TAG#v}"
+          TAG_VERSION="${TAG}"
           if [[ "${TAG_VERSION}" != "${VERSION}" ]]; then
             echo "Tag ${TAG} does not match manifest version ${VERSION}" >&2
             exit 1
@@ -85,7 +86,10 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --title "AI Model Workbench ${VERSION}" \
-              --notes "Release assets are built from source by GitHub Actions and include only the Obsidian-supported files: main.js, manifest.json, and styles.css."
+              --notes-file .tmp/release-notes.md
+          gh release edit "$TAG" \
+            --title "AI Model Workbench ${VERSION}" \
+            --notes-file .tmp/release-notes.md
 
       - name: Remove unsupported release assets
         env:

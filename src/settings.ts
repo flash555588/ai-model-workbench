@@ -197,6 +197,17 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.experimentalThreeWorkbench"))
+      .setDesc(t("settings.experimentalThreeWorkbench.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().experimentalThreeWorkbench)
+          .onChange((val) => {
+            this.plugin.updateSettings({ experimentalThreeWorkbench: val });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.autoRotateDefault"))
       .setDesc(t("settings.autoRotateDefault.desc"))
       .addToggle((toggle) =>

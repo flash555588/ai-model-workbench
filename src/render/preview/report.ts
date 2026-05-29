@@ -46,6 +46,7 @@ function buildPreviewSummaryRows(
     `| ${countLabel} | ${getPreviewSummaryPrimaryCount(summary).toLocaleString()} |`,
     `| Vertices | ${summary.vertexCount.toLocaleString()} |`,
     `| Materials | ${summary.materialCount} |`,
+    ...(summary.performanceTier ? [`| Performance Tier | ${summary.performanceTier} |`] : []),
     `| Bounding Size | ${formatPreviewWorldPoint(summary.boundingSize, { decimals })} |`,
   ];
 }

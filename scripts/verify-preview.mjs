@@ -44,9 +44,23 @@ function parseAllowWorkbenchThree() {
   return process.argv.includes("--allow-workbench-three");
 }
 
+function parseExpectBackend() {
+  const backendIndex = process.argv.indexOf("--expect-backend");
+  if (backendIndex >= 0) {
+    return process.argv[backendIndex + 1] ?? null;
+  }
+  return null;
+}
+
+function parseRouteOnly() {
+  return process.argv.includes("--route-only");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
+const verifyExpectedBackend = parseExpectBackend();
+const verifyRouteOnly = parseRouteOnly();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -132,6 +146,16 @@ async function buildHarness() {
       "export const MarkdownRenderer = {",
       "  async render(_app, content, el) { el.textContent = content; }",
       "};",
+      "if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.setCssProps) {",
+      "  HTMLElement.prototype.setCssProps = function(props) {",
+      "    for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value);",
+      "  };",
+      "}",
+      "if (typeof SVGElement !== 'undefined' && !SVGElement.prototype.setCssProps) {",
+      "  SVGElement.prototype.setCssProps = function(props) {",
+      "    for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value);",
+      "  };",
+      "}",
       "",
     ].join("\n"),
     "utf8",
@@ -481,6 +505,37 @@ async function verifyOcclusionUpdatesWhileRotating(page) {
     before.left !== after.left || before.top !== after.top || before.occluded !== after.occluded,
     "Occluded pin projection/occlusion state did not update after camera rotation",
   );
+  const priority = await page.evaluate(() => {
+    const pins = Array.from(document.querySelectorAll(".ai3d-annotation-pin"));
+    return pins.map((pin) => ({
+      text: pin.textContent ?? "",
+      zIndex: Number.parseInt(getComputedStyle(pin).zIndex || "0", 10),
+    }));
+  });
+  assert(
+    priority.some((pin) => Number.isFinite(pin.zIndex) && pin.zIndex >= 100),
+    `Pin visual priority was not applied: ${JSON.stringify(priority)}`,
+  );
+}
+
+async function verifyThreePerformanceBudgetSnapshot(page, route, performanceSnapshot) {
+  if (route?.backend !== "three") return;
+  assert(
+    typeof performanceSnapshot?.frameBudgetPixelRatioScale === "number",
+    `Three performance snapshot is missing frame budget scale: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.frameBudgetObserverStride === "number",
+    `Three performance snapshot is missing observer stride: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    performanceSnapshot?.viewportVisible === true,
+    `Three preview should be visible during verification: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    performanceSnapshot?.disposalAudit?.reason,
+    `Three disposal audit is missing: ${JSON.stringify(performanceSnapshot)}`,
+  );
 }
 
 async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, selectedPartMarkdown) {
@@ -717,6 +772,7 @@ async function verify() {
     assert(state.summary.vertexCount > 0, "Model summary reports zero vertices");
     assert(state.route?.backend === expectedBackend(verifyMode, verifyRollout), `Unexpected route: ${JSON.stringify(state.route)}`);
 
+    await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     await page.waitForTimeout(500);
     const stats = await canvasPixelStats(page);
     assert(stats.nonBackgroundRatio > 0.01, `Canvas looks blank: ${JSON.stringify(stats)}`);
@@ -726,8 +782,21 @@ async function verify() {
       performanceSnapshot?.backend === state.route?.backend,
       `Performance snapshot backend did not match route: ${JSON.stringify(performanceSnapshot)}`,
     );
+    await verifyThreePerformanceBudgetSnapshot(page, state.route, performanceSnapshot);
 
-    await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
+    if (verifyRouteOnly) {
+      console.log("Preview route-only verification passed");
+      console.log(JSON.stringify({
+        mode: verifyMode,
+        rendererRollout: verifyRollout,
+        route: state.route,
+        summary: state.summary,
+        pixelStats: stats,
+        performance: performanceSnapshot,
+      }, null, 2));
+      return;
+    }
+
     const beforeScroll = await page.evaluate(() => window.scrollY);
     const box = await page.locator("#preview-canvas").boundingBox();
     assert(box, "Canvas bounding box is unavailable");
@@ -850,6 +919,9 @@ async function verify() {
 }
 
 function expectedBackend(mode, rollout) {
+  if (verifyExpectedBackend === "three" || verifyExpectedBackend === "babylon") {
+    return verifyExpectedBackend;
+  }
   if (mode === "workbench" && !verifyAllowWorkbenchThree) {
     return "babylon";
   }
