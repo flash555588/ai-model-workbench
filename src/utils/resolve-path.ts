@@ -1,10 +1,43 @@
 import type { App } from "obsidian";
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { readFile } from "./node-shim";
 import { pathIsAbsolute as isAbsolute, pathJoin as join, pathNormalize as normalize } from "./node-shim";
 
 export function normalizePortablePath(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+export function normalizePortableRelativePath(path: string): string {
+  const normalized = normalizePortablePath(path);
+  const parts: string[] = [];
+  for (const part of normalized.split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
+export function decodePortableUri(uri: string): string {
+  try {
+    return decodeURIComponent(uri);
+  } catch {
+    return uri;
+  }
+}
+
+export function joinPortablePath(basePath: string, relativePath: string): string {
+  const decoded = decodePortableUri(relativePath.split(/[?#]/, 1)[0] ?? relativePath);
+  const normalizedRelative = normalizePortableRelativePath(decoded);
+  if (!basePath) {
+    return normalizedRelative;
+  }
+  return normalizePortableRelativePath(`${basePath}/${normalizedRelative}`);
 }
 
 export function getPortableDirname(path: string): string {
@@ -21,6 +54,34 @@ export function getPortableBasename(path: string): string {
 
 export function getPortableStem(path: string): string {
   return getPortableBasename(path).replace(/\.[^.]+$/, "");
+}
+
+async function resolveCaseInsensitiveVaultPath(app: App, rawPath: string): Promise<string | null> {
+  const portable = normalizePortableRelativePath(rawPath);
+  if (!portable) {
+    return null;
+  }
+
+  const parts = portable.split("/");
+  let folderPath = "";
+  let children = app.vault.getRoot().children;
+  for (const part of parts) {
+    const exact = children.find((child) => child.name === part);
+    const match = exact ?? children.find((child) => child.name.toLowerCase() === part.toLowerCase());
+    if (!match) {
+      return null;
+    }
+    folderPath = folderPath ? `${folderPath}/${match.name}` : match.name;
+    if (match instanceof TFile) {
+      return folderPath;
+    }
+    if (!(match instanceof TFolder)) {
+      return null;
+    }
+    children = match.children;
+  }
+
+  return null;
 }
 
 function toArrayBuffer(buf: Uint8Array): ArrayBuffer {
@@ -77,9 +138,17 @@ export async function readBinaryPath(app: App, path: string): Promise<ArrayBuffe
     return toArrayBuffer(buf);
   }
 
-  const file = app.vault.getAbstractFileByPath(path);
+  const normalizedPath = normalizePortableRelativePath(decodePortableUri(path));
+  const file = app.vault.getAbstractFileByPath(normalizedPath);
   if (!(file instanceof TFile)) {
-    throw new Error(`File not found: ${path}`);
+    const caseInsensitivePath = await resolveCaseInsensitiveVaultPath(app, normalizedPath);
+    if (caseInsensitivePath) {
+      const caseInsensitiveFile = app.vault.getAbstractFileByPath(caseInsensitivePath);
+      if (caseInsensitiveFile instanceof TFile) {
+        return app.vault.readBinary(caseInsensitiveFile);
+      }
+    }
+    throw new Error(`File not found: ${normalizedPath}`);
   }
 
   return app.vault.readBinary(file);

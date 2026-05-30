@@ -12,6 +12,7 @@ export const en = {
   "settings.diagnostics": "Converter command diagnostics",
   "settings.performance": "Performance & display",
   "settings.mobileSupport": "Mobile support",
+  "settings.knowledgeGeneration": "Knowledge generation",
 
   // Folders
   "settings.sourceModelFolder": "Source model folder",
@@ -47,6 +48,19 @@ export const en = {
   "settings.logLevel.desc": "Controls plugin runtime log verbosity in the developer console.",
   "settings.language": "Language",
   "settings.language.desc": "Display language for plugin settings. Takes effect immediately.",
+  "settings.analysisMode": "AI drafting mode",
+  "settings.analysisMode.desc": "Controls whether knowledge-note generation stays local or also requests a sanitized remote draft. Raw model upload is blocked by the current client.",
+  "settings.analysisMode.local": "Local evidence only",
+  "settings.analysisMode.hybrid": "Local evidence + remote draft",
+  "settings.analysisMode.remote": "Remote draft from evidence",
+  "settings.serviceBaseUrl": "Draft service URL",
+  "settings.serviceBaseUrl.desc": "Optional base URL for a service that accepts POST /draft-note. Leave empty to keep all drafting local.",
+  "settings.sendGeometrySummaryToRemote": "Send geometry summary",
+  "settings.sendGeometrySummaryToRemote.desc": "Allow sanitized mesh counts, bounds, part candidates, annotation coordinates, and nearest-part links to be included in remote draft input.",
+  "settings.sendPreviewImagesToRemote": "Send preview image references",
+  "settings.sendPreviewImagesToRemote.desc": "Allow generated preview image paths to be listed in the remote draft input. Image bytes are not uploaded by this client.",
+  "settings.sendRawModelToRemote": "Send raw model file",
+  "settings.sendRawModelToRemote.desc": "Reserved for future explicit upload support. If enabled manually, remote draft requests are blocked instead of uploading the model.",
 
   // Converters
   "settings.enableCad": "Enable cad conversion for step, iges, and brep files",

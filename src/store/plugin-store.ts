@@ -104,6 +104,8 @@ function normalizeModelAssetProfiles(
       annotations: Array.isArray(profile.annotations) ? profile.annotations : [],
       analysisVersion: typeof profile.analysisVersion === "string" ? profile.analysisVersion : undefined,
       reportNotePath: typeof profile.reportNotePath === "string" ? profile.reportNotePath : undefined,
+      analysisSidecarPath: typeof profile.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
+      previewImagePaths: Array.isArray(profile.previewImagePaths) ? profile.previewImagePaths.filter((path): path is string => typeof path === "string") : undefined,
       createdAt: typeof profile.createdAt === "string" ? profile.createdAt : now,
       updatedAt: typeof profile.updatedAt === "string" ? profile.updatedAt : now,
     };

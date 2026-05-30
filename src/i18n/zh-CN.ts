@@ -14,6 +14,7 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.diagnostics": "转换器命令诊断",
   "settings.performance": "性能与显示",
   "settings.mobileSupport": "移动端支持",
+  "settings.knowledgeGeneration": "知识生成",
 
   // 文件夹
   "settings.sourceModelFolder": "源模型文件夹",
@@ -49,6 +50,19 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.logLevel.desc": "控制插件在开发者控制台中的日志详细程度。",
   "settings.language": "语言",
   "settings.language.desc": "插件设置界面的显示语言。立即生效。",
+  "settings.analysisMode": "AI 草稿模式",
+  "settings.analysisMode.desc": "控制知识笔记生成保持本地，还是额外请求经过裁剪的远程草稿。当前客户端会阻止原始模型上传。",
+  "settings.analysisMode.local": "仅本地证据",
+  "settings.analysisMode.hybrid": "本地证据 + 远程草稿",
+  "settings.analysisMode.remote": "基于证据的远程草稿",
+  "settings.serviceBaseUrl": "草稿服务 URL",
+  "settings.serviceBaseUrl.desc": "可选的草稿服务基础地址，服务需接收 POST /draft-note。留空时所有草稿输入都保留在本地。",
+  "settings.sendGeometrySummaryToRemote": "发送几何摘要",
+  "settings.sendGeometrySummaryToRemote.desc": "允许把经过裁剪的网格数量、包围盒、部件候选、标注坐标和最近部件关联加入远程草稿输入。",
+  "settings.sendPreviewImagesToRemote": "发送预览图引用",
+  "settings.sendPreviewImagesToRemote.desc": "允许在远程草稿输入中列出生成的预览图路径。当前客户端不会上传图片字节。",
+  "settings.sendRawModelToRemote": "发送原始模型文件",
+  "settings.sendRawModelToRemote.desc": "预留给未来显式上传支持。若手动开启，远程草稿请求会被阻止，不会上传模型。",
 
   // 转换器
   "settings.enableCad": "启用 CAD 转换器 (STEP/IGES/BREP)",

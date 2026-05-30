@@ -190,6 +190,8 @@ AI Model Workbench 不收集遥测数据，不会主动回传，也不会运行�
 
 打包后的 Babylon.js 运行时包含面向 Web 应用的通用 URL 加载工具。该插件会把 vault 文件字节以 data URL 传给 Babylon，覆盖 OBJ MTL 加载逻辑以避免远程请求，并在运行时显式拒绝 `http(s)` / `ws(s)` 资产与脚本 URL，同时关闭 Babylon 对这类请求的重试钩子。可选的转换器诊断和格式转换只会在用户主动操作后运行，并且只在桌面端调用本地工具。
 
+知识笔记生成默认保持本地-only。如果你配置了可选远程草稿服务，插件只会向你填写的 `POST /draft-note` 端点发送被允许的证据 payload。当前客户端拒绝上传原始模型；几何摘要和预览图引用必须分别显式开启后才会包含在请求中。
+
 发布资产仅限 Obsidian 会下载的三个文件：`main.js`、`manifest.json` 和 `styles.css`。GitHub Actions 会从源码构建这些文件，并为它们发布 artifact attestation，便于验证来源。
 
 ---
@@ -206,9 +208,9 @@ AI Model Workbench 的插件包中不包含赞助提示、付款流程或加密�
 
 | 格式 | 扩展名 | 特性 |
 |------|--------|------|
-| GLB / GLTF | `.glb` `.gltf` | PBR 材质、动画、纹理、场景层级 |
+| GLB / GLTF | `.glb` `.gltf` | PBR 材质、动画、纹理、场景层级；`.gltf` 会解析 vault 内相对路径的 `.bin` 与纹理 |
 | STL | `.stl` | 二进制格式、逐面颜色（VisCAM/SolidView） |
-| OBJ | `.obj` | MTL 材质、库内相对路径纹理解析 |
+| OBJ | `.obj` | MTL 材质、库内相对路径纹理解析、同目录大小写兜底 |
 | PLY | `.ply` | ASCII/二进制、顶点颜色、点云支持 |
 
 当前打包版本临时关闭 SPLAT 预览，直到其加载器替换为纯本地实现。
@@ -378,12 +380,29 @@ ai-model-workbench/
 
 ---
 
+### 知识笔记
+
+工作台里的“生成笔记”会生成基于证据的 Markdown，而不是单纯模板。每次生成会写入：
+
+- `Analysis/3D Reports` 下的模型报告
+- 一个 JSON analysis sidecar，包含预览摘要、部件候选、知识节点、资源警告和 pipeline 元数据
+- `Media/3D Previews` 下的当前视口证据截图
+- 一个可直接编辑的本地草稿，把捕获到的证据、标注、标签和 profile notes 组织成第一版知识笔记正文，并附带本地草稿元数据、建议标签和下一步动作
+
+默认本地分析不会把模型数据发送到远程服务。它会先用渲染器证据、已保存标注、标签和 profile notes 建立后续 AI 草稿所需的 grounding 层。
+
+如需接入可选远程草稿，可在设置里选择“本地证据 + 远程草稿”或“基于证据的远程草稿”，并填写草稿服务 URL。客户端会向 `POST /draft-note` 发送经过裁剪的 drafting input。原始模型上传会被阻止；几何摘要和预览图引用都由单独的隐私开关控制。
+
+---
+
 ## 设置选项
 
 | 设置项 | 默认值 | 说明 |
 |--------|--------|------|
 | 语言 | 自动 | 界面语言（英文 / 简体中文 / 自动检测） |
 | 标注预览模式 | plain-text | 控制已保存标注内容在只读预览中的渲染方式 |
+| AI 草稿模式 | 仅本地证据 | 默认保持本地生成；配置远程服务后才请求远程草稿 |
+| 草稿服务 URL | 空 | 接收 `POST /draft-note` 的服务基础地址 |
 | 预览兼容模式 | 阅读 + 文件视图 | 控制新的单模型 GLB 预览路径启用范围 |
 | 实验性 Three 工作台 | 关 | 仅对直读 GLB/GLTF 文件视图尝试 Three.js workbench，失败时自动回退 Babylon.js |
 | 画布高度 | 400 | 预览高度（像素） |
@@ -612,7 +631,8 @@ Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `Scene
 |------|-----------|---------|
 | 需要外部转换器 | FBX | 安装并启用 FBX2glTF |
 | 需要外部工具 | STEP/IGES/BREP/SLDPRT | 安装 Python + CadQuery 或 FreeCAD |
-| 纹理路径解析 | OBJ | 将纹理放在 OBJ 同一目录 |
+| 纹理路径解析 | OBJ | 将纹理放在 OBJ/MTL 同一目录；缺失纹理会显示非阻塞资源提示 |
+| 外部资源路径解析 | GLTF | 将 `.bin` 和纹理保留在 vault 中，并按 `.gltf` 引用的相对路径放置 |
 | 转换超时 | SLDPRT | 复杂装配体有 10 分钟超时 |
 
 ---
@@ -636,6 +656,7 @@ npm run verify:preview  # 定向浏览器预览冒烟验证
 npm run verify:preview:success  # 完整预览路由成功套件
 npm run verify:obsidian  # Obsidian 应用端到端冒烟验证
 npm run verify:release   # 发布资产版本/hash/体积检查
+npm run verify:settings  # 旧 data.json/default settings 迁移检查
 ```
 
 ### 预览验证
@@ -669,11 +690,11 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.3.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.3.1`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.3.1`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 
-手动发布优先使用 GitHub CLI 浏览器登录，或使用短期 fine-grained token。如果必须使用 personal access token，只给当前仓库 `Contents: Read and write` 权限，并在推送后立即撤销。不要把 token 粘贴到 issue、release notes、commit 或文档里。
+发布优先使用 GitHub Actions 或 GitHub CLI 浏览器登录。Token 安全清单和 PAT 泄露处理流程见 `SECURITY.md`。
 
 ### 平台支持
 

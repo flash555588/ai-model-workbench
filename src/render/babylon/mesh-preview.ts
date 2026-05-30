@@ -70,7 +70,7 @@ export function createBabylonModelPreviewSummary(
   rootName: string,
   bounds: PreviewBounds,
   meshes: readonly AbstractMesh[],
-  options: { splatCount?: number } = {},
+  options: { splatCount?: number; resourceWarnings?: readonly string[] } = {},
 ): ModelPreviewSummary {
   return createPreviewModelSummary({
     rootName,
@@ -81,6 +81,7 @@ export function createBabylonModelPreviewSummary(
       materialKeys: mesh.material ? [mesh.material.name] : [],
     })),
     splatCount: options.splatCount,
+    resourceWarnings: options.resourceWarnings,
   });
 }
 

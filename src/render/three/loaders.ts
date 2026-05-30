@@ -5,7 +5,7 @@ import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
-import { getPortableBasename, getPortableDirname, getPortableStem } from "../../utils/resolve-path";
+import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
 
 const IMAGE_MIME: Record<string, string> = {
@@ -15,6 +15,7 @@ const IMAGE_MIME: Record<string, string> = {
 };
 
 const IMG_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
+const MTL_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
 
 interface GltfExternalResource {
   uri?: string;
@@ -30,6 +31,56 @@ function guessMime(path: string): string {
   return IMAGE_MIME[ext] ?? `image/${ext}`;
 }
 
+function firstMtlPath(value: string): string {
+  const trimmed = value.replace(/\s+#.*$/, "").trim();
+  if (trimmed.startsWith("\"")) {
+    const end = trimmed.indexOf("\"", 1);
+    if (end > 1) return trimmed.slice(1, end);
+  }
+  return trimmed;
+}
+
+function firstTexturePath(value: string): string {
+  const tokens = value.trim().split(/\s+/);
+  const pathStart = tokens.findIndex((token) => !token.startsWith("-") && !/^[-+]?\d*\.?\d+$/.test(token));
+  return tokens.slice(Math.max(0, pathStart)).join(" ").replace(/^"|"$/g, "");
+}
+
+async function readRelativeResource(
+  readFile: (path: string) => Promise<ArrayBuffer>,
+  modelDir: string,
+  uri: string,
+): Promise<{ data: ArrayBuffer; path: string }> {
+  const path = joinPortablePath(modelDir, uri);
+  try {
+    return { data: await readFile(path), path };
+  } catch {
+    throw new Error(`Missing external model resource: ${path}`);
+  }
+}
+
+function buildTextureCandidates(modelDir: string, rawPath: string, modelPath: string): string[] {
+  const texFilename = getPortableBasename(rawPath);
+  const texBase = texFilename.replace(/\.[^.]+$/, "");
+  const objBasename = getPortableStem(modelPath);
+  const candidates: string[] = [
+    joinPortablePath(modelDir, rawPath),
+    joinPortablePath(modelDir, texFilename),
+  ];
+  if (objBasename) {
+    for (const ext of IMG_EXTS) {
+      candidates.push(joinPortablePath(modelDir, `${objBasename}.${ext}`));
+    }
+  }
+  for (const ext of IMG_EXTS) {
+    const alt = `${texBase}.${ext}`;
+    if (alt !== texFilename) {
+      candidates.push(joinPortablePath(modelDir, alt));
+    }
+  }
+  return candidates;
+}
+
 /**
  * Load a GLTF/GLB model. Handles both .glb (binary) and .gltf (JSON).
  * readFile is needed for .gltf to resolve external .bin/.texture references.
@@ -39,8 +90,9 @@ export async function loadThreeGLTF(
   ext: string,
   readFile?: (path: string) => Promise<ArrayBuffer>,
   modelPath?: string,
-): Promise<{ scene: Object3D; animations: AnimationClip[] }> {
+): Promise<{ scene: Object3D; animations: AnimationClip[]; warnings: string[] }> {
   const loader = new GLTFLoader();
+  const warnings: string[] = [];
 
   if (ext === "gltf" && readFile && modelPath) {
     // GLTF JSON may reference external .bin and textures.
@@ -53,11 +105,8 @@ export async function loadThreeGLTF(
     if (gltfJson.buffers) {
       for (const buf of gltfJson.buffers) {
         if (buf.uri && !buf.uri.startsWith("data:")) {
-          const bufPath = modelDir ? `${modelDir}/${buf.uri}` : buf.uri;
-          try {
-            const bufData = await readFile(bufPath);
-            buf.uri = `data:application/octet-stream;base64,${arrayBufferToBase64(bufData)}`;
-          } catch { /* buffer not found, loader will report error */ }
+          const resource = await readRelativeResource(readFile, modelDir, buf.uri);
+          buf.uri = `data:application/octet-stream;base64,${arrayBufferToBase64(resource.data)}`;
         }
       }
     }
@@ -65,11 +114,8 @@ export async function loadThreeGLTF(
     if (gltfJson.images) {
       for (const img of gltfJson.images) {
         if (img.uri && !img.uri.startsWith("data:")) {
-          const imgPath = modelDir ? `${modelDir}/${img.uri}` : img.uri;
-          try {
-            const imgData = await readFile(imgPath);
-            img.uri = `data:${guessMime(imgPath)};base64,${arrayBufferToBase64(imgData)}`;
-          } catch { /* image not found */ }
+          const resource = await readRelativeResource(readFile, modelDir, img.uri);
+          img.uri = `data:${guessMime(resource.path)};base64,${arrayBufferToBase64(resource.data)}`;
         }
       }
     }
@@ -79,14 +125,14 @@ export async function loadThreeGLTF(
     const gltf = await loader.parseAsync(resolvedBuffer.buffer, modelDir ? `${modelDir}/` : "");
     const root = gltf.scene || gltf.scenes?.[0];
     if (!root) throw new Error("GLTF did not contain a scene");
-    return { scene: root, animations: gltf.animations };
+    return { scene: root, animations: gltf.animations, warnings };
   }
 
   // .glb binary path
   const gltf = await loader.parseAsync(data.slice(0), "");
   const root = gltf.scene || gltf.scenes?.[0];
   if (!root) throw new Error("GLB did not contain a scene");
-  return { scene: root, animations: gltf.animations };
+  return { scene: root, animations: gltf.animations, warnings };
 }
 
 /**
@@ -137,48 +183,31 @@ export async function loadThreeOBJ(
   data: ArrayBuffer,
   readFile?: (path: string) => Promise<ArrayBuffer>,
   modelPath?: string,
-): Promise<Object3D> {
+): Promise<{ object: Object3D; warnings: string[] }> {
   const objText = new TextDecoder().decode(new Uint8Array(data));
+  const warnings: string[] = [];
 
   // Try to resolve MTL from vault
   let materials: MTLLoader.MaterialCreator | null = null;
   const mtlMatch = objText.match(/mtllib\s+(.+)/);
   if (mtlMatch && readFile && modelPath) {
-    const mtlFilename = mtlMatch[1].trim().split(/\s+/)[0];
+    const mtlFilename = firstMtlPath(mtlMatch[1]);
     const modelDir = getPortableDirname(modelPath);
-    const mtlPath = modelDir ? `${modelDir}/${mtlFilename}` : mtlFilename;
+    const mtlPath = joinPortablePath(modelDir, mtlFilename);
 
     try {
       const mtlData = await readFile(mtlPath);
       let mtlText = new TextDecoder().decode(new Uint8Array(mtlData));
 
       // Resolve texture references in MTL
-      const TEX_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/im;
       const lines = mtlText.split("\n");
-      const objBasename = getPortableStem(modelPath);
       const texCache = new Map<string, string>();
 
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(TEX_RE);
+        const m = lines[i].match(MTL_TEXTURE_RE);
         if (!m) continue;
-        const rawPath = m[2].trim();
-        const texFilename = getPortableBasename(rawPath);
-        const texBase = texFilename.replace(/\.[^.]+$/, "");
-
-        const candidates: string[] = [
-          ...(modelDir ? [`${modelDir}/${rawPath}`, `${modelDir}/${texFilename}`] : [rawPath, texFilename]),
-        ];
-        if (objBasename) {
-          for (const ext of IMG_EXTS) {
-            candidates.push(modelDir ? `${modelDir}/${objBasename}.${ext}` : `${objBasename}.${ext}`);
-          }
-        }
-        for (const ext of IMG_EXTS) {
-          const alt = `${texBase}.${ext}`;
-          if (alt !== texFilename) {
-            candidates.push(modelDir ? `${modelDir}/${alt}` : alt);
-          }
-        }
+        const rawPath = firstTexturePath(m[2]);
+        const candidates = buildTextureCandidates(modelDir, rawPath, modelPath);
 
         let resolved = false;
         for (const cand of candidates) {
@@ -197,6 +226,7 @@ export async function loadThreeOBJ(
           } catch { /* try next candidate */ }
         }
         if (!resolved) {
+          warnings.push(`OBJ material texture not found: ${rawPath}`);
           lines[i] = "";
         }
       }
@@ -214,15 +244,17 @@ export async function loadThreeOBJ(
       mtlResult.preload();
       materials = mtlResult;
     } catch {
-      // No MTL found — OBJ will use default material
+      warnings.push(`OBJ material library not found: ${mtlPath}`);
     }
+  } else if (mtlMatch && (!readFile || !modelPath)) {
+    warnings.push("OBJ material library could not be resolved without a model path.");
   }
 
   const objLoader = new OBJLoader();
   if (materials) {
     objLoader.setMaterials(materials);
   }
-  return objLoader.parse(objText);
+  return { object: objLoader.parse(objText), warnings };
 }
 
 /** Check if a format extension is supported by the Three.js path. */

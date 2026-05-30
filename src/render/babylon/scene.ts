@@ -20,6 +20,7 @@ import type { Light } from "@babylonjs/core/Lights/light.js";
 import type { IShadowLight } from "@babylonjs/core/Lights/shadowLight.js";
 import type {
   ModelPreviewSummary,
+  ModelEvidence,
   ModelPartSummary,
   CameraConfig,
   LightConfig,
@@ -34,7 +35,7 @@ import { setExplode, resetExplode } from "./explode";
 import { setupPicking, type PickResult } from "./picking";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
-import { getPortableBasename, getPortableDirname, getPortableStem } from "../../utils/resolve-path";
+import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { OrientationGizmo } from "./orientation-gizmo";
 import { createBabylonDisassemblyController } from "./disassembly";
 import {
@@ -73,6 +74,8 @@ import type {
 
 /** Guard against concurrent OBJ loads monkey-patching the same prototype. */
 let objMtlLock: Promise<void> | null = null;
+const OBJ_IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
+const OBJ_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
 const FOCUS_DIM_VISIBILITY = 0.242;
 const FOCUS_WORLD_POINT_ANIMATION_MS = 320;
 
@@ -91,6 +94,53 @@ function isBabylonMesh(value: unknown): value is AbstractMesh {
 
 function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
   return new Vector3(value.x, value.y, value.z);
+}
+
+function firstMtlPath(value: string): string {
+  const trimmed = value.replace(/\s+#.*$/, "").trim();
+  if (trimmed.startsWith("\"")) {
+    const end = trimmed.indexOf("\"", 1);
+    if (end > 1) return trimmed.slice(1, end);
+  }
+  return trimmed;
+}
+
+function firstTexturePath(value: string): string {
+  const tokens = value.trim().split(/\s+/);
+  const pathStart = tokens.findIndex((token) => !token.startsWith("-") && !/^[-+]?\d*\.?\d+$/.test(token));
+  return tokens.slice(Math.max(0, pathStart)).join(" ").replace(/^"|"$/g, "");
+}
+
+function guessTextureMime(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "bmp") return "image/bmp";
+  if (ext === "tga") return "image/x-tga";
+  if (ext === "webp") return "image/webp";
+  return `image/${ext}`;
+}
+
+function buildObjTextureCandidates(modelDir: string, rawPath: string, modelPath: string): string[] {
+  const texFilename = getPortableBasename(rawPath);
+  const texBase = texFilename.replace(/\.[^.]+$/, "");
+  const objBasename = getPortableStem(modelPath);
+  const candidates = [
+    joinPortablePath(modelDir, rawPath),
+    joinPortablePath(modelDir, texFilename),
+  ];
+  if (objBasename) {
+    for (const ext of OBJ_IMAGE_EXTS) {
+      candidates.push(joinPortablePath(modelDir, `${objBasename}.${ext}`));
+    }
+  }
+  for (const ext of OBJ_IMAGE_EXTS) {
+    const alt = `${texBase}.${ext}`;
+    if (alt !== texFilename) {
+      candidates.push(joinPortablePath(modelDir, alt));
+    }
+  }
+  return candidates;
 }
 
 export class BabylonModelPreview implements WorkbenchPreview {
@@ -124,6 +174,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private bboxMesh: Mesh | null = null;
   private bboxEnabled = false;
   private currentQuality: "low" | "medium" | "high" = "high";
+  private resourceWarnings: string[] = [];
   private animPlaying = false;
   private initialCamera = { alpha: Math.PI / 4, beta: Math.PI / 3, radius: 5, target: Vector3.Zero() };
   private focusWorldPointFrame = 0;
@@ -211,6 +262,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
     const extLower = ext.toLowerCase().replace(".", "");
     this.loadedExt = extLower;
+    this.resourceWarnings = [];
     const scene = this.scene;
 
     // Map extension to Babylon SceneLoader file extension
@@ -247,9 +299,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
         const mtlMatch = objText.match(/mtllib\s+(.+)/);
         let mtlContent: string | null = null;
         if (mtlMatch && readFile && modelPath) {
-          const mtlFilename = mtlMatch[1].trim().split(/\s+/)[0];
+          const mtlFilename = firstMtlPath(mtlMatch[1]);
           const modelDir = getPortableDirname(modelPath);
-          const mtlPath = modelDir ? `${modelDir}/${mtlFilename}` : mtlFilename;
+          const mtlPath = joinPortablePath(modelDir, mtlFilename);
           try {
             const mtlData = await readFile(mtlPath);
             const raw = new TextDecoder().decode(new Uint8Array(mtlData));
@@ -259,53 +311,23 @@ export class BabylonModelPreview implements WorkbenchPreview {
             // Try: 1) full relative path, 2) same-dir filename,
             //      3) OBJ-name with image extensions (e.g. bat.jpeg),
             //      4) common basecolor/texture names in same dir
-            const TEX_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
-            const objBasename = getPortableStem(modelPath);
-            const IMG_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
             for (let i = 0; i < lines.length; i++) {
-              const m = lines[i].match(TEX_RE);
+              const m = lines[i].match(OBJ_TEXTURE_RE);
               if (!m) continue;
-              const rawPath = m[2].trim();
-              const texFilename = getPortableBasename(rawPath);
-              const texBase = texFilename.replace(/\.[^.]+$/, "");
-              // Build candidate paths
-              const candidates: string[] = [
-                // 1) full relative path
-                ...(modelDir ? [`${modelDir}/${rawPath}`] : [rawPath]),
-                // 2) same-dir exact filename
-                ...(modelDir ? [`${modelDir}/${texFilename}`] : [texFilename]),
-              ];
-              // 3) OBJ-name with image extensions
-              if (objBasename) {
-                for (const ext of IMG_EXTS) {
-                  candidates.push(modelDir ? `${modelDir}/${objBasename}.${ext}` : `${objBasename}.${ext}`);
-                }
-              }
-              // 4) original texture basename with different extensions
-              for (const ext of IMG_EXTS) {
-                const alt = `${texBase}.${ext}`;
-                if (alt !== texFilename) {
-                  candidates.push(modelDir ? `${modelDir}/${alt}` : alt);
-                }
-              }
+              const rawPath = firstTexturePath(m[2]);
+              const candidates = buildObjTextureCandidates(modelDir, rawPath, modelPath);
               let resolved = false;
               for (const cand of candidates) {
                 try {
                   const texBuf = await readFile(cand);
-                  const ext = cand.split(".").pop()?.toLowerCase() ?? "png";
-                  const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg"
-                    : ext === "png" ? "image/png"
-                    : ext === "bmp" ? "image/bmp"
-                    : ext === "tga" ? "image/x-tga"
-                    : ext === "webp" ? "image/webp"
-                    : `image/${ext}`;
-                  const dataUrl = `data:${mime};base64,${arrayBufferToBase64(texBuf)}`;
+                  const dataUrl = `data:${guessTextureMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
                   lines[i] = `${m[1]} ${dataUrl}`;
                   resolved = true;
                   break;
                 } catch { /* try next candidate */ }
               }
               if (!resolved) {
+                this.resourceWarnings.push(`OBJ material texture not found: ${rawPath}`);
                 lines[i] = ""; // strip — prevents red-black checkerboard
               }
             }
@@ -318,7 +340,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
               filtered.splice(nmIdx >= 0 ? nmIdx + 1 : 0, 0, "Kd 0.80 0.80 0.80");
             }
             mtlContent = filtered.join("\n");
-          } catch { /* MTL is optional; OBJ can still load without it. */ }
+          } catch {
+            this.resourceWarnings.push(`OBJ material library not found: ${mtlPath}`);
+          }
         }
 
         // Override _loadMTL to use vault content or skip (prevents network fetch)
@@ -829,6 +853,22 @@ export class BabylonModelPreview implements WorkbenchPreview {
     });
   }
 
+  getModelEvidence(): ModelEvidence | null {
+    if (!this.rootMesh) return null;
+    const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    const materialNames = new Set<string>();
+    for (const mesh of renderableMeshes) {
+      if (mesh.material?.name) materialNames.add(mesh.material.name);
+    }
+    return {
+      summary: this.computeSummary(this.rootMesh),
+      parts: renderableMeshes.map((mesh) => this.computePartSummary(mesh)),
+      materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
+      resourceWarnings: [...this.resourceWarnings],
+      capturedAt: new Date().toISOString(),
+    };
+  }
+
   getSelectedPartInfo(): ModelPartSummary | null {
     const mesh = this.focusedMesh ?? this._lastPickResult.mesh;
     const renderable = mesh ? this.findRenderableMesh(mesh) : null;
@@ -1132,7 +1172,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       root.name,
       this.getRenderableBounds(root),
       allMeshes,
-      { splatCount: isSplat ? vertexCount : undefined },
+      { splatCount: isSplat ? vertexCount : undefined, resourceWarnings: this.resourceWarnings },
     );
   }
 }

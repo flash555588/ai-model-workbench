@@ -246,6 +246,69 @@ export class AI3DSettingTab extends PluginSettingTab {
           }),
       );
 
+    // ── Knowledge generation ─────────────────────────────────────
+
+    new Setting(containerEl).setName(t("settings.knowledgeGeneration")).setHeading();
+
+    new Setting(containerEl)
+      .setName(t("settings.analysisMode"))
+      .setDesc(t("settings.analysisMode.desc"))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("local", t("settings.analysisMode.local"))
+          .addOption("hybrid", t("settings.analysisMode.hybrid"))
+          .addOption("remote", t("settings.analysisMode.remote"))
+          .setValue(this.plugin.getSettings().analysisMode)
+          .onChange((val: string) => {
+            this.plugin.updateSettings({ analysisMode: val as "local" | "hybrid" | "remote" });
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings.serviceBaseUrl"))
+      .setDesc(t("settings.serviceBaseUrl.desc"))
+      .addText((text) =>
+        text
+          .setPlaceholder("Local draft service URL")
+          .setValue(this.plugin.getSettings().serviceBaseUrl)
+          .onChange((val) => {
+            this.plugin.updateSettings({ serviceBaseUrl: val.trim() });
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings.sendGeometrySummaryToRemote"))
+      .setDesc(t("settings.sendGeometrySummaryToRemote.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().sendGeometrySummaryToRemote)
+          .onChange((val) => {
+            this.plugin.updateSettings({ sendGeometrySummaryToRemote: val });
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings.sendPreviewImagesToRemote"))
+      .setDesc(t("settings.sendPreviewImagesToRemote.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().sendPreviewImagesToRemote)
+          .onChange((val) => {
+            this.plugin.updateSettings({ sendPreviewImagesToRemote: val });
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings.sendRawModelToRemote"))
+      .setDesc(t("settings.sendRawModelToRemote.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().sendRawModelToRemote)
+          .onChange((val) => {
+            this.plugin.updateSettings({ sendRawModelToRemote: val });
+          }),
+      );
+
     // ── Converters ───────────────────────────────────────────────
 
     new Setting(containerEl).setName(t("settings.converters")).setHeading();

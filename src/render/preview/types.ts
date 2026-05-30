@@ -1,5 +1,6 @@
 import type {
   ModelPartSummary,
+  ModelEvidence,
   ModelPreviewSummary,
   PreviewRendererRollout,
   ThreeDBlockConfig,
@@ -45,6 +46,7 @@ export interface ModelPreview {
   destroy(): void;
   getCanvas(): HTMLCanvasElement | null;
   captureSnapshot(): string | null;
+  getModelEvidence?(): ModelEvidence | null;
   exportModelInfo(modelPath?: string): string;
   getSelectedPartInfo(): ModelPartSummary | null;
   exportSelectedPartInfo(): string;

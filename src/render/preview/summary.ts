@@ -13,6 +13,7 @@ export interface PreviewModelSummaryInput {
   boundingSize: PreviewWorldPoint;
   meshes: readonly PreviewMeshSummaryInput[];
   splatCount?: number;
+  resourceWarnings?: readonly string[];
 }
 
 type PreviewPerformanceTier = NonNullable<ModelPreviewSummary["performanceTier"]>;
@@ -60,6 +61,7 @@ export function createPreviewModelSummary(input: PreviewModelSummaryInput): Mode
       splatCount: input.splatCount,
       materialCount: materials.size,
     }),
+    resourceWarnings: input.resourceWarnings ? [...input.resourceWarnings] : undefined,
     boundingSize: clonePreviewWorldPoint(input.boundingSize),
     rootName: input.rootName,
   };

@@ -189,6 +189,8 @@ AI Model Workbench does not collect telemetry, phone home, or run background net
 
 The bundled Babylon.js runtime contains generic loader utilities that are capable of loading URLs for web applications. This plugin passes vault file bytes to Babylon as data URLs, overrides OBJ MTL loading to avoid remote fetches, and installs a runtime guard that rejects explicit `http(s)` / `ws(s)` asset or script URLs while disabling Babylon retry hooks for those requests. Optional converter diagnostics and conversions run only after a user action and execute local tools on desktop platforms.
 
+Knowledge-note generation is local-only by default. If you configure an optional remote draft service, the plugin sends only the selected evidence payload to your configured `POST /draft-note` endpoint. The current client refuses raw model upload, and geometry summaries or preview image references must be enabled explicitly before they are included.
+
 Release assets are limited to the three files Obsidian downloads: `main.js`, `manifest.json`, and `styles.css`. GitHub Actions builds these files from source and publishes artifact attestations for provenance verification.
 
 ---
@@ -205,9 +207,9 @@ AI Model Workbench does not include donation prompts, payment flows, or cryptocu
 
 | Format | Extension | Features |
 |--------|-----------|----------|
-| GLB / GLTF | `.glb` `.gltf` | PBR materials, animations, textures, scene hierarchy |
+| GLB / GLTF | `.glb` `.gltf` | PBR materials, animations, textures, scene hierarchy; `.gltf` resolves vault-relative `.bin` and texture files |
 | STL | `.stl` | Binary format, per-face colors (VisCAM/SolidView) |
-| OBJ | `.obj` | MTL materials, vault-relative texture resolution |
+| OBJ | `.obj` | MTL materials, vault-relative texture resolution, case-insensitive same-folder texture fallback |
 | PLY | `.ply` | ASCII/binary, vertex colors, point cloud support |
 
 SPLAT preview is temporarily disabled in packaged builds while its loader is replaced with a local-only implementation.
@@ -364,12 +366,29 @@ Add labeled bookmarks directly on model surfaces. Annotations persist per model 
 
 ---
 
+### Knowledge Notes
+
+The workbench `Generate note` action creates an evidence-backed Markdown note rather than a bare template. Each generation pass writes:
+
+- a model report in `Analysis/3D Reports`
+- a JSON analysis sidecar with preview summary, part candidates, knowledge nodes, warnings, and pipeline metadata
+- a current viewport evidence snapshot in `Media/3D Previews`
+- an editable local draft that turns the captured evidence, annotations, tags, and profile notes into a first-pass knowledge note body, plus local draft metadata for tags and next actions
+
+The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting.
+
+Optional remote drafting can be enabled in settings by choosing `Local evidence + remote draft` or `Remote draft from evidence` and entering a draft service URL. The client sends `POST /draft-note` with sanitized drafting input only. Raw model upload is blocked; geometry summaries and preview image references are controlled by separate privacy toggles.
+
+---
+
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Language | auto | UI language (English / Simplified Chinese / auto-detect) |
 | Annotation preview mode | plain-text | How saved annotation content renders inside readonly previews |
+| AI drafting mode | Local evidence only | Keeps knowledge-note drafting local unless an optional remote draft service is configured |
+| Draft service URL | empty | Base URL for a service that accepts `POST /draft-note` |
 | Preview compatibility mode | Reading + file view | Controls how widely the newer single-model GLB preview path is used |
 | Experimental Three workbench | off | Tries the Three.js workbench path for direct GLB/GLTF file views, with automatic Babylon.js fallback |
 | Canvas height | 400 | Preview height in pixels |
@@ -599,7 +618,8 @@ Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL string
 |-------|-----------------|------------|
 | External converter required | FBX | Install and enable FBX2glTF |
 | External tools required | STEP/IGES/BREP/SLDPRT | Install Python + CadQuery or FreeCAD |
-| Texture path resolution | OBJ | Place textures in same directory as OBJ |
+| Texture path resolution | OBJ | Place textures beside the OBJ/MTL; missing textures show a non-blocking asset warning |
+| External resource path resolution | GLTF | Keep `.bin` and textures in the vault beside the `.gltf` or in referenced relative folders |
 | Conversion timeout | SLDPRT | 10-minute timeout for complex assemblies |
 
 ---
@@ -623,6 +643,7 @@ npm run verify:preview  # Targeted browser preview smoke test
 npm run verify:preview:success  # Full preview routing success suite
 npm run verify:obsidian  # End-to-end Obsidian app smoke test
 npm run verify:release   # Release asset version/hash/size check
+npm run verify:settings  # Legacy data.json/default-settings migration check
 ```
 
 ### Preview Verification
@@ -656,11 +677,11 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.3.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.3.1`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.3.1` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 
-Prefer GitHub CLI browser login or short-lived fine-grained tokens for manual publishing. If a personal access token is used, scope it only to this repository with `Contents: Read and write` and revoke it immediately after the push. Never paste tokens into issues, release notes, commits, or documentation.
+Prefer GitHub Actions or GitHub CLI browser login for publishing. See `SECURITY.md` for the token safety checklist and PAT leak response.
 
 ### Platform Support
 

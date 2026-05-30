@@ -56,11 +56,25 @@ function parseRouteOnly() {
   return process.argv.includes("--route-only");
 }
 
+function parseExpectWarning() {
+  const warningIndex = process.argv.indexOf("--expect-warning");
+  if (warningIndex >= 0) {
+    return process.argv[warningIndex + 1] ?? null;
+  }
+  return null;
+}
+
+function parseExpectNoWarnings() {
+  return process.argv.includes("--expect-no-warnings");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
 const verifyExpectedBackend = parseExpectBackend();
 const verifyRouteOnly = parseRouteOnly();
+const verifyExpectedWarning = parseExpectWarning();
+const verifyExpectNoWarnings = parseExpectNoWarnings();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -134,6 +148,7 @@ async function buildHarness() {
     [
       "export const Platform = { isMobile: false };",
       "export class TFile {}",
+      "export class TFolder { constructor() { this.children = []; } }",
       "export class Notice {}",
       "export class Plugin {}",
       "export class Component {",
@@ -557,6 +572,7 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
       "hasAnimations",
       "setRenderQuality",
       "captureSnapshot",
+      "getModelEvidence",
       "exportModelInfo",
       "exportSelectedPartInfo",
     ];
@@ -570,12 +586,14 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     await new Promise((resolve) => activeWindow.setTimeout(resolve, 450));
     const focused = canvas.toDataURL("image/png");
     const snapshot = preview.captureSnapshot?.() ?? "";
+    const evidence = preview.getModelEvidence?.() ?? null;
     return {
       missing: false,
       missingMethods,
       explodeChanged: before !== exploded,
       focusChanged: exploded !== focused,
       snapshot,
+      evidence,
       modelInfo: preview.exportModelInfo?.("rubiks-cube-3x3.glb") ?? "",
     };
   });
@@ -585,6 +603,8 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   assert(result.explodeChanged, "Workbench explode did not change the rendered canvas");
   assert(result.focusChanged, "Workbench focusWorldPoint did not change the rendered canvas");
   assert(result.snapshot.startsWith("data:image/png;base64,"), "Workbench snapshot did not return a PNG data URL");
+  assert(result.evidence?.parts?.length > 0, `Workbench evidence is missing parts: ${JSON.stringify(result.evidence)}`);
+  assert(result.evidence?.summary?.meshCount === state.summary.meshCount, "Workbench evidence summary did not match preview summary");
   assert(result.modelInfo.includes("Model Info"), "Workbench model info export failed");
 
   console.log("Workbench preview verification passed");
@@ -751,10 +771,13 @@ async function verify() {
     if (verifyAllowWorkbenchThree) {
       params.set("allowWorkbenchThree", "1");
     }
-    // Pass model filename if not the default
-    const modelFilename = modelPath.split(/[/\\]/).pop();
-    if (modelFilename && modelFilename !== "rubiks-cube-3x3.glb") {
-      params.set("model", modelFilename);
+    const modelsRoot = `${join(rootDir, "models").replace(/\\/g, "/")}/`;
+    const normalizedModelPath = modelPath.replace(/\\/g, "/");
+    const modelRef = normalizedModelPath.startsWith(modelsRoot)
+      ? normalizedModelPath.slice(modelsRoot.length)
+      : modelPath.split(/[/\\]/).pop();
+    if (modelRef && modelRef !== "rubiks-cube-3x3.glb") {
+      params.set("model", modelRef);
     }
     const targetUrl = params.size > 0 ? `${url}?${params.toString()}` : url;
     await page.goto(targetUrl, { waitUntil: "commit" });
@@ -771,6 +794,16 @@ async function verify() {
     assert(state.summary.triangleCount > 0, "Model summary reports zero triangles");
     assert(state.summary.vertexCount > 0, "Model summary reports zero vertices");
     assert(state.route?.backend === expectedBackend(verifyMode, verifyRollout), `Unexpected route: ${JSON.stringify(state.route)}`);
+    const warnings = Array.isArray(state.summary.resourceWarnings) ? state.summary.resourceWarnings : [];
+    if (verifyExpectedWarning) {
+      assert(
+        warnings.some((warning) => String(warning).includes(verifyExpectedWarning)),
+        `Expected resource warning '${verifyExpectedWarning}', got ${JSON.stringify(warnings)}`,
+      );
+    }
+    if (verifyExpectNoWarnings) {
+      assert(warnings.length === 0, `Expected no resource warnings, got ${JSON.stringify(warnings)}`);
+    }
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     await page.waitForTimeout(500);

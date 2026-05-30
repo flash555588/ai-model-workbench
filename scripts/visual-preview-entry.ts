@@ -157,11 +157,27 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
 
 async function loadSampleModel(): Promise<ArrayBuffer> {
   const modelFile = getModelFilename();
-  const response = await fetch(`/models/${modelFile}`);
+  const response = await fetch(toModelUrl(`models/${modelFile}`));
   if (!response.ok) {
     throw new Error(`Failed to load sample model: HTTP ${response.status}`);
   }
   return response.arrayBuffer();
+}
+
+async function readHarnessModelResource(path: string): Promise<ArrayBuffer> {
+  const response = await fetch(toModelUrl(path));
+  if (!response.ok) {
+    throw new Error(`File not found: ${path}`);
+  }
+  return response.arrayBuffer();
+}
+
+function toModelUrl(path: string): string {
+  return `/${path.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
+function getModelPathForPreview(): string {
+  return `models/${getModelFilename()}`;
 }
 
 function getModelFilename(): string {
@@ -329,7 +345,7 @@ async function runBasicPreview(
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), ext);
+  const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   attachHelperToolbar(host, preview);
   window.__ai3dPreview = preview;
   setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route });
@@ -349,7 +365,7 @@ async function runDirectEditPreview(
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), ext);
+  const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   attachHelperToolbar(host, preview);
   const annotationPreview = preview as AnnotationPreview;
   const annotationMgr = new AnnotationManager(
@@ -395,7 +411,7 @@ async function runReadonlyPinPreview(
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), ext);
+  const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   attachHelperToolbar(host, preview);
 
   const annotationPreview = preview as AnnotationPreview;
@@ -459,7 +475,7 @@ async function runWorkbenchPreview(
   } as const;
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
-  const summary = await preview.loadModel(await loadSampleModel(), ext);
+  const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   const toolbar = attachHelperToolbar(host, preview);
   preview.applyConfig({
     models: [{ path: `models/${getModelFilename()}` }],

@@ -41,6 +41,7 @@ import {
 import type {
   CameraConfig,
   LightConfig,
+  ModelEvidence,
   ModelPartSummary,
   ModelPreviewSummary,
   SceneConfig,
@@ -185,6 +186,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private environmentTarget: WebGLRenderTarget | null = null;
   private rootObject: Object3D | null = null;
   private loadedExt = "";
+  private resourceWarnings: string[] = [];
   private renderHandle = 0;
   private quality: "low" | "medium" | "high" = "high";
   private renderScale = 1;
@@ -338,6 +340,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   ): Promise<ModelPreviewSummary> {
     this.clearLoadedModel("model-switch");
     this.loadedExt = ext.toLowerCase();
+    this.resourceWarnings = [];
 
     let root: Object3D;
     let animations: import("three").AnimationClip[] = [];
@@ -346,12 +349,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
       const gltfResult = await loadThreeGLTF(data, this.loadedExt, readFile, modelPath);
       root = gltfResult.scene;
       animations = gltfResult.animations;
+      this.resourceWarnings = gltfResult.warnings;
     } else if (this.loadedExt === "stl") {
       root = await loadThreeSTL(data);
     } else if (this.loadedExt === "ply") {
       root = await loadThreePLY(data);
     } else if (this.loadedExt === "obj") {
-      root = await loadThreeOBJ(data, readFile, modelPath);
+      const objResult = await loadThreeOBJ(data, readFile, modelPath);
+      root = objResult.object;
+      this.resourceWarnings = objResult.warnings;
     } else {
       throw new Error(`Three preview does not support .${this.loadedExt} format`);
     }
@@ -466,6 +472,25 @@ export class ThreeModelPreview implements WorkbenchPreview {
         materialName: describeMaterial(materialList(mesh.material)[0]),
       })),
     });
+  }
+
+  getModelEvidence(): ModelEvidence | null {
+    if (!this.rootObject) return null;
+    const parts = this.getRenderableMeshes(this.rootObject).map((mesh) => this.computePartSummary(mesh));
+    const materialNames = new Set<string>();
+    for (const mesh of this.getRenderableMeshes(this.rootObject)) {
+      for (const material of materialList(mesh.material)) {
+        const name = describeMaterial(material);
+        if (name) materialNames.add(name);
+      }
+    }
+    return {
+      summary: this.computeSummary(this.rootObject),
+      parts,
+      materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
+      resourceWarnings: [...this.resourceWarnings],
+      capturedAt: new Date().toISOString(),
+    };
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
@@ -1579,6 +1604,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         vertexCount: vertexCountForMesh(mesh),
         materialKeys: materialList(mesh.material).map((material) => material.uuid),
       })),
+      resourceWarnings: this.resourceWarnings,
     });
   }
 }

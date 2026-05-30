@@ -75,6 +75,27 @@ const cases = [
     label: "OBJ preview (Three.js)",
     args: ["--model", join(rootDir, "models", "test.obj")],
   },
+  {
+    label: "External GLTF resources with spaces and Chinese paths",
+    args: ["--model", join(rootDir, "models", "resource-fixtures", "gltf-external", "外部 资源.gltf")],
+  },
+  {
+    label: "OBJ/MTL texture resolves with case-insensitive texture path",
+    args: [
+      "--model",
+      join(rootDir, "models", "resource-fixtures", "obj-mtl", "case texture.obj"),
+      "--expect-no-warnings",
+    ],
+  },
+  {
+    label: "OBJ/MTL missing texture reports non-blocking warning",
+    args: [
+      "--model",
+      join(rootDir, "models", "resource-fixtures", "obj-missing-texture", "missing texture.obj"),
+      "--expect-warning",
+      "OBJ material texture not found",
+    ],
+  },
   // GLB alternate path (confirms path resolution works)
   {
     label: "GLB alternate path (Three.js)",

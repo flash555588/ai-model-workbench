@@ -19,6 +19,8 @@ const obsidianApp = parseArg("--obsidian") ?? process.env.OBSIDIAN_APP ?? "/Appl
 const debugPort = Number(parseArg("--debug-port") ?? process.env.OBSIDIAN_DEBUG_PORT ?? 9222);
 const pluginId = JSON.parse(await readFile(join(rootDir, "manifest.json"), "utf8")).id;
 const pluginFiles = ["main.js", "manifest.json", "styles.css"];
+const releaseTag = parseArg("--release-tag") ?? process.env.AI3D_RELEASE_TAG ?? null;
+const releaseDir = parseArg("--release-dir") ? resolve(parseArg("--release-dir")) : null;
 const noteContent = [
   "# AI Model Workbench Obsidian Verification",
   "",
@@ -59,6 +61,26 @@ function run(command, args, options = {}) {
   return typeof result.stdout === "string" ? result.stdout.trim() : "";
 }
 
+async function copyPluginAsset(file, targetDir) {
+  if (releaseDir) {
+    await copyFile(join(releaseDir, file), join(targetDir, file));
+    return;
+  }
+
+  if (releaseTag) {
+    const url = `https://github.com/flash555588/ai-model-workbench/releases/download/${releaseTag}/${file}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download release asset ${file} from ${releaseTag}: HTTP ${response.status}`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    await writeFile(join(targetDir, file), bytes);
+    return;
+  }
+
+  await copyFile(join(rootDir, file), join(targetDir, file));
+}
+
 function obsidianDirFor(vault) {
   return basename(vault) === ".obsidian" ? vault : join(vault, ".obsidian");
 }
@@ -74,7 +96,7 @@ async function prepareVault() {
   const targetDir = join(obsidianDirFor(vaultDir), "plugins", pluginId);
   await mkdir(targetDir, { recursive: true });
   for (const file of pluginFiles) {
-    await copyFile(join(rootDir, file), join(targetDir, file));
+    await copyPluginAsset(file, targetDir);
   }
   await writeFile(join(targetDir, "data.json"), `${JSON.stringify({
     settings: {
@@ -371,6 +393,42 @@ async function verifyDirectWorkbench(page) {
     return button?.getAttribute("aria-pressed") === "true"
       && !document.querySelector(".ai3d-annot-mode-overlay")?.classList.contains("is-hidden");
   }, null, { timeout: 5_000 });
+  await page.evaluate((modelPath) => {
+    const plugin = window.app?.plugins?.plugins?.["ai-model-workbench"];
+    const store = plugin?.ps?.store;
+    const state = store?.getState?.();
+    if (!store || !state) {
+      throw new Error("AI Model Workbench store was unavailable");
+    }
+    const currentProfiles = state.modelAssetProfiles ?? {};
+    const existing = currentProfiles[modelPath] ?? {
+      tags: [],
+      notes: "",
+      annotations: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.setState({
+      modelAssetProfiles: {
+        ...currentProfiles,
+        [modelPath]: {
+          ...existing,
+          annotations: [
+            ...(existing.annotations ?? []),
+            {
+              id: "verify-focus-pin",
+              position: [1.0, 1.0, 1.0],
+              label: "Verification focus",
+              color: "#2ec4ff",
+              createdAt: new Date().toISOString(),
+              headingRef: "Verification focus",
+            },
+          ],
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    });
+  }, workbenchModelVaultPath);
 
   await page.locator('.ai3d-direct-view [data-ai3d-action="set-explode"]').evaluate((input) => {
     if (!(input instanceof HTMLInputElement)) {
@@ -402,8 +460,38 @@ async function verifyDirectWorkbench(page) {
 
   assert(noteText.includes("Geometry overview"), "Generated knowledge note is missing geometry content");
   assert(noteText.includes("annotation_count"), "Generated knowledge note is missing annotation metadata");
+  assert(noteText.includes("## Evidence Snapshots"), "Generated knowledge note is missing evidence snapshot section");
+  assert(noteText.includes("## Editable Draft"), "Generated knowledge note is missing editable draft section");
+  assert(noteText.includes("Source: local evidence draft"), "Generated knowledge note should use local draft by default");
+  assert(noteText.includes("## Local Draft Metadata"), "Generated knowledge note is missing local draft metadata section");
+  assert(noteText.includes("## Part Candidates"), "Generated knowledge note is missing part candidates section");
+  assert(noteText.includes("## Knowledge Nodes"), "Generated knowledge note is missing knowledge nodes section");
+  assert(noteText.includes("## Annotation Links"), "Generated knowledge note is missing annotation links section");
+  assert(noteText.includes("## AI Drafting Input"), "Generated knowledge note is missing AI drafting input section");
+  assert(noteText.includes("## Remote Draft"), "Generated knowledge note is missing remote draft section");
 
-  const directViewResult = await page.evaluate(({ beforeDataUrl, afterDataUrl }) => {
+  const analysis = await page.evaluate(async () => {
+    const file = window.app?.vault?.getAbstractFileByPath?.("Analysis/3D Reports/rubiks-cube-3x3 Analysis.json");
+    if (!file) return null;
+    return JSON.parse(await window.app.vault.read(file));
+  });
+  assert(analysis?.parts?.length > 0, "Generated analysis sidecar is missing parts");
+  assert(analysis?.knowledgeNodes?.length > 0, "Generated analysis sidecar is missing knowledge nodes");
+  assert(analysis?.previewImages?.length > 0, "Generated analysis sidecar is missing preview images");
+  assert(analysis?.annotationLinks?.length > 0, "Generated analysis sidecar is missing annotation links");
+  assert(analysis?.draftingInput?.partCandidates?.length > 0, "Generated analysis sidecar is missing drafting input part candidates");
+  assert(analysis?.draftingInput?.annotationLinks?.length > 0, "Generated analysis sidecar is missing drafting input annotation links");
+  assert(analysis?.localDraft?.sections?.length > 0, "Generated analysis sidecar is missing local draft sections");
+  assert(analysis?.localDraft?.nextActions?.length > 0, "Generated analysis sidecar is missing local draft next actions");
+  assert(analysis.draftingInput.evidence.rawModelIncluded === false, "Drafting input should not include raw model data");
+  assert(analysis.pipeline?.some((stage) => stage.stage === "draft" && stage.status === "success"), "Local analysis should record successful draft stage");
+  assert(analysis.pipeline?.some((stage) => stage.stage === "remoteDraft" && stage.status === "skipped"), "Local analysis should record skipped remote draft stage");
+  for (const imagePath of analysis.previewImages) {
+    const imageExists = await page.evaluate((path) => !!window.app?.vault?.getAbstractFileByPath?.(path), imagePath);
+    assert(imageExists, `Generated evidence image is missing: ${imagePath}`);
+  }
+
+  const directViewResult = await page.evaluate(({ beforeDataUrl, afterDataUrl, analysisPartCount }) => {
     const host = document.querySelector(".ai3d-direct-view .ai3d-preview-host");
     const panel = document.querySelector(".ai3d-direct-workbench-panel");
     const explodeInput = document.querySelector('.ai3d-direct-workbench-panel [data-ai3d-action="set-explode"]');
@@ -423,8 +511,9 @@ async function verifyDirectWorkbench(page) {
       hasKnowledgeAction: actions.includes("generate-note"),
       canvasChangedAfterControls: beforeDataUrl !== afterDataUrl,
       activeFile: window.app?.workspace?.getActiveFile?.()?.path ?? null,
+      analysisPartCount,
     };
-  }, { beforeDataUrl: before, afterDataUrl: after });
+  }, { beforeDataUrl: before, afterDataUrl: after, analysisPartCount: analysis.parts.length });
   assert(directViewResult.hasPanel, "Direct workbench panel did not render");
   assert(directViewResult.hasExplodeControl, "Direct workbench panel is missing explode control");
   assert(directViewResult.explodeValue === "0.65", `Unexpected explode value: ${directViewResult.explodeValue}`);

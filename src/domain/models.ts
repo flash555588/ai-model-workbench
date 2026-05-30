@@ -111,6 +111,8 @@ export interface ModelAssetProfile {
   annotations: AnnotationPin[];
   analysisVersion?: string;
   reportNotePath?: string;
+  analysisSidecarPath?: string;
+  previewImagePaths?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -125,6 +127,7 @@ export interface ModelPreviewSummary {
   materialCount: number;
   performanceTier?: "light" | "medium" | "heavy" | "extreme";
   performanceHint?: string;
+  resourceWarnings?: string[];
   boundingSize: { x: number; y: number; z: number };
   rootName: string;
 }
@@ -136,6 +139,14 @@ export interface ModelPartSummary {
   materialName: string | null;
   boundingSize: { x: number; y: number; z: number };
   center: { x: number; y: number; z: number };
+}
+
+export interface ModelEvidence {
+  summary: ModelPreviewSummary;
+  parts: ModelPartSummary[];
+  materialNames: string[];
+  resourceWarnings: string[];
+  capturedAt: string;
 }
 
 // ── Asset Record ─────────────────────────────────────────────────
@@ -169,6 +180,10 @@ export interface PartRecord {
   meshRefs: string[];
   materialRefs: string[];
   bbox?: [number, number, number];
+  center?: [number, number, number];
+  triangleCount?: number;
+  vertexCount?: number;
+  materialName?: string | null;
   confidence: number;
   observations: string[];
   inferredFunctions: string[];
@@ -199,10 +214,74 @@ export interface KnowledgeNode {
   source: "rule" | "ai" | "user";
 }
 
+export interface AnnotationPartLink {
+  annotationId: string;
+  label: string;
+  position: [number, number, number];
+  notePath?: string;
+  headingRef?: string;
+  nearestPartId?: string;
+  nearestPartName?: string;
+  distance?: number;
+  confidence: number;
+}
+
+export interface AnalysisDraftingInput {
+  task: string;
+  model: {
+    path: string;
+    title: string;
+    format: AssetRecord["format"];
+    summary?: ModelPreviewSummary;
+    tags: string[];
+    notes: string;
+  };
+  evidence: {
+    rawModelIncluded: boolean;
+    previewImages: string[];
+    warnings: string[];
+    generatedAt: string;
+  };
+  partCandidates: Array<{
+    partId: string;
+    name: string;
+    category?: string;
+    triangleCount?: number;
+    materialName?: string | null;
+    observations: string[];
+  }>;
+  annotationLinks: AnnotationPartLink[];
+  knowledgeNodes: KnowledgeNode[];
+}
+
+export interface RemoteDraftResult {
+  title?: string;
+  summary: string;
+  sections?: Array<{
+    heading: string;
+    body: string;
+  }>;
+  suggestedTags?: string[];
+  warnings?: string[];
+  model?: string;
+}
+
+export interface LocalDraftResult {
+  title: string;
+  summary: string;
+  sections: Array<{
+    heading: string;
+    body: string;
+  }>;
+  suggestedTags: string[];
+  nextActions: string[];
+  generatedAt: string;
+}
+
 // ── Analysis Result ──────────────────────────────────────────────
 
 export interface AnalysisPipelineStage {
-  stage: "normalize" | "stats" | "render" | "split" | "reason" | "map";
+  stage: "normalize" | "stats" | "render" | "split" | "reason" | "map" | "draft" | "remoteDraft";
   durationMs: number;
   status: "success" | "failed" | "skipped";
 }
@@ -212,6 +291,11 @@ export interface AnalysisResult {
   parts: PartRecord[];
   knowledgeNodes: KnowledgeNode[];
   previewImages: string[];
+  annotationLinks?: AnnotationPartLink[];
+  draftingInput?: AnalysisDraftingInput;
+  localDraft?: LocalDraftResult;
+  remoteDraft?: RemoteDraftResult;
+  evidence?: ModelEvidence;
   warnings: string[];
   pipeline: AnalysisPipelineStage[];
 }

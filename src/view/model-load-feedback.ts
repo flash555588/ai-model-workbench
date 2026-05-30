@@ -15,21 +15,29 @@ export function renderModelLoadFailure(host: HTMLElement, failure: ModelLoadFail
 }
 
 export function renderModelPerformanceFeedback(host: HTMLElement, summary: ModelPreviewSummary): HTMLDivElement | null {
-  if (!summary.performanceTier || summary.performanceTier === "light") {
+  if ((!summary.performanceTier || summary.performanceTier === "light") && !summary.resourceWarnings?.length) {
     return null;
   }
 
+  const tier = summary.performanceTier ?? "light";
   const count = (summary.splatCount ?? summary.triangleCount).toLocaleString();
   const unit = summary.splatCount !== undefined ? "splats" : "triangles";
-  const shell = host.createDiv({ cls: `ai3d-performance-feedback is-${summary.performanceTier}` });
-  shell.createDiv({ cls: "ai3d-performance-feedback-tier", text: summary.performanceTier });
+  const shell = host.createDiv({ cls: `ai3d-performance-feedback is-${tier}` });
+  shell.createDiv({
+    cls: "ai3d-performance-feedback-tier",
+    text: summary.resourceWarnings?.length ? "assets" : summary.performanceTier ?? "light",
+  });
   shell.createDiv({
     cls: "ai3d-performance-feedback-meta",
-    text: `${count} ${unit} · ${summary.materialCount.toLocaleString()} materials`,
+    text: summary.resourceWarnings?.length
+      ? summary.resourceWarnings[0]
+      : `${count} ${unit} · ${summary.materialCount.toLocaleString()} materials`,
   });
-  if (summary.performanceHint) {
-    shell.title = summary.performanceHint;
-  }
+  const titleLines = [
+    ...(summary.resourceWarnings ?? []),
+    ...(summary.performanceHint ? [summary.performanceHint] : []),
+  ];
+  if (titleLines.length > 0) shell.title = titleLines.join("\n");
   window.setTimeout(() => shell.classList.add("is-subtle"), 4200);
   return shell;
 }

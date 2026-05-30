@@ -1,10 +1,18 @@
 import { Notice, TFile, type App } from "obsidian";
-import type { AnnotationPin, ModelAssetProfile, ModelPreviewSummary } from "../../domain/models";
+import type {
+  AnalysisResult,
+  AnnotationPin,
+  LocalDraftResult,
+  ModelAssetProfile,
+  ModelPreviewSummary,
+  PartRecord,
+} from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
+import type { ModelPreview } from "../../render/preview/types";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
-
-export const LOCAL_ANALYSIS_VERSION = "local-preview-v2";
+import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
+import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
 
 export interface KnowledgeNoteBuildOptions {
   baseName: string;
@@ -12,6 +20,12 @@ export interface KnowledgeNoteBuildOptions {
   sourcePath: string;
   profile?: ModelAssetProfile;
   preview: ModelPreviewSummary | null;
+  analysis?: AnalysisResult;
+  analysisSidecarPath?: string;
+}
+
+export interface GenerateKnowledgeNoteOptions {
+  preview?: Pick<ModelPreview, "captureSnapshot" | "getModelEvidence"> | null;
 }
 
 function inferFormat(sourcePath: string): string {
@@ -21,6 +35,10 @@ function inferFormat(sourcePath: string): string {
 
 function formatList(items: readonly string[]): string {
   return items.filter((item) => item.length > 0).join(", ");
+}
+
+function uniqueStrings(items: readonly string[]): string[] {
+  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
 }
 
 function formatAnnotationLink(pin: AnnotationPin): string[] {
@@ -154,6 +172,319 @@ function buildAnnotationSection(profile?: ModelAssetProfile): string[] {
   return lines;
 }
 
+function buildAnnotationLinkSection(analysis?: AnalysisResult): string[] {
+  const links = analysis?.annotationLinks ?? [];
+  if (links.length === 0) {
+    return [
+      "## Annotation Links",
+      "",
+      "- No annotation-to-part links were produced in this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Annotation Links",
+    "",
+    "| Annotation | Nearest Part | Distance | Confidence |",
+    "|------------|--------------|----------|------------|",
+  ];
+  for (const link of links) {
+    lines.push(`| ${escapeTableCell(link.label)} | ${escapeTableCell(link.nearestPartName ?? "-")} | ${link.distance === undefined ? "-" : link.distance.toFixed(3)} | ${Math.round(link.confidence * 100)}% |`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function formatMetricCount(value: number | undefined, label: string): string {
+  return `${(value ?? 0).toLocaleString()} ${label}${value === 1 ? "" : "s"}`;
+}
+
+function summarizeTopParts(parts: readonly PartRecord[]): string {
+  if (parts.length === 0) {
+    return "No per-part evidence was captured yet, so the first useful editing pass is to reload the model and regenerate this note from the workbench.";
+  }
+  return parts
+    .slice(0, 6)
+    .map((part, index) => {
+      const material = part.materialName ? `, material ${part.materialName}` : "";
+      return `${index + 1}. ${part.name} (${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${material})`;
+    })
+    .join("\n");
+}
+
+function createLocalDraftResult(options: {
+  baseName: string;
+  sourcePath: string;
+  profile?: ModelAssetProfile;
+  preview: ModelPreviewSummary | null;
+  analysis?: AnalysisResult;
+}): LocalDraftResult {
+  const format = inferFormat(options.sourcePath).toUpperCase();
+  const summary = options.preview;
+  const parts = [...(options.analysis?.parts ?? [])].sort((left, right) => (right.triangleCount ?? 0) - (left.triangleCount ?? 0));
+  const annotations = options.profile?.annotations ?? [];
+  const links = options.analysis?.annotationLinks ?? [];
+  const categories = uniqueStrings(parts.map((part) => part.category ?? "unclassified")).slice(0, 6);
+  const materials = uniqueStrings(parts.flatMap((part) => part.materialName ? [part.materialName] : [])).slice(0, 6);
+  const topParts = summarizeTopParts(parts);
+  const shapeLine = summary ? buildShapeObservation(summary) : "Geometry statistics are not available yet, so this draft should stay provisional.";
+  const complexityLine = summary ? buildComplexityObservation(summary) : "Reload the preview to capture mesh, triangle, vertex, and material evidence.";
+  const userNotes = options.profile?.notes.trim();
+  const summaryLine = summary
+    ? `${options.baseName} is a ${format} asset with ${formatMetricCount(summary.meshCount, "mesh")}, ${formatMetricCount(summary.triangleCount, "triangle")}, ${formatMetricCount(summary.vertexCount, "vertex")}, and ${formatMetricCount(summary.materialCount, "material slot")}.`
+    : `${options.baseName} is a ${format} asset that still needs a refreshed preview pass before its geometry can be summarized confidently.`;
+  const focusBody = annotations.length > 0
+    ? annotations.map((pin) => {
+        const link = links.find((candidate) => candidate.annotationId === pin.id);
+        const nearest = link?.nearestPartName ? ` Nearest captured part: ${link.nearestPartName}.` : "";
+        const heading = pin.headingRef ? ` Linked heading: ${pin.headingRef}.` : "";
+        return `- ${pin.label || "Untitled pin"}.${nearest}${heading}`;
+      }).join("\n")
+    : "- No pins are saved yet. Add pins for the regions that should become standalone notes, questions, or review checkpoints.";
+
+  const nextActions = [
+    parts.length > 0 ? "Rename the strongest part candidates so their mesh names match real semantic parts." : "Regenerate after the model preview has captured per-part evidence.",
+    annotations.length > 0 ? "Turn each saved pin into a short linked note or heading-level review item." : "Place at least one pin on the most important region before treating this as a finished note.",
+    "Review scale, orientation, materials, and whether mesh boundaries represent real assembly boundaries.",
+  ];
+
+  return {
+    title: `${options.baseName} local knowledge draft`,
+    summary: [
+      summaryLine,
+      shapeLine,
+      userNotes ? `User notes add this context: ${userNotes}` : "No user notes are stored yet, so the draft stays grounded in renderer evidence and saved pins.",
+    ].join(" "),
+    sections: [
+      {
+        heading: "Evidence-backed description",
+        body: [
+          complexityLine,
+          categories.length > 0 ? `Detected part categories: ${formatList(categories)}.` : "No part categories were inferred yet.",
+          materials.length > 0 ? `Visible materials include ${formatList(materials)}.` : "No material names were captured from the renderer evidence.",
+        ].join(" "),
+      },
+      {
+        heading: "Candidate structure",
+        body: topParts,
+      },
+      {
+        heading: "Focus areas",
+        body: focusBody,
+      },
+      {
+        heading: "Suggested note shape",
+        body: [
+          `Start with a short purpose paragraph for ${options.baseName}.`,
+          "Then split the note into geometry evidence, meaningful part candidates, saved focus areas, and unresolved review questions.",
+          "Only promote a mesh into a standalone part note after a human confirms its function or assembly role.",
+        ].join(" "),
+      },
+    ],
+    suggestedTags: uniqueStrings([
+      ...(options.profile?.tags ?? []),
+      `format/${format.toLowerCase()}`,
+      ...categories.map((category) => `part/${category}`),
+    ]).slice(0, 12),
+    nextActions,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function buildLocalDraftSection(options: KnowledgeNoteBuildOptions): string[] {
+  const draft = options.analysis?.localDraft ?? createLocalDraftResult(options);
+  const lines = [
+    "## Local Draft Metadata",
+    "",
+    `- Generated at: ${draft.generatedAt}`,
+    `- Sections: ${draft.sections.length.toLocaleString()}`,
+  ];
+
+  if (draft.suggestedTags.length > 0) {
+    lines.push("Suggested tags:", "", ...draft.suggestedTags.map((tag) => `- ${tag}`), "");
+  }
+
+  if (draft.nextActions.length > 0) {
+    lines.push("Next actions:", "", ...draft.nextActions.map((action) => `- ${action}`), "");
+  }
+
+  return lines;
+}
+
+function markdownQuote(value: string): string {
+  return JSON.stringify(value);
+}
+
+function buildAiDraftingInputSection(analysis?: AnalysisResult): string[] {
+  if (!analysis?.draftingInput) {
+    return [
+      "## AI Drafting Input",
+      "",
+      "- No drafting input was prepared in this pass.",
+      "",
+    ];
+  }
+
+  return [
+    "## AI Drafting Input",
+    "",
+    "- Grounded drafting input is available in the sidecar JSON under `draftingInput`.",
+    `- Part candidates included: ${analysis.draftingInput.partCandidates.length.toLocaleString()}`,
+    `- Annotation links included: ${analysis.draftingInput.annotationLinks.length.toLocaleString()}`,
+    "- Raw model included: false",
+    "",
+  ];
+}
+
+function buildRemoteDraftSection(analysis?: AnalysisResult): string[] {
+  const draft = analysis?.remoteDraft;
+  if (!draft) {
+    return [
+      "## Remote Draft",
+      "",
+      "- No remote draft was requested or returned for this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Remote Draft",
+    "",
+    draft.title ? `### ${draft.title}` : "### Draft Summary",
+    "",
+    draft.summary,
+    "",
+  ];
+  for (const section of draft.sections ?? []) {
+    lines.push(`### ${section.heading}`, "", section.body, "");
+  }
+  if (draft.suggestedTags?.length) {
+    lines.push("Suggested tags:", "", ...draft.suggestedTags.map((tag) => `- ${tag}`), "");
+  }
+  for (const warning of draft.warnings ?? []) {
+    lines.push(`- Remote warning: ${warning}`);
+  }
+  if (draft.warnings?.length) lines.push("");
+  return lines;
+}
+
+function buildEditableDraftSection(analysis?: AnalysisResult): string[] {
+  const draft = analysis?.remoteDraft ?? analysis?.localDraft;
+  if (!draft) {
+    return [
+      "## Editable Draft",
+      "",
+      "- No draft body was produced in this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Editable Draft",
+    "",
+    analysis?.remoteDraft
+      ? "- Source: optional remote draft, grounded by the local evidence sidecar."
+      : "- Source: local evidence draft, generated without a remote service.",
+    "",
+    draft.summary,
+    "",
+  ];
+
+  for (const section of draft.sections ?? []) {
+    lines.push(`### ${section.heading}`, "", section.body, "");
+  }
+
+  return lines;
+}
+
+function buildPreviewImageSection(analysis?: AnalysisResult): string[] {
+  const images = analysis?.previewImages ?? [];
+  if (images.length === 0) {
+    return [
+      "## Evidence Snapshots",
+      "",
+      "- No preview snapshot was captured for this generation pass.",
+      "",
+    ];
+  }
+
+  return [
+    "## Evidence Snapshots",
+    "",
+    ...images.map((path) => `![[${path}]]`),
+    "",
+  ];
+}
+
+function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
+  const parts = analysis?.parts ?? [];
+  if (parts.length === 0) {
+    return [
+      "## Part Candidates",
+      "",
+      "- No per-mesh evidence was available. Reload the model in the workbench and regenerate the note to capture part candidates.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Part Candidates",
+    "",
+    "| # | Part | Category | Triangles | Material | Center | Evidence |",
+    "|---|------|----------|-----------|----------|--------|----------|",
+  ];
+  for (const [index, part] of parts.slice(0, 32).entries()) {
+    const center = part.center ? part.center.map((value) => value.toFixed(2)).join(", ") : "-";
+    const observations = part.observations.slice(0, 2).join(" ");
+    lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
+  }
+  if (parts.length > 32) {
+    lines.push(`| ... | ${parts.length - 32} more candidate parts omitted from this note | - | - | - | - | See sidecar JSON |`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildKnowledgeNodeSection(analysis?: AnalysisResult): string[] {
+  const nodes = analysis?.knowledgeNodes ?? [];
+  if (nodes.length === 0) {
+    return [
+      "## Knowledge Nodes",
+      "",
+      "- No knowledge nodes were produced in this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Knowledge Nodes",
+    "",
+  ];
+  for (const node of nodes) {
+    lines.push(`- **${node.title}** (${node.domain}, ${Math.round(node.confidence * 100)}%, ${node.source}): ${node.summary}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildEvidenceHealthSection(analysis?: AnalysisResult, sidecarPath?: string): string[] {
+  const lines = [
+    "## Evidence Health",
+    "",
+    `- Analysis version: ${LOCAL_ANALYSIS_VERSION}`,
+    sidecarPath ? `- Sidecar: [[${sidecarPath}|Analysis JSON]]` : "- Sidecar: not written",
+  ];
+  for (const warning of analysis?.warnings ?? []) {
+    lines.push(`- Warning: ${warning}`);
+  }
+  if ((analysis?.warnings ?? []).length === 0) {
+    lines.push("- Warnings: none");
+  }
+  lines.push("");
+  return lines;
+}
+
 function buildKnowledgeDraftSection(summary: ModelPreviewSummary | null, profile?: ModelAssetProfile): string[] {
   const annotations = profile?.annotations ?? [];
   const lines = [
@@ -190,21 +521,25 @@ function buildKnowledgeDraftSection(summary: ModelPreviewSummary | null, profile
 export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): string {
   const profile = options.profile;
   const summary = options.preview;
+  const analysis = options.analysis;
   const format = inferFormat(options.sourcePath);
   const tags = profile?.tags ?? [];
   const annotations = profile?.annotations ?? [];
+  const previewImages = analysis?.previewImages ?? [];
 
   const frontmatter = [
     "---",
-    `source_model: "${options.sourcePath}"`,
+    `source_model: ${markdownQuote(options.sourcePath)}`,
     `format: ${format}`,
     "status: ready",
     "analysis_mode: local",
     `analysis_version: ${LOCAL_ANALYSIS_VERSION}`,
-    `report_note_path: "${options.notePath}"`,
+    `report_note_path: ${markdownQuote(options.notePath)}`,
+    ...(options.analysisSidecarPath ? [`analysis_sidecar_path: ${markdownQuote(options.analysisSidecarPath)}`] : []),
     `annotation_count: ${annotations.length}`,
     `updated_at: ${new Date().toISOString()}`,
-    ...(tags.length > 0 ? ["knowledge_tags:", ...tags.map((tag) => `  - ${tag}`)] : []),
+    ...(previewImages.length > 0 ? ["preview_images:", ...previewImages.map((path) => `  - ${markdownQuote(path)}`)] : []),
+    ...(tags.length > 0 ? ["knowledge_tags:", ...tags.map((tag) => `  - ${markdownQuote(tag)}`)] : []),
     "---",
   ].join("\n");
 
@@ -221,11 +556,20 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
           "",
         ]
       : ["(No preview data available)", ""]),
+    ...buildEditableDraftSection(analysis),
+    ...buildLocalDraftSection(options),
     "## Local Observations",
     "",
     ...buildLocalObservations(summary, profile).map((item) => `- ${item}`),
     "",
+    ...buildEvidenceHealthSection(analysis, options.analysisSidecarPath),
+    ...buildPreviewImageSection(analysis),
     ...buildAnnotationSection(profile),
+    ...buildAnnotationLinkSection(analysis),
+    ...buildPartCandidateSection(analysis),
+    ...buildKnowledgeNodeSection(analysis),
+    ...buildAiDraftingInputSection(analysis),
+    ...buildRemoteDraftSection(analysis),
     ...buildKnowledgeDraftSection(summary, profile),
     "## Review Notes",
     "",
@@ -242,6 +586,8 @@ function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null |
     annotations: Array.isArray(profile?.annotations) ? profile.annotations : [],
     analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
     reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
+    analysisSidecarPath: typeof profile?.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
+    previewImagePaths: Array.isArray(profile?.previewImagePaths) ? profile.previewImagePaths.filter((path): path is string => typeof path === "string") : undefined,
     createdAt: typeof profile?.createdAt === "string" ? profile.createdAt : now,
     updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : now,
   };
@@ -249,7 +595,80 @@ function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null |
 
 let noteGenerationLock: Promise<void> | null = null;
 
-export async function generateKnowledgeNote(app: App, ps: PluginStore): Promise<void> {
+function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
+  const [, base64 = ""] = dataUrl.split(",", 2);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function ensureFolder(app: App, folder: string): Promise<void> {
+  const normalized = folder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized) {
+    return;
+  }
+  let current = "";
+  for (const part of normalized.split("/")) {
+    current = current ? `${current}/${part}` : part;
+    if (!app.vault.getAbstractFileByPath(current)) {
+      await app.vault.createFolder(current).catch(() => {});
+    }
+  }
+}
+
+async function upsertTextFile(app: App, path: string, content: string): Promise<TFile | null> {
+  const existingFile = app.vault.getAbstractFileByPath(path);
+  if (existingFile instanceof TFile) {
+    await app.vault.modify(existingFile, content);
+    return existingFile;
+  }
+
+  try {
+    return await app.vault.create(path, content);
+  } catch {
+    const file = app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) {
+      await app.vault.modify(file, content);
+      return file;
+    }
+  }
+  return null;
+}
+
+async function captureEvidenceSnapshot(
+  app: App,
+  preview: GenerateKnowledgeNoteOptions["preview"],
+  folder: string,
+  baseName: string,
+): Promise<{ paths: string[]; warning?: string }> {
+  const dataUrl = preview?.captureSnapshot?.();
+  if (!dataUrl?.startsWith("data:image/png;base64,")) {
+    return { paths: [] };
+  }
+
+  try {
+    await ensureFolder(app, folder);
+    const filePath = `${folder}/${baseName}_evidence_${Date.now()}.png`;
+    await app.vault.createBinary(filePath, dataUrlToArrayBuffer(dataUrl));
+    return { paths: [filePath] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { paths: [], warning: `Evidence snapshot failed: ${message}` };
+  }
+}
+
+export async function generateKnowledgeNote(
+  app: App,
+  ps: PluginStore,
+  options: GenerateKnowledgeNoteOptions = {},
+): Promise<void> {
   if (noteGenerationLock !== null) return;
   let resolveLock!: () => void;
   noteGenerationLock = new Promise<void>((resolve) => { resolveLock = resolve; });
@@ -264,34 +683,67 @@ export async function generateKnowledgeNote(app: App, ps: PluginStore): Promise<
     const baseName = getPortableStem(path) || "model";
     const reportFolder = state.settings.reportFolder;
     const notePath = `${reportFolder}/${baseName} Report.md`;
+    const analysisSidecarPath = `${reportFolder}/${baseName} Analysis.json`;
+    const evidence = options.preview?.getModelEvidence?.() ?? null;
+    const snapshot = await captureEvidenceSnapshot(app, options.preview, state.settings.previewFolder, baseName);
+    const analysis = buildLocalAnalysisResult({
+      modelPath: path,
+      profile,
+      preview,
+      evidence,
+      previewImages: snapshot.paths,
+    });
+    if (snapshot.warning) {
+      analysis.warnings = [...analysis.warnings, snapshot.warning];
+      if (analysis.draftingInput) {
+        analysis.draftingInput = {
+          ...analysis.draftingInput,
+          evidence: {
+            ...analysis.draftingInput.evidence,
+            warnings: [...analysis.draftingInput.evidence.warnings, snapshot.warning],
+          },
+        };
+      }
+    }
+    analysis.localDraft = createLocalDraftResult({
+      baseName,
+      sourcePath: path,
+      profile,
+      preview,
+      analysis,
+    });
+    analysis.pipeline.push({ stage: "draft", durationMs: 0, status: "success" });
+    const remoteDecision = createRemoteDraftDecision(state.settings, analysis.draftingInput, LOCAL_ANALYSIS_VERSION);
+    if (remoteDecision.enabled) {
+      try {
+        const remoteDraft = await requestRemoteDraft(remoteDecision);
+        if (remoteDraft) {
+          analysis.remoteDraft = remoteDraft;
+          analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "success" });
+        } else {
+          analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        analysis.warnings = [...analysis.warnings, `Remote draft failed: ${message}`];
+        analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "failed" });
+      }
+    } else {
+      analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
+    }
     const content = buildKnowledgeNoteContent({
       baseName,
       notePath,
       sourcePath: path,
       profile,
       preview,
+      analysis,
+      analysisSidecarPath,
     });
 
-    const existingFile = app.vault.getAbstractFileByPath(notePath);
-    let outputFile: TFile | null = existingFile instanceof TFile ? existingFile : null;
-    if (existingFile instanceof TFile) {
-      await app.vault.modify(existingFile, content);
-    } else {
-      const folder = app.vault.getAbstractFileByPath(reportFolder);
-      if (!folder) {
-        await app.vault.createFolder(reportFolder).catch(() => {});
-      }
-
-      try {
-        outputFile = await app.vault.create(notePath, content);
-      } catch {
-        const file = app.vault.getAbstractFileByPath(notePath);
-        if (file instanceof TFile) {
-          outputFile = file;
-          await app.vault.modify(file, content);
-        }
-      }
-    }
+    await ensureFolder(app, reportFolder);
+    await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(analysis, null, 2)}\n`);
+    const outputFile = await upsertTextFile(app, notePath, content);
 
     if (!outputFile) return;
 
@@ -304,6 +756,8 @@ export async function generateKnowledgeNote(app: App, ps: PluginStore): Promise<
           ...existingProfile,
           analysisVersion: LOCAL_ANALYSIS_VERSION,
           reportNotePath: outputFile.path,
+          analysisSidecarPath,
+          previewImagePaths: snapshot.paths,
           updatedAt: new Date().toISOString(),
         },
       },

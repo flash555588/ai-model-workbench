@@ -53,6 +53,10 @@ function formatBackendName(backend: string): string {
   return backend === "three" ? "Three.js" : "Babylon.js";
 }
 
+function isMissingExternalModelResourceError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Missing external model resource:");
+}
+
 export class DirectModelView extends FileView {
   private preview: AnnotationPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
@@ -432,7 +436,7 @@ export class DirectModelView extends FileView {
     generateButton.addEventListener("click", () => {
       generateButton.disabled = true;
       void import("./workbench/knowledge-note")
-        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps))
+        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview: this.preview }))
         .catch((err) => {
           console.error("[AI3D] Generate knowledge note failed:", err);
         })
@@ -507,6 +511,9 @@ export class DirectModelView extends FileView {
         return { preview: fallback.preview, summary, route: fallback.route };
       } catch (fallbackError) {
         fallback.preview.destroy();
+        if (isMissingExternalModelResourceError(error)) {
+          throw error;
+        }
         throw fallbackError;
       }
     }
