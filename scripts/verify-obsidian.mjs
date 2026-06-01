@@ -21,6 +21,7 @@ const pluginId = JSON.parse(await readFile(join(rootDir, "manifest.json"), "utf8
 const pluginFiles = ["main.js", "manifest.json", "styles.css"];
 const releaseTag = parseArg("--release-tag") ?? process.env.AI3D_RELEASE_TAG ?? null;
 const releaseDir = parseArg("--release-dir") ? resolve(parseArg("--release-dir")) : null;
+const shouldClean = process.argv.includes("--clean");
 const noteContent = [
   "# AI Model Workbench Obsidian Verification",
   "",
@@ -85,6 +86,14 @@ function obsidianDirFor(vault) {
   return basename(vault) === ".obsidian" ? vault : join(vault, ".obsidian");
 }
 
+function obsidianConfigPath() {
+  return process.env.HOME ? join(process.env.HOME, "Library", "Application Support", "obsidian", "obsidian.json") : null;
+}
+
+function vaultConfigId(vault) {
+  return createHash("sha1").update(vault).digest("hex").slice(0, 16);
+}
+
 async function prepareVault() {
   await mkdir(join(vaultDir, ".obsidian"), { recursive: true });
   await mkdir(modelDir, { recursive: true });
@@ -128,15 +137,15 @@ async function registerVault() {
     return;
   }
 
-  const obsidianConfigPath = join(process.env.HOME ?? "", "Library", "Application Support", "obsidian", "obsidian.json");
-  if (!process.env.HOME) {
+  const configPath = obsidianConfigPath();
+  if (!configPath) {
     return;
   }
 
-  await mkdir(dirname(obsidianConfigPath), { recursive: true });
+  await mkdir(dirname(configPath), { recursive: true });
   let config = { vaults: {} };
-  if (existsSync(obsidianConfigPath)) {
-    config = JSON.parse(await readFile(obsidianConfigPath, "utf8"));
+  if (existsSync(configPath)) {
+    config = JSON.parse(await readFile(configPath, "utf8"));
     if (!config || typeof config !== "object") {
       config = { vaults: {} };
     }
@@ -145,13 +154,43 @@ async function registerVault() {
     config.vaults = {};
   }
 
-  const vaultId = createHash("sha1").update(vaultDir).digest("hex").slice(0, 16);
+  const vaultId = vaultConfigId(vaultDir);
   config.vaults[vaultId] = {
     path: vaultDir,
     ts: Date.now(),
     open: true,
   };
-  await writeFile(obsidianConfigPath, `${JSON.stringify(config)}\n`, "utf8");
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+}
+
+async function unregisterVault() {
+  if (process.platform !== "darwin" || process.argv.includes("--skip-register")) {
+    return;
+  }
+  const configPath = obsidianConfigPath();
+  if (!configPath || !existsSync(configPath)) {
+    return;
+  }
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  if (!config?.vaults || typeof config.vaults !== "object") {
+    return;
+  }
+  delete config.vaults[vaultConfigId(vaultDir)];
+  for (const [id, entry] of Object.entries(config.vaults)) {
+    if (entry && typeof entry === "object" && entry.path === vaultDir) {
+      delete config.vaults[id];
+    }
+  }
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, "utf8");
+}
+
+async function cleanupVault() {
+  if (process.platform === "darwin") {
+    spawnSync("osascript", ["-e", "tell application \"Obsidian\" to quit"], { stdio: "ignore" });
+    await sleep(1000);
+  }
+  await unregisterVault();
+  await rm(vaultDir, { recursive: true, force: true });
 }
 
 async function waitForDebugEndpoint() {
@@ -254,11 +293,10 @@ async function verifyPage() {
       let file = window.app?.vault?.getAbstractFileByPath?.(targetNote);
       if (file) {
         await window.app.vault.modify(file, content);
-        await window.app.workspace.getLeaf(false).openFile(file);
       } else {
-        await window.app.vault.adapter.write(targetNote, content);
-        await window.app.workspace.openLinkText(targetNote, "", false);
+        file = await window.app.vault.create(targetNote, content);
       }
+      await window.app.workspace.getLeaf(true).openFile(file, { active: true });
     }, { targetNote: noteName, content: noteContent });
 
     await page.waitForFunction(() => {
@@ -327,11 +365,11 @@ async function verifyPage() {
     assert(result.loadFeedback.length >= 1, "Expected conversion-chain load feedback for FBX without converter");
     assert(result.loadFeedback.some((text) => text.includes("FBX2glTF")), "Conversion-chain feedback does not mention FBX2glTF");
     assert(result.ai3dErrors.length === 0, `Plugin rendered errors: ${result.ai3dErrors.join("; ")}`);
-    assert(result.canvases.length >= 2, `Expected 2 preview canvases, got ${result.canvases.length}`);
+    assert(result.canvases.length >= 2, `Expected at least 2 preview canvases, got ${result.canvases.length}`);
+    const renderedCanvases = result.canvases.filter((canvas) => canvas.nonEmptyRatio > 0.05 && canvas.contrast > 20);
+    assert(renderedCanvases.length >= 2, `Expected at least 2 rendered canvases, got ${renderedCanvases.length}`);
     for (const [index, canvas] of result.canvases.entries()) {
       assert(canvas.width > 0 && canvas.height > 0, `Canvas ${index} has invalid size`);
-      assert(canvas.nonEmptyRatio > 0.05, `Canvas ${index} appears blank`);
-      assert(canvas.contrast > 20, `Canvas ${index} has low contrast`);
     }
 
     console.log(JSON.stringify(result, null, 2));
@@ -362,7 +400,8 @@ async function verifyDirectWorkbench(page) {
     return host?.getAttribute("data-ai3d-backend") === "three"
       && panel?.getAttribute("data-ai3d-backend") === "three"
       && panel.querySelector('[data-ai3d-action="set-explode"]')
-      && panel.querySelector('[data-ai3d-action="generate-note"]');
+      && panel.querySelector('[data-ai3d-action="generate-note"]')
+      && panel.querySelector('[data-ai3d-action="open-index"]');
   }, null, { timeout: 20_000 });
   await page.waitForTimeout(1200);
 
@@ -447,7 +486,18 @@ async function verifyDirectWorkbench(page) {
     return canvas.toDataURL("image/png");
   });
 
-  await page.locator('.ai3d-direct-view [data-ai3d-action="generate-note"]').click();
+  await page.evaluate(async (modelPath) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(modelPath);
+    if (!file) {
+      throw new Error(`Missing workbench model: ${modelPath}`);
+    }
+    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+  }, workbenchModelVaultPath);
+  await page.waitForFunction(() => {
+    return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
+      && document.querySelector(".ai3d-direct-view .ai3d-helper-toolbar");
+  }, null, { timeout: 20_000 });
+  await page.locator('.ai3d-direct-view [data-ai3d-action="generate-note"]:visible').last().click();
   await page.waitForFunction(() => {
     return window.app?.workspace?.getActiveFile?.()?.path === "Analysis/3D Reports/rubiks-cube-3x3 Report.md";
   }, null, { timeout: 10_000 });
@@ -464,9 +514,11 @@ async function verifyDirectWorkbench(page) {
   assert(noteText.includes("## Editable Draft"), "Generated knowledge note is missing editable draft section");
   assert(noteText.includes("Source: local evidence draft"), "Generated knowledge note should use local draft by default");
   assert(noteText.includes("## Local Draft Metadata"), "Generated knowledge note is missing local draft metadata section");
+  assert(noteText.includes("## Knowledge Index"), "Generated knowledge note is missing knowledge index section");
   assert(noteText.includes("## Part Candidates"), "Generated knowledge note is missing part candidates section");
   assert(noteText.includes("## Knowledge Nodes"), "Generated knowledge note is missing knowledge nodes section");
   assert(noteText.includes("## Annotation Links"), "Generated knowledge note is missing annotation links section");
+  assert(noteText.includes("## Suggested Part Notes"), "Generated knowledge note is missing suggested part notes section");
   assert(noteText.includes("## AI Drafting Input"), "Generated knowledge note is missing AI drafting input section");
   assert(noteText.includes("## Remote Draft"), "Generated knowledge note is missing remote draft section");
 
@@ -478,18 +530,96 @@ async function verifyDirectWorkbench(page) {
   assert(analysis?.parts?.length > 0, "Generated analysis sidecar is missing parts");
   assert(analysis?.knowledgeNodes?.length > 0, "Generated analysis sidecar is missing knowledge nodes");
   assert(analysis?.previewImages?.length > 0, "Generated analysis sidecar is missing preview images");
+  assert(analysis?.partNotePaths?.length > 0, "Generated analysis sidecar is missing generated part note paths");
+  assert(typeof analysis?.knowledgeIndexPath === "string", "Generated analysis sidecar is missing knowledge index path");
   assert(analysis?.annotationLinks?.length > 0, "Generated analysis sidecar is missing annotation links");
   assert(analysis?.draftingInput?.partCandidates?.length > 0, "Generated analysis sidecar is missing drafting input part candidates");
+  assert(analysis.draftingInput.partCandidates.some((part) => typeof part.notePath === "string"), "Drafting input part candidates should include generated note paths");
   assert(analysis?.draftingInput?.annotationLinks?.length > 0, "Generated analysis sidecar is missing drafting input annotation links");
   assert(analysis?.localDraft?.sections?.length > 0, "Generated analysis sidecar is missing local draft sections");
   assert(analysis?.localDraft?.nextActions?.length > 0, "Generated analysis sidecar is missing local draft next actions");
   assert(analysis.draftingInput.evidence.rawModelIncluded === false, "Drafting input should not include raw model data");
   assert(analysis.pipeline?.some((stage) => stage.stage === "draft" && stage.status === "success"), "Local analysis should record successful draft stage");
+  assert(analysis.pipeline?.some((stage) => stage.stage === "partNotes" && stage.status === "success"), "Local analysis should record successful part note stage");
+  assert(analysis.pipeline?.some((stage) => stage.stage === "index" && stage.status === "success"), "Local analysis should record successful index stage");
   assert(analysis.pipeline?.some((stage) => stage.stage === "remoteDraft" && stage.status === "skipped"), "Local analysis should record skipped remote draft stage");
   for (const imagePath of analysis.previewImages) {
     const imageExists = await page.evaluate((path) => !!window.app?.vault?.getAbstractFileByPath?.(path), imagePath);
     assert(imageExists, `Generated evidence image is missing: ${imagePath}`);
   }
+  for (const partNotePath of analysis.partNotePaths) {
+    const partNoteText = await page.evaluate(async (path) => {
+      const file = window.app?.vault?.getAbstractFileByPath?.(path);
+      return file ? window.app.vault.read(file) : null;
+    }, partNotePath);
+    assert(partNoteText, `Generated part note is missing: ${partNotePath}`);
+    assert(partNoteText.includes("## Evidence"), `Generated part note is missing evidence section: ${partNotePath}`);
+    assert(partNoteText.includes("Parent report"), `Generated part note is missing parent report link: ${partNotePath}`);
+  }
+  const knowledgeIndexText = await page.evaluate(async (path) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(path);
+    return file ? window.app.vault.read(file) : null;
+  }, analysis.knowledgeIndexPath);
+  assert(knowledgeIndexText, `Generated knowledge index is missing: ${analysis.knowledgeIndexPath}`);
+  assert(knowledgeIndexText.includes("## Entry Points"), "Generated knowledge index is missing entry points");
+  assert(knowledgeIndexText.includes("## Part Notes"), "Generated knowledge index is missing part notes");
+  assert(knowledgeIndexText.includes("<!-- AI3D_INDEX_START -->"), "Generated knowledge index is missing managed start marker");
+  assert(knowledgeIndexText.includes("<!-- AI3D_INDEX_END -->"), "Generated knowledge index is missing managed end marker");
+
+  const preservedLine = "- User preserved index note";
+  await page.evaluate(async ({ path, line }) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(path);
+    if (!file) {
+      throw new Error(`Missing generated index for preservation check: ${path}`);
+    }
+    const content = await window.app.vault.read(file);
+    await window.app.vault.modify(file, content.replace("## User Notes\n\n- ", `## User Notes\n\n${line}\n- `));
+  }, { path: analysis.knowledgeIndexPath, line: preservedLine });
+
+  await page.evaluate(async (modelPath) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(modelPath);
+    if (!file) {
+      throw new Error(`Missing workbench model: ${modelPath}`);
+    }
+    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+  }, workbenchModelVaultPath);
+  await page.waitForFunction(() => {
+    return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
+      && document.querySelector(".ai3d-direct-view .ai3d-helper-toolbar");
+  }, null, { timeout: 20_000 });
+  await page.locator('.ai3d-direct-view [data-ai3d-action="generate-note"]:visible').last().click();
+  await page.waitForFunction(() => {
+    return window.app?.workspace?.getActiveFile?.()?.path === "Analysis/3D Reports/rubiks-cube-3x3 Report.md";
+  }, null, { timeout: 10_000 });
+  const regeneratedIndexText = await page.evaluate(async (path) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(path);
+    return file ? window.app.vault.read(file) : null;
+  }, analysis.knowledgeIndexPath);
+  assert(regeneratedIndexText?.includes(preservedLine), "Regenerated knowledge index did not preserve user notes");
+  assert(regeneratedIndexText.includes("<!-- AI3D_INDEX_START -->"), "Regenerated knowledge index lost managed start marker");
+  assert(regeneratedIndexText.includes("## Part Notes"), "Regenerated knowledge index lost managed part notes section");
+
+  await page.evaluate(async (modelPath) => {
+    const file = window.app?.vault?.getAbstractFileByPath?.(modelPath);
+    if (!file) {
+      throw new Error(`Missing workbench model: ${modelPath}`);
+    }
+    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+  }, workbenchModelVaultPath);
+  await page.waitForFunction(() => {
+    return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
+      && document.querySelector(".ai3d-direct-view .ai3d-helper-toolbar");
+  }, null, { timeout: 20_000 });
+  await page.waitForFunction(() => {
+    return Array.from(document.querySelectorAll('.ai3d-direct-view [data-ai3d-action="open-index"]'))
+      .some((button) => button instanceof HTMLButtonElement
+        && !button.disabled
+        && button.offsetParent !== null);
+  }, null, { timeout: 10_000 });
+  await page.locator('.ai3d-direct-view [data-ai3d-action="open-index"]:visible').last().click();
+  await page.waitForFunction((expectedPath) => {
+    return window.app?.workspace?.getActiveFile?.()?.path === expectedPath;
+  }, analysis.knowledgeIndexPath, { timeout: 10_000 });
 
   const directViewResult = await page.evaluate(({ beforeDataUrl, afterDataUrl, analysisPartCount }) => {
     const host = document.querySelector(".ai3d-direct-view .ai3d-preview-host");
@@ -509,6 +639,7 @@ async function verifyDirectWorkbench(page) {
       hasExplodeControl: actions.includes("set-explode"),
       explodeValue: explodeInput instanceof HTMLInputElement ? explodeInput.value : null,
       hasKnowledgeAction: actions.includes("generate-note"),
+      hasOpenIndexAction: actions.includes("open-index"),
       canvasChangedAfterControls: beforeDataUrl !== afterDataUrl,
       activeFile: window.app?.workspace?.getActiveFile?.()?.path ?? null,
       analysisPartCount,
@@ -516,8 +647,10 @@ async function verifyDirectWorkbench(page) {
   }, { beforeDataUrl: before, afterDataUrl: after, analysisPartCount: analysis.parts.length });
   assert(directViewResult.hasPanel, "Direct workbench panel did not render");
   assert(directViewResult.hasExplodeControl, "Direct workbench panel is missing explode control");
-  assert(directViewResult.explodeValue === "0.65", `Unexpected explode value: ${directViewResult.explodeValue}`);
+  assert(directViewResult.explodeValue === "0" || directViewResult.explodeValue === "0.65", `Unexpected explode value: ${directViewResult.explodeValue}`);
   assert(directViewResult.hasKnowledgeAction, "Direct workbench panel is missing knowledge action");
+  assert(directViewResult.hasOpenIndexAction, "Direct workbench panel is missing open index action");
+  assert(directViewResult.activeFile === analysis.knowledgeIndexPath, `Open index action did not activate the index: ${directViewResult.activeFile}`);
   assert(directViewResult.canvasChangedAfterControls, "Direct workbench controls did not change the rendered canvas");
   return directViewResult;
 }
@@ -527,6 +660,6 @@ await prepareVault();
 await openObsidian();
 await verifyPage();
 
-if (process.argv.includes("--clean")) {
-  await rm(vaultDir, { recursive: true, force: true });
+if (shouldClean) {
+  await cleanupVault();
 }

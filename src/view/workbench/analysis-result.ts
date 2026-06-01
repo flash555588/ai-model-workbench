@@ -209,6 +209,7 @@ function buildDraftingInput(options: {
     partCandidates: options.parts.slice(0, 64).map((part) => ({
       partId: part.partId,
       name: part.name,
+      notePath: part.notePath,
       category: part.category,
       triangleCount: part.triangleCount,
       materialName: part.materialName,

@@ -58,6 +58,7 @@ function stripGeometrySummary(input: AnalysisDraftingInput): AnalysisDraftingInp
     partCandidates: [],
     annotationLinks: input.annotationLinks.map((link) => ({
       ...link,
+      notePath: undefined,
       position: [0, 0, 0],
       nearestPartId: undefined,
       nearestPartName: undefined,

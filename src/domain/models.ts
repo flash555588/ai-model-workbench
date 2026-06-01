@@ -112,6 +112,7 @@ export interface ModelAssetProfile {
   analysisVersion?: string;
   reportNotePath?: string;
   analysisSidecarPath?: string;
+  knowledgeIndexPath?: string;
   previewImagePaths?: string[];
   createdAt: string;
   updatedAt: string;
@@ -245,6 +246,7 @@ export interface AnalysisDraftingInput {
   partCandidates: Array<{
     partId: string;
     name: string;
+    notePath?: string;
     category?: string;
     triangleCount?: number;
     materialName?: string | null;
@@ -281,7 +283,7 @@ export interface LocalDraftResult {
 // ── Analysis Result ──────────────────────────────────────────────
 
 export interface AnalysisPipelineStage {
-  stage: "normalize" | "stats" | "render" | "split" | "reason" | "map" | "draft" | "remoteDraft";
+  stage: "normalize" | "stats" | "render" | "split" | "reason" | "map" | "draft" | "partNotes" | "index" | "remoteDraft";
   durationMs: number;
   status: "success" | "failed" | "skipped";
 }
@@ -291,6 +293,8 @@ export interface AnalysisResult {
   parts: PartRecord[];
   knowledgeNodes: KnowledgeNode[];
   previewImages: string[];
+  partNotePaths?: string[];
+  knowledgeIndexPath?: string;
   annotationLinks?: AnnotationPartLink[];
   draftingInput?: AnalysisDraftingInput;
   localDraft?: LocalDraftResult;

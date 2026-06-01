@@ -130,6 +130,18 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.partFolder"))
+      .setDesc(t("settings.partFolder.desc"))
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.partFolder)
+          .setValue(this.plugin.getSettings().partFolder)
+          .onChange((val) => {
+            this.plugin.updateSettings({ partFolder: val });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.snapshotFolder"))
       .setDesc(t("settings.snapshotFolder.desc"))
       .addText((text) =>

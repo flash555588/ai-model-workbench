@@ -1,4 +1,4 @@
-import { Notice, Plugin, type TFile } from "obsidian";
+import { Notice, Plugin, TFile } from "obsidian";
 import type { PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
@@ -57,6 +57,12 @@ export default class AI3DModelWorkbench extends Plugin {
       id: "generate-note",
       name: t("main.commandGenerateNote"),
       callback: () => this.generateNote(),
+    });
+
+    this.addCommand({
+      id: "open-knowledge-index",
+      name: t("main.commandOpenKnowledgeIndex"),
+      callback: () => void this.openKnowledgeIndex(),
     });
 
     this.addCommand({
@@ -385,6 +391,21 @@ export default class AI3DModelWorkbench extends Plugin {
   private async generateNote() {
     const { generateKnowledgeNote } = await import("./view/workbench/knowledge-note");
     await generateKnowledgeNote(this.app, this.ps);
+  }
+
+  private async openKnowledgeIndex() {
+    const path = this.ps.store.getState().currentModelPath;
+    const indexPath = path ? this.ps.store.getState().modelAssetProfiles[path]?.knowledgeIndexPath : undefined;
+    if (!indexPath) {
+      new Notice(t("workbench.noIndexYet"));
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(indexPath);
+    if (file instanceof TFile) {
+      await this.app.workspace.getLeaf(true).openFile(file, { active: true });
+    } else {
+      new Notice(formatT("workbench.fileNotFound", { path: indexPath }));
+    }
   }
 
   private clearConversionCache() {

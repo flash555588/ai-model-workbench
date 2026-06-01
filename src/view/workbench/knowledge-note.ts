@@ -14,6 +14,10 @@ import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
 import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
 
+const MAX_GENERATED_PART_NOTES = 8;
+const INDEX_MANAGED_START = "<!-- AI3D_INDEX_START -->";
+const INDEX_MANAGED_END = "<!-- AI3D_INDEX_END -->";
+
 export interface KnowledgeNoteBuildOptions {
   baseName: string;
   notePath: string;
@@ -22,6 +26,7 @@ export interface KnowledgeNoteBuildOptions {
   preview: ModelPreviewSummary | null;
   analysis?: AnalysisResult;
   analysisSidecarPath?: string;
+  knowledgeIndexPath?: string;
 }
 
 export interface GenerateKnowledgeNoteOptions {
@@ -39,6 +44,23 @@ function formatList(items: readonly string[]): string {
 
 function uniqueStrings(items: readonly string[]): string[] {
   return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
+}
+
+function normalizeVaultFolder(folder: string): string {
+  return folder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").trim();
+}
+
+function sanitizeVaultSegment(value: string, fallback: string): string {
+  const sanitized = value
+    .replace(/[\\/:*?"<>|#[\]^]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return sanitized || fallback;
+}
+
+function formatVectorTuple(values: readonly number[] | undefined): string {
+  return values?.map((value) => value.toFixed(2)).join(", ") ?? "-";
 }
 
 function formatAnnotationLink(pin: AnnotationPin): string[] {
@@ -186,11 +208,40 @@ function buildAnnotationLinkSection(analysis?: AnalysisResult): string[] {
   const lines = [
     "## Annotation Links",
     "",
-    "| Annotation | Nearest Part | Distance | Confidence |",
-    "|------------|--------------|----------|------------|",
+    "| Annotation | Nearest Part | Linked Note | Distance | Confidence |",
+    "|------------|--------------|-------------|----------|------------|",
   ];
   for (const link of links) {
-    lines.push(`| ${escapeTableCell(link.label)} | ${escapeTableCell(link.nearestPartName ?? "-")} | ${link.distance === undefined ? "-" : link.distance.toFixed(3)} | ${Math.round(link.confidence * 100)}% |`);
+    const linkedNote = link.notePath ? `[[${link.notePath}]]` : "-";
+    lines.push(`| ${escapeTableCell(link.label)} | ${escapeTableCell(link.nearestPartName ?? "-")} | ${escapeTableCell(linkedNote)} | ${link.distance === undefined ? "-" : link.distance.toFixed(3)} | ${Math.round(link.confidence * 100)}% |`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildSuggestedPartNotesSection(analysis?: AnalysisResult): string[] {
+  const linkedParts = (analysis?.parts ?? []).filter((part) => part.notePath);
+  if (linkedParts.length === 0) {
+    return [
+      "## Suggested Part Notes",
+      "",
+      "- No part note drafts were created in this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Suggested Part Notes",
+    "",
+  ];
+  for (const part of linkedParts.slice(0, MAX_GENERATED_PART_NOTES)) {
+    const label = getPortableBasename(part.notePath ?? "") ?? part.name;
+    const details = [
+      part.category ?? "unclassified",
+      formatMetricCount(part.triangleCount, "triangle"),
+      part.materialName ? `material ${part.materialName}` : "",
+    ].filter(Boolean).join(", ");
+    lines.push(`- [[${part.notePath}|${label}]] - ${part.name} (${details})`);
   }
   lines.push("");
   return lines;
@@ -431,16 +482,17 @@ function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
   const lines = [
     "## Part Candidates",
     "",
-    "| # | Part | Category | Triangles | Material | Center | Evidence |",
-    "|---|------|----------|-----------|----------|--------|----------|",
+    "| # | Part | Part Note | Category | Triangles | Material | Center | Evidence |",
+    "|---|------|-----------|----------|-----------|----------|--------|----------|",
   ];
   for (const [index, part] of parts.slice(0, 32).entries()) {
-    const center = part.center ? part.center.map((value) => value.toFixed(2)).join(", ") : "-";
+    const center = formatVectorTuple(part.center);
     const observations = part.observations.slice(0, 2).join(" ");
-    lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
+    const partNote = part.notePath ? `[[${part.notePath}]]` : "-";
+    lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(partNote)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
   }
   if (parts.length > 32) {
-    lines.push(`| ... | ${parts.length - 32} more candidate parts omitted from this note | - | - | - | - | See sidecar JSON |`);
+    lines.push(`| ... | ${parts.length - 32} more candidate parts omitted from this note | - | - | - | - | - | See sidecar JSON |`);
   }
   lines.push("");
   return lines;
@@ -474,6 +526,7 @@ function buildEvidenceHealthSection(analysis?: AnalysisResult, sidecarPath?: str
     "",
     `- Analysis version: ${LOCAL_ANALYSIS_VERSION}`,
     sidecarPath ? `- Sidecar: [[${sidecarPath}|Analysis JSON]]` : "- Sidecar: not written",
+    analysis?.knowledgeIndexPath ? `- Knowledge index: [[${analysis.knowledgeIndexPath}|Model index]]` : "- Knowledge index: not written",
   ];
   for (const warning of analysis?.warnings ?? []) {
     lines.push(`- Warning: ${warning}`);
@@ -536,6 +589,7 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
     `analysis_version: ${LOCAL_ANALYSIS_VERSION}`,
     `report_note_path: ${markdownQuote(options.notePath)}`,
     ...(options.analysisSidecarPath ? [`analysis_sidecar_path: ${markdownQuote(options.analysisSidecarPath)}`] : []),
+    ...(options.knowledgeIndexPath ? [`knowledge_index_path: ${markdownQuote(options.knowledgeIndexPath)}`] : []),
     `annotation_count: ${annotations.length}`,
     `updated_at: ${new Date().toISOString()}`,
     ...(previewImages.length > 0 ? ["preview_images:", ...previewImages.map((path) => `  - ${markdownQuote(path)}`)] : []),
@@ -558,6 +612,9 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
       : ["(No preview data available)", ""]),
     ...buildEditableDraftSection(analysis),
     ...buildLocalDraftSection(options),
+    ...(options.knowledgeIndexPath
+      ? ["## Knowledge Index", "", `- [[${options.knowledgeIndexPath}|Open model knowledge index]]`, ""]
+      : []),
     "## Local Observations",
     "",
     ...buildLocalObservations(summary, profile).map((item) => `- ${item}`),
@@ -566,6 +623,7 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
     ...buildPreviewImageSection(analysis),
     ...buildAnnotationSection(profile),
     ...buildAnnotationLinkSection(analysis),
+    ...buildSuggestedPartNotesSection(analysis),
     ...buildPartCandidateSection(analysis),
     ...buildKnowledgeNodeSection(analysis),
     ...buildAiDraftingInputSection(analysis),
@@ -587,6 +645,7 @@ function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null |
     analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
     reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
     analysisSidecarPath: typeof profile?.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
+    knowledgeIndexPath: typeof profile?.knowledgeIndexPath === "string" ? profile.knowledgeIndexPath : undefined,
     previewImagePaths: Array.isArray(profile?.previewImagePaths) ? profile.previewImagePaths.filter((path): path is string => typeof path === "string") : undefined,
     createdAt: typeof profile?.createdAt === "string" ? profile.createdAt : now,
     updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : now,
@@ -610,7 +669,7 @@ function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
 }
 
 async function ensureFolder(app: App, folder: string): Promise<void> {
-  const normalized = folder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const normalized = normalizeVaultFolder(folder);
   if (!normalized) {
     return;
   }
@@ -620,6 +679,20 @@ async function ensureFolder(app: App, folder: string): Promise<void> {
     if (!app.vault.getAbstractFileByPath(current)) {
       await app.vault.createFolder(current).catch(() => {});
     }
+  }
+}
+
+async function createTextFileIfMissing(app: App, path: string, content: string): Promise<TFile | null> {
+  const existingFile = app.vault.getAbstractFileByPath(path);
+  if (existingFile instanceof TFile) {
+    return existingFile;
+  }
+
+  try {
+    return await app.vault.create(path, content);
+  } catch {
+    const file = app.vault.getAbstractFileByPath(path);
+    return file instanceof TFile ? file : null;
   }
 }
 
@@ -664,6 +737,280 @@ async function captureEvidenceSnapshot(
   }
 }
 
+function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
+  const linkedPartIds = new Set((analysis.annotationLinks ?? []).flatMap((link) => link.nearestPartId ? [link.nearestPartId] : []));
+  return new Set(
+    [...analysis.parts]
+      .sort((left, right) => {
+        const leftLinked = linkedPartIds.has(left.partId) ? 1 : 0;
+        const rightLinked = linkedPartIds.has(right.partId) ? 1 : 0;
+        if (leftLinked !== rightLinked) {
+          return rightLinked - leftLinked;
+        }
+        return (right.triangleCount ?? 0) - (left.triangleCount ?? 0);
+      })
+      .slice(0, MAX_GENERATED_PART_NOTES)
+      .map((part) => part.partId),
+  );
+}
+
+function createPartNotePath(partFolder: string, baseName: string, part: PartRecord, index: number): string {
+  const folder = normalizeVaultFolder(partFolder) || "Parts/3D Components";
+  const modelSegment = sanitizeVaultSegment(baseName, "model");
+  const partSegment = sanitizeVaultSegment(part.name, `Part ${index + 1}`);
+  return `${folder}/${modelSegment}/${String(index + 1).padStart(2, "0")} ${partSegment}.md`;
+}
+
+function buildPartNoteContent(options: {
+  baseName: string;
+  notePath: string;
+  sourcePath: string;
+  part: PartRecord;
+  analysis: AnalysisResult;
+}): string {
+  const annotationLinks = (options.analysis.annotationLinks ?? []).filter((link) => link.nearestPartId === options.part.partId);
+  const frontmatter = [
+    "---",
+    `source_model: ${markdownQuote(options.sourcePath)}`,
+    `parent_report: ${markdownQuote(options.notePath)}`,
+    `part_id: ${markdownQuote(options.part.partId)}`,
+    `asset_id: ${markdownQuote(options.part.assetId)}`,
+    `category: ${markdownQuote(options.part.category ?? "unclassified")}`,
+    `status: draft`,
+    `generated_by: ai-model-workbench`,
+    `updated_at: ${new Date().toISOString()}`,
+    "---",
+  ].join("\n");
+
+  return [
+    frontmatter,
+    "",
+    `# ${options.part.name}`,
+    "",
+    "## Evidence",
+    "",
+    `- Source model: [[${options.sourcePath}|${options.baseName}]]`,
+    `- Parent report: [[${options.notePath}|${options.baseName} Report]]`,
+    `- Category: ${options.part.category ?? "unclassified"}`,
+    `- Triangles: ${(options.part.triangleCount ?? 0).toLocaleString()}`,
+    `- Vertices: ${(options.part.vertexCount ?? 0).toLocaleString()}`,
+    `- Material: ${options.part.materialName ?? "-"}`,
+    `- Bounding size: ${formatVectorTuple(options.part.bbox)}`,
+    `- Center: ${formatVectorTuple(options.part.center)}`,
+    "",
+    "## Renderer Observations",
+    "",
+    ...(options.part.observations.length > 0 ? options.part.observations.map((observation) => `- ${observation}`) : ["- No renderer observations were captured for this part."]),
+    "",
+    "## Linked Focus Areas",
+    "",
+    ...(annotationLinks.length > 0
+      ? annotationLinks.map((link) => `- ${link.label} (${Math.round(link.confidence * 100)}% confidence, distance ${link.distance === undefined ? "-" : link.distance.toFixed(3)})`)
+      : ["- No saved annotation pin is linked to this part yet."]),
+    "",
+    "## Working Notes",
+    "",
+    "- ",
+    "",
+  ].join("\n");
+}
+
+async function createPartNoteDrafts(options: {
+  app: App;
+  partFolder: string;
+  baseName: string;
+  notePath: string;
+  sourcePath: string;
+  analysis: AnalysisResult;
+}): Promise<string[]> {
+  const candidateIds = getPartNoteCandidateIds(options.analysis);
+  if (candidateIds.size === 0) {
+    options.analysis.pipeline.push({ stage: "partNotes", durationMs: 0, status: "skipped" });
+    return [];
+  }
+
+  const notePaths: string[] = [];
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const folder = normalizeVaultFolder(options.partFolder) || "Parts/3D Components";
+  const modelFolder = `${folder}/${sanitizeVaultSegment(options.baseName, "model")}`;
+  await ensureFolder(options.app, modelFolder);
+
+  for (const [index, part] of options.analysis.parts.entries()) {
+    if (!candidateIds.has(part.partId)) {
+      continue;
+    }
+    const partNotePath = createPartNotePath(options.partFolder, options.baseName, part, index);
+    const draftPart = { ...part, notePath: partNotePath };
+    const content = buildPartNoteContent({
+      baseName: options.baseName,
+      notePath: options.notePath,
+      sourcePath: options.sourcePath,
+      part: draftPart,
+      analysis: options.analysis,
+    });
+    const file = await createTextFileIfMissing(options.app, partNotePath, content);
+    if (file) {
+      part.notePath = file.path;
+      notePaths.push(file.path);
+    }
+  }
+
+  options.analysis.partNotePaths = notePaths;
+  for (const link of options.analysis.annotationLinks ?? []) {
+    const linkedPart = options.analysis.parts.find((part) => part.partId === link.nearestPartId);
+    if (linkedPart?.notePath && !link.notePath) {
+      link.notePath = linkedPart.notePath;
+    }
+  }
+  options.analysis.pipeline.push({
+    stage: "partNotes",
+    durationMs: Math.max(0, Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt)),
+    status: notePaths.length > 0 ? "success" : "skipped",
+  });
+  return notePaths;
+}
+
+export function buildKnowledgeIndexManagedSection(options: {
+  baseName: string;
+  notePath: string;
+  sourcePath: string;
+  analysisSidecarPath: string;
+  analysis: AnalysisResult;
+  preview: ModelPreviewSummary | null;
+  profile?: ModelAssetProfile;
+}): string {
+  const partNotes = (options.analysis.parts ?? []).filter((part) => part.notePath);
+  const annotations = options.profile?.annotations ?? [];
+  const nextActions = options.analysis.localDraft?.nextActions ?? [];
+  return [
+    INDEX_MANAGED_START,
+    "",
+    "## Entry Points",
+    "",
+    `- Model report: [[${options.notePath}|${options.baseName} Report]]`,
+    `- Analysis sidecar: [[${options.analysisSidecarPath}|Analysis JSON]]`,
+    `- Source model: [[${options.sourcePath}|${options.baseName}]]`,
+    "",
+    "## Model Snapshot",
+    "",
+    options.preview
+      ? `- ${formatMetricCount(options.preview.meshCount, "mesh")}, ${formatMetricCount(options.preview.triangleCount, "triangle")}, ${formatMetricCount(options.preview.vertexCount, "vertex")}, ${formatMetricCount(options.preview.materialCount, "material slot")}.`
+      : "- No preview statistics were available for this index.",
+    `- Evidence images: ${(options.analysis.previewImages ?? []).length.toLocaleString()}`,
+    `- Part drafts: ${partNotes.length.toLocaleString()}`,
+    `- Saved annotations: ${annotations.length.toLocaleString()}`,
+    "",
+    "## Part Notes",
+    "",
+    ...(partNotes.length > 0
+      ? partNotes.map((part) => `- [[${part.notePath}|${part.name}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}`)
+      : ["- No part note drafts were created in this pass."]),
+    "",
+    "## Evidence Images",
+    "",
+    ...(options.analysis.previewImages.length > 0
+      ? options.analysis.previewImages.map((path) => `- ![[${path}]]`)
+      : ["- No evidence image was captured in this pass."]),
+    "",
+    "## Focus Areas",
+    "",
+    ...(annotations.length > 0
+      ? annotations.map((pin) => {
+          const link = options.analysis.annotationLinks?.find((candidate) => candidate.annotationId === pin.id);
+          const target = link?.notePath ? ` -> [[${link.notePath}|part note]]` : "";
+          return `- ${pin.label || "Untitled pin"}${target}`;
+        })
+      : ["- No saved annotation pins yet."]),
+    "",
+    "## Next Actions",
+    "",
+    ...(nextActions.length ? nextActions.map((action) => `- ${action}`) : ["- Review generated part drafts and promote confirmed components into stable notes."]),
+    "",
+    INDEX_MANAGED_END,
+    "",
+  ].join("\n");
+}
+
+export function replaceManagedSection(existingContent: string, managedSection: string): string {
+  const startIndex = existingContent.indexOf(INDEX_MANAGED_START);
+  const endIndex = existingContent.indexOf(INDEX_MANAGED_END);
+  if (startIndex >= 0 && endIndex > startIndex) {
+    const before = existingContent.slice(0, startIndex).replace(/\s+$/, "");
+    const after = existingContent.slice(endIndex + INDEX_MANAGED_END.length).replace(/^\s+/, "");
+    return [before, managedSection.trim(), after].filter(Boolean).join("\n\n") + "\n";
+  }
+  return `${existingContent.replace(/\s+$/, "")}\n\n${managedSection.trim()}\n`;
+}
+
+export function buildKnowledgeIndexContent(options: {
+  baseName: string;
+  notePath: string;
+  sourcePath: string;
+  analysisSidecarPath: string;
+  analysis: AnalysisResult;
+  preview: ModelPreviewSummary | null;
+  profile?: ModelAssetProfile;
+}): string {
+  const managedSection = buildKnowledgeIndexManagedSection(options);
+  const partNoteCount = (options.analysis.parts ?? []).filter((part) => part.notePath).length;
+  const frontmatter = [
+    "---",
+    `source_model: ${markdownQuote(options.sourcePath)}`,
+    `report_note_path: ${markdownQuote(options.notePath)}`,
+    `analysis_sidecar_path: ${markdownQuote(options.analysisSidecarPath)}`,
+    `part_note_count: ${partNoteCount}`,
+    `status: index`,
+    `generated_by: ai-model-workbench`,
+    `updated_at: ${new Date().toISOString()}`,
+    "---",
+  ].join("\n");
+
+  return [
+    frontmatter,
+    "",
+    `# ${options.baseName} Knowledge Index`,
+    "",
+    "## User Notes",
+    "",
+    "- ",
+    "",
+    managedSection,
+  ].join("\n");
+}
+
+async function createKnowledgeIndex(options: {
+  app: App;
+  baseName: string;
+  notePath: string;
+  sourcePath: string;
+  analysisSidecarPath: string;
+  indexPath: string;
+  analysis: AnalysisResult;
+  preview: ModelPreviewSummary | null;
+  profile?: ModelAssetProfile;
+}): Promise<TFile | null> {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const existingFile = options.app.vault.getAbstractFileByPath(options.indexPath);
+  let file: TFile | null = null;
+  if (existingFile instanceof TFile) {
+    const existingContent = await options.app.vault.read(existingFile);
+    const managedSection = buildKnowledgeIndexManagedSection(options);
+    await options.app.vault.modify(existingFile, replaceManagedSection(existingContent, managedSection));
+    file = existingFile;
+  } else {
+    file = await createTextFileIfMissing(options.app, options.indexPath, buildKnowledgeIndexContent(options));
+  }
+  if (file) {
+    options.analysis.knowledgeIndexPath = file.path;
+  }
+  options.analysis.pipeline.push({
+    stage: "index",
+    durationMs: Math.max(0, Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt)),
+    status: file ? "success" : "failed",
+  });
+  return file;
+}
+
 export async function generateKnowledgeNote(
   app: App,
   ps: PluginStore,
@@ -684,6 +1031,7 @@ export async function generateKnowledgeNote(
     const reportFolder = state.settings.reportFolder;
     const notePath = `${reportFolder}/${baseName} Report.md`;
     const analysisSidecarPath = `${reportFolder}/${baseName} Analysis.json`;
+    const knowledgeIndexPath = `${reportFolder}/${baseName} Index.md`;
     const evidence = options.preview?.getModelEvidence?.() ?? null;
     const snapshot = await captureEvidenceSnapshot(app, options.preview, state.settings.previewFolder, baseName);
     const analysis = buildLocalAnalysisResult({
@@ -713,6 +1061,24 @@ export async function generateKnowledgeNote(
       analysis,
     });
     analysis.pipeline.push({ stage: "draft", durationMs: 0, status: "success" });
+    await createPartNoteDrafts({
+      app,
+      partFolder: state.settings.partFolder,
+      baseName,
+      notePath,
+      sourcePath: path,
+      analysis,
+    });
+    if (analysis.draftingInput) {
+      analysis.draftingInput = {
+        ...analysis.draftingInput,
+        partCandidates: analysis.draftingInput.partCandidates.map((candidate) => {
+          const linkedPart = analysis.parts.find((part) => part.partId === candidate.partId);
+          return linkedPart?.notePath ? { ...candidate, notePath: linkedPart.notePath } : candidate;
+        }),
+        annotationLinks: [...(analysis.annotationLinks ?? [])],
+      };
+    }
     const remoteDecision = createRemoteDraftDecision(state.settings, analysis.draftingInput, LOCAL_ANALYSIS_VERSION);
     if (remoteDecision.enabled) {
       try {
@@ -731,6 +1097,18 @@ export async function generateKnowledgeNote(
     } else {
       analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
     }
+    await ensureFolder(app, reportFolder);
+    await createKnowledgeIndex({
+      app,
+      baseName,
+      notePath,
+      sourcePath: path,
+      analysisSidecarPath,
+      indexPath: knowledgeIndexPath,
+      analysis,
+      preview,
+      profile,
+    });
     const content = buildKnowledgeNoteContent({
       baseName,
       notePath,
@@ -739,9 +1117,9 @@ export async function generateKnowledgeNote(
       preview,
       analysis,
       analysisSidecarPath,
+      knowledgeIndexPath: analysis.knowledgeIndexPath,
     });
 
-    await ensureFolder(app, reportFolder);
     await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(analysis, null, 2)}\n`);
     const outputFile = await upsertTextFile(app, notePath, content);
 
@@ -757,6 +1135,7 @@ export async function generateKnowledgeNote(
           analysisVersion: LOCAL_ANALYSIS_VERSION,
           reportNotePath: outputFile.path,
           analysisSidecarPath,
+          knowledgeIndexPath: analysis.knowledgeIndexPath,
           previewImagePaths: snapshot.paths,
           updatedAt: new Date().toISOString(),
         },

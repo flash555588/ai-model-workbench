@@ -66,6 +66,10 @@ export class DirectModelView extends FileView {
   private convertedAssetCache: ConvertedAssetCache;
   private ps: PluginStore;
   private escHandler: ((e: KeyboardEvent) => void) | null = null;
+  private workbenchPanel: HTMLElement | null = null;
+  private workbenchSummary: ModelPreviewSummary | null = null;
+  private workbenchRoute: { backend: string; reason: string } | null = null;
+  private workbenchModelPath: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
     super(leaf);
@@ -118,6 +122,10 @@ export class DirectModelView extends FileView {
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     this.annotationMode = false;
+    this.workbenchPanel = null;
+    this.workbenchSummary = null;
+    this.workbenchRoute = null;
+    this.workbenchModelPath = null;
     this.preview?.destroy();
     this.preview = null;
     this.ps.store.setState({
@@ -229,6 +237,10 @@ export class DirectModelView extends FileView {
       toolbar?.syncCapabilities();
       const summary = created.summary;
       renderModelPerformanceFeedback(host, summary);
+      this.workbenchPanel = workbenchPanel;
+      this.workbenchSummary = summary;
+      this.workbenchRoute = created.route;
+      this.workbenchModelPath = file.path;
       this.renderWorkbenchPanel(workbenchPanel, summary, created.route, file.path);
       this.ps.store.setState({
         currentModelPath: file.path,
@@ -345,6 +357,13 @@ export class DirectModelView extends FileView {
     this.renderKnowledgeControls(controls, modelPath);
   }
 
+  private refreshWorkbenchPanel(): void {
+    if (!this.workbenchPanel || !this.workbenchSummary || !this.workbenchRoute || !this.workbenchModelPath) {
+      return;
+    }
+    this.renderWorkbenchPanel(this.workbenchPanel, this.workbenchSummary, this.workbenchRoute, this.workbenchModelPath);
+  }
+
   private renderMetric(parent: HTMLElement, label: string, value: string): void {
     const metric = parent.createDiv({ cls: "ai3d-direct-workbench-metric" });
     metric.createSpan({ cls: "ai3d-direct-workbench-label", text: label });
@@ -424,7 +443,11 @@ export class DirectModelView extends FileView {
     control.createDiv({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.knowledgeTitle") });
     control.createDiv({
       cls: "ai3d-direct-workbench-value",
-      text: profile?.reportNotePath ? t("workbench.noteReady") : t("workbench.noReportYet"),
+      text: profile?.knowledgeIndexPath
+        ? t("workbench.indexReady")
+        : profile?.reportNotePath
+          ? t("workbench.noteReady")
+          : t("workbench.noReportYet"),
     });
 
     const actions = control.createDiv({ cls: "ai3d-direct-workbench-actions" });
@@ -442,6 +465,7 @@ export class DirectModelView extends FileView {
         })
         .finally(() => {
           generateButton.disabled = false;
+          this.refreshWorkbenchPanel();
         });
     });
 
@@ -455,6 +479,21 @@ export class DirectModelView extends FileView {
       const reportPath = this.ps.store.getState().modelAssetProfiles[modelPath]?.reportNotePath;
       if (!reportPath) return;
       const file = this.app.vault.getAbstractFileByPath(reportPath);
+      if (file instanceof TFile) {
+        void this.app.workspace.getLeaf(true).openFile(file, { active: true });
+      }
+    });
+
+    const openIndexButton = actions.createEl("button", {
+      cls: "ai3d-direct-workbench-action",
+      text: t("workbench.openIndexAction"),
+      attr: { type: "button", "data-ai3d-action": "open-index" },
+    });
+    openIndexButton.disabled = !profile?.knowledgeIndexPath;
+    openIndexButton.addEventListener("click", () => {
+      const indexPath = this.ps.store.getState().modelAssetProfiles[modelPath]?.knowledgeIndexPath;
+      if (!indexPath) return;
+      const file = this.app.vault.getAbstractFileByPath(indexPath);
       if (file instanceof TFile) {
         void this.app.workspace.getLeaf(true).openFile(file, { active: true });
       }

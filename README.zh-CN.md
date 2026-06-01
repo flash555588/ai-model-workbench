@@ -386,10 +386,14 @@ ai-model-workbench/
 
 - `Analysis/3D Reports` 下的模型报告
 - 一个 JSON analysis sidecar，包含预览摘要、部件候选、知识节点、资源警告和 pipeline 元数据
+- `Analysis/3D Reports` 下的模型知识索引，把报告、sidecar、证据截图、标注和部件笔记集中到一个入口
+- `Parts/3D Components` 下最多 8 个第一版部件笔记草稿，并从报告和 sidecar 中建立链接；已有部件笔记不会被覆盖
 - `Media/3D Previews` 下的当前视口证据截图
 - 一个可直接编辑的本地草稿，把捕获到的证据、标注、标签和 profile notes 组织成第一版知识笔记正文，并附带本地草稿元数据、建议标签和下一步动作
 
 默认本地分析不会把模型数据发送到远程服务。它会先用渲染器证据、已保存标注、标签和 profile notes 建立后续 AI 草稿所需的 grounding 层。
+
+报告生成后，可以在 direct workbench 使用“打开索引”，或在命令面板执行“打开知识索引”，直接回到该模型的知识地图入口。
 
 如需接入可选远程草稿，可在设置里选择“本地证据 + 远程草稿”或“基于证据的远程草稿”，并填写草稿服务 URL。客户端会向 `POST /draft-note` 发送经过裁剪的 drafting input。原始模型上传会被阻止；几何摘要和预览图引用都由单独的隐私开关控制。
 
@@ -413,6 +417,7 @@ ai-model-workbench/
 | 快照文件夹 | Media/3D Previews | 导出文件夹 |
 | 快照命名 | model-name | 导出 PNG 快照时的文件命名方式 |
 | 报告文件夹 | Analysis/3D Reports | 知识笔记文件夹 |
+| 部件笔记文件夹 | Parts/3D Components | 保存生成的部件笔记草稿 |
 | 日志级别 | warn | 控制台日志详细程度 |
 
 ### 转换器设置
@@ -657,6 +662,8 @@ npm run verify:preview:success  # 完整预览路由成功套件
 npm run verify:obsidian  # Obsidian 应用端到端冒烟验证
 npm run verify:release   # 发布资产版本/hash/体积检查
 npm run verify:settings  # 旧 data.json/default settings 迁移检查
+npm run verify:remote-draft  # 远程草稿隐私/客户端行为检查
+npm run verify:knowledge-index  # 知识索引链接和刷新回归检查
 ```
 
 ### 预览验证
@@ -678,6 +685,12 @@ npm run verify:settings  # 旧 data.json/default settings 迁移检查
 
 在 macOS 且已安装 Obsidian 时，发布前运行 `npm run verify:obsidian`。脚本会在 `/tmp/ai-model-workbench-verify-vault` 下创建临时测试库，安装当前打包插件，通过远程调试端口打开测试笔记，按需信任临时 vault，确认 GLB/STL 预览 canvas 已加载，检查未启用 FBX2glTF 时的 FBX 转换反馈，然后打开真实 GLB 文件视图并启用实验性 Three workbench，检查 backend 选择、聚焦/分解控件、面板爆炸控件、标注模式和知识笔记生成。
 
+如果想在验证结束后删除临时库，使用 `npm run verify:obsidian -- --clean`。在 macOS 上，clean 流程会先退出 Obsidian，并从 Obsidian 配置中注销该临时库，再删除 `/tmp` 目录，避免开发者控制台继续刷旧路径的 `ENOENT`。
+
+### 知识笔记验证
+
+修改生成报告、零件草稿或模型索引行为后，运行 `npm run verify:knowledge-index`。脚本会用一个极小的 Obsidian shim 打包知识笔记 helper，构建代表性的模型索引，刷新 AI 托管区，并确认用户手写笔记不会被覆盖。
+
 ### 构建输出
 
 ```
@@ -690,7 +703,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.3.1`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.3.1`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.4.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.4.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

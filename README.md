@@ -372,10 +372,14 @@ The workbench `Generate note` action creates an evidence-backed Markdown note ra
 
 - a model report in `Analysis/3D Reports`
 - a JSON analysis sidecar with preview summary, part candidates, knowledge nodes, warnings, and pipeline metadata
+- a model knowledge index in `Analysis/3D Reports` that links the report, sidecar, evidence images, annotations, and part notes
+- up to 8 first-pass part note drafts in `Parts/3D Components`, linked from the report and sidecar without overwriting existing part notes
 - a current viewport evidence snapshot in `Media/3D Previews`
 - an editable local draft that turns the captured evidence, annotations, tags, and profile notes into a first-pass knowledge note body, plus local draft metadata for tags and next actions
 
 The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting.
+
+After a report has been generated, use the direct workbench `Open index` action or the command palette `Open knowledge index` command to jump back into the model's knowledge map.
 
 Optional remote drafting can be enabled in settings by choosing `Local evidence + remote draft` or `Remote draft from evidence` and entering a draft service URL. The client sends `POST /draft-note` with sanitized drafting input only. Raw model upload is blocked; geometry summaries and preview image references are controlled by separate privacy toggles.
 
@@ -399,6 +403,7 @@ Optional remote drafting can be enabled in settings by choosing `Local evidence 
 | Snapshot folder | Media/3D Previews | Export folder |
 | Snapshot naming | model-name | File naming mode for exported PNG snapshots |
 | Report folder | Analysis/3D Reports | Knowledge notes folder |
+| Part notes folder | Parts/3D Components | Folder for generated part note drafts |
 | Log level | warn | Console log verbosity |
 
 ### Converter Settings
@@ -644,6 +649,8 @@ npm run verify:preview:success  # Full preview routing success suite
 npm run verify:obsidian  # End-to-end Obsidian app smoke test
 npm run verify:release   # Release asset version/hash/size check
 npm run verify:settings  # Legacy data.json/default-settings migration check
+npm run verify:remote-draft  # Remote draft privacy/client behavior check
+npm run verify:knowledge-index  # Knowledge index link and refresh regression check
 ```
 
 ### Preview Verification
@@ -665,6 +672,12 @@ If verification fails, the script saves a screenshot and a log with preview stat
 
 Run `npm run verify:obsidian` on macOS before release when Obsidian is installed. The script builds a temporary test vault under `/tmp/ai-model-workbench-verify-vault`, installs the packaged plugin, opens a note in Obsidian through a remote debugging port, trusts the temporary vault when prompted, confirms that GLB/STL preview canvases are loaded, checks converter feedback for an FBX route without FBX2glTF enabled, then opens the real GLB file view with Experimental Three workbench enabled and checks backend selection, focus/disassembly controls, panel explode controls, annotation mode, and knowledge-note generation.
 
+Use `npm run verify:obsidian -- --clean` when you want the temporary vault removed after the run. On macOS, the clean path quits Obsidian and unregisters the temporary vault before deleting it so the developer console does not keep reporting stale `ENOENT` reads from `/tmp`.
+
+### Knowledge Note Verification
+
+Run `npm run verify:knowledge-index` after changing generated reports, part drafts, or model index behavior. The script bundles the knowledge-note helpers with a small Obsidian shim, builds a representative model index, refreshes the AI-managed block, and confirms user-written notes remain intact.
+
 ### Build Output
 
 ```
@@ -677,7 +690,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.3.1`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.3.1` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.4.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.4.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

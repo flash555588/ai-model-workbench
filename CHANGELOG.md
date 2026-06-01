@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Generate first-pass part note drafts for the strongest captured part candidates and link them from the main knowledge report and analysis sidecar.
+- Generate a model knowledge index that collects the report, analysis sidecar, evidence images, annotations, and generated part notes in one Obsidian entry point.
+- Add command-palette and direct-workbench actions to open the generated model knowledge index.
+- Make `verify:obsidian -- --clean` close Obsidian and unregister the temporary test vault before deleting it, avoiding stale console `ENOENT` noise after diagnostics.
+- Add a configurable part notes folder so generated component drafts can live separately from model reports.
+- Add `npm run verify:knowledge-index` to regression-test generated index links, managed-section refreshes, and preservation of user-written notes without launching Obsidian.
+
 ## 0.3.1
 
 - Add release-asset Obsidian verification mode so the packaged `main.js`, `manifest.json`, and `styles.css` can be downloaded from a GitHub release and installed into the test vault.

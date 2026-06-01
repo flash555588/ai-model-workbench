@@ -60,6 +60,7 @@ await writeFile(entryPath, `
   assert(state.settings.sendRawModelToRemote === false, "Raw model remote upload should default off");
   assert(state.settings.previewRendererRollout === DEFAULT_SETTINGS.previewRendererRollout, "New rollout setting was not defaulted");
   assert(state.settings.snapshotFolder === DEFAULT_SETTINGS.snapshotFolder, "New folder setting was not defaulted");
+  assert(state.settings.partFolder === DEFAULT_SETTINGS.partFolder, "Part folder setting was not defaulted");
   assert(state.settings.enabledConverterIds.includes("obj2gltf"), "Legacy converter setting was not preserved");
   assert(state.modelAssetProfiles["models/legacy.glb"].notes === "", "Legacy profile notes were not normalized");
   assert(state.modelAssetProfiles["models/legacy.glb"].annotations.length === 1, "Legacy annotations were not preserved");
