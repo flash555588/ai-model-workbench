@@ -635,6 +635,98 @@ body {
   gap: 4px;
 }
 
+.ai3d-direct-workbench-registered {
+  gap: 6px;
+}
+
+.ai3d-direct-workbench-registered-body {
+  min-width: 0;
+}
+
+.ai3d-direct-workbench-empty {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.ai3d-direct-workbench-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai3d-direct-workbench-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.ai3d-direct-workbench-match-main,
+.ai3d-direct-workbench-match-side {
+  min-width: 0;
+}
+
+.ai3d-direct-workbench-match-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai3d-direct-workbench-match-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai3d-direct-workbench-match-title,
+.ai3d-direct-workbench-match-source,
+.ai3d-direct-workbench-match-model,
+.ai3d-direct-workbench-match-target,
+.ai3d-direct-workbench-match-reasons {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai3d-direct-workbench-match-title {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.ai3d-direct-workbench-match-source {
+  color: var(--text-muted);
+}
+
+.ai3d-direct-workbench-match-model {
+  color: var(--text-faint);
+}
+
+.ai3d-direct-workbench-match-target {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai3d-direct-workbench-match-reasons {
+  color: var(--text-faint);
+}
+
+.ai3d-direct-workbench-match-score {
+  min-width: 34px;
+  color: var(--text-accent);
+  font-weight: 700;
+  text-align: right;
+}
+
+.ai3d-direct-workbench-match-open {
+  min-width: 44px;
+}
+
 @media (max-width: 760px) {
   .ai3d-direct-workbench-panel {
     grid-template-columns: 1fr;
@@ -642,6 +734,14 @@ body {
 
   .ai3d-direct-workbench-controls {
     gap: 8px;
+  }
+
+  .ai3d-direct-workbench-match {
+    grid-template-columns: 1fr;
+  }
+
+  .ai3d-direct-workbench-match-side {
+    justify-content: space-between;
   }
 }
 

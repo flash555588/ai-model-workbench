@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-model-workbench",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "private": true,
   "description": "Obsidian plugin for turning 3D models into linked knowledge assets.",
   "scripts": {
@@ -15,7 +15,8 @@
     "install:vault": "node scripts/install-to-vault.mjs",
     "verify:settings": "node scripts/verify-settings-migration.mjs",
     "verify:remote-draft": "node scripts/verify-remote-draft.mjs",
-    "verify:knowledge-index": "node scripts/verify-knowledge-index.mjs"
+    "verify:knowledge-index": "node scripts/verify-knowledge-index.mjs",
+    "verify:diagnostics": "node scripts/verify-diagnostics.mjs"
   },
   "devDependencies": {
     "@codemirror/language": "^6.12.3",

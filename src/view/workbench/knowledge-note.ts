@@ -6,6 +6,7 @@ import type {
   ModelAssetProfile,
   ModelPreviewSummary,
   PartRecord,
+  RegisteredPartMatch,
 } from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
@@ -61,6 +62,23 @@ function sanitizeVaultSegment(value: string, fallback: string): string {
 
 function formatVectorTuple(values: readonly number[] | undefined): string {
   return values?.map((value) => value.toFixed(2)).join(", ") ?? "-";
+}
+
+function formatMeshRefs(meshRefs: readonly string[], limit = 12): string {
+  if (meshRefs.length === 0) {
+    return "-";
+  }
+  const head = meshRefs.slice(0, limit).join(", ");
+  const remaining = meshRefs.length - limit;
+  return remaining > 0 ? `${head}, +${remaining.toLocaleString()} more` : head;
+}
+
+function formatRegisteredMatch(match: RegisteredPartMatch): string {
+  const target = match.sourceNotePath
+    ? `[[${match.sourceNotePath}|${match.sourcePartName}]]`
+    : match.sourcePartName;
+  const reasons = match.reasons.length > 0 ? ` - ${match.reasons.join(", ")}` : "";
+  return `${target} (${Math.round(match.confidence * 100)}%${reasons})`;
 }
 
 function formatAnnotationLink(pin: AnnotationPin): string[] {
@@ -264,6 +282,23 @@ function summarizeTopParts(parts: readonly PartRecord[]): string {
     .join("\n");
 }
 
+function summarizeRegisteredPartMatches(parts: readonly PartRecord[]): string {
+  const matchedParts = parts.filter((part) => part.registeredMatches?.length);
+  if (matchedParts.length === 0) {
+    return "No previously registered parts were matched across other analyzed models in this pass.";
+  }
+  return matchedParts
+    .slice(0, 6)
+    .map((part) => {
+      const best = part.registeredMatches?.[0];
+      return best
+        ? `- ${part.name}: possible reuse of ${best.sourcePartName} from ${best.sourceAssetId} (${Math.round(best.confidence * 100)}% confidence).`
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 function createLocalDraftResult(options: {
   baseName: string;
   sourcePath: string;
@@ -279,6 +314,7 @@ function createLocalDraftResult(options: {
   const categories = uniqueStrings(parts.map((part) => part.category ?? "unclassified")).slice(0, 6);
   const materials = uniqueStrings(parts.flatMap((part) => part.materialName ? [part.materialName] : [])).slice(0, 6);
   const topParts = summarizeTopParts(parts);
+  const registeredMatches = summarizeRegisteredPartMatches(parts);
   const shapeLine = summary ? buildShapeObservation(summary) : "Geometry statistics are not available yet, so this draft should stay provisional.";
   const complexityLine = summary ? buildComplexityObservation(summary) : "Reload the preview to capture mesh, triangle, vertex, and material evidence.";
   const userNotes = options.profile?.notes.trim();
@@ -319,6 +355,10 @@ function createLocalDraftResult(options: {
       {
         heading: "Candidate structure",
         body: topParts,
+      },
+      {
+        heading: "Registered part reuse",
+        body: registeredMatches,
       },
       {
         heading: "Focus areas",
@@ -482,17 +522,50 @@ function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
   const lines = [
     "## Part Candidates",
     "",
-    "| # | Part | Part Note | Category | Triangles | Material | Center | Evidence |",
-    "|---|------|-----------|----------|-----------|----------|--------|----------|",
+    "| # | Part | Part Note | Source | Category | Triangles | Material | Center | Evidence |",
+    "|---|------|-----------|--------|----------|-----------|----------|--------|----------|",
   ];
   for (const [index, part] of parts.slice(0, 32).entries()) {
     const center = formatVectorTuple(part.center);
     const observations = part.observations.slice(0, 2).join(" ");
     const partNote = part.notePath ? `[[${part.notePath}]]` : "-";
-    lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(partNote)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
+    const source = part.source === "group" ? `group (${part.childCount ?? part.meshRefs.length})` : "mesh";
+    lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(partNote)} | ${escapeTableCell(source)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
   }
   if (parts.length > 32) {
-    lines.push(`| ... | ${parts.length - 32} more candidate parts omitted from this note | - | - | - | - | - | See sidecar JSON |`);
+    lines.push(`| ... | ${parts.length - 32} more candidate parts omitted from this note | - | - | - | - | - | - | See sidecar JSON |`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function buildRegisteredPartMatchSection(analysis?: AnalysisResult): string[] {
+  const matchedParts = (analysis?.parts ?? []).filter((part) => part.registeredMatches?.length);
+  if (matchedParts.length === 0) {
+    return [
+      "## Registered Part Matches",
+      "",
+      "- No previously registered parts were matched across other analyzed models in this pass.",
+      "",
+    ];
+  }
+
+  const lines = [
+    "## Registered Part Matches",
+    "",
+    "| Current Part | Best Existing Part | Source Model | Confidence | Reasons |",
+    "|--------------|--------------------|--------------|------------|---------|",
+  ];
+  for (const part of matchedParts.slice(0, 32)) {
+    const match = part.registeredMatches?.[0];
+    if (!match) continue;
+    const existing = match.sourceNotePath
+      ? `[[${match.sourceNotePath}|${match.sourcePartName}]]`
+      : match.sourcePartName;
+    lines.push(`| ${escapeTableCell(part.name)} | ${escapeTableCell(existing)} | ${escapeTableCell(match.sourceAssetId)} | ${Math.round(match.confidence * 100)}% | ${escapeTableCell(match.reasons.join(", "))} |`);
+  }
+  if (matchedParts.length > 32) {
+    lines.push(`| ... | ${matchedParts.length - 32} more matched parts omitted | - | - | See sidecar JSON |`);
   }
   lines.push("");
   return lines;
@@ -625,6 +698,7 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
     ...buildAnnotationLinkSection(analysis),
     ...buildSuggestedPartNotesSection(analysis),
     ...buildPartCandidateSection(analysis),
+    ...buildRegisteredPartMatchSection(analysis),
     ...buildKnowledgeNodeSection(analysis),
     ...buildAiDraftingInputSection(analysis),
     ...buildRemoteDraftSection(analysis),
@@ -636,12 +710,17 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
   ].join("\n");
 }
 
-function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null | undefined): ModelAssetProfile {
+function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null | undefined, modelPath: string): ModelAssetProfile {
   const now = new Date().toISOString();
   return {
     tags: Array.isArray(profile?.tags) ? profile.tags : [],
     notes: typeof profile?.notes === "string" ? profile.notes : "",
     annotations: Array.isArray(profile?.annotations) ? profile.annotations : [],
+    registeredParts: Array.isArray(profile?.registeredParts)
+      ? profile.registeredParts
+          .map((part) => normalizeRegisteredPartRecord(part, modelPath))
+          .filter((part): part is PartRecord => !!part)
+      : undefined,
     analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
     reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
     analysisSidecarPath: typeof profile?.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
@@ -737,6 +816,93 @@ async function captureEvidenceSnapshot(
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined;
+  const tuple = value.slice(0, 3).map((entry) => Number(entry));
+  return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
+}
+
+function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string): PartRecord | null {
+  if (!isRecord(value)) return null;
+  const partId = typeof value.partId === "string" ? value.partId : "";
+  const name = typeof value.name === "string" ? value.name : "";
+  if (!partId || !name) return null;
+  const assetId = typeof value.assetId === "string" && value.assetId ? value.assetId : fallbackAssetId;
+  return {
+    partId,
+    assetId,
+    parentPartId: typeof value.parentPartId === "string" ? value.parentPartId : undefined,
+    name,
+    source: value.source === "group" || value.source === "mesh" ? value.source : undefined,
+    category: typeof value.category === "string" ? value.category : undefined,
+    meshRefs: normalizeStringArray(value.meshRefs),
+    childCount: Number.isFinite(value.childCount) ? Number(value.childCount) : undefined,
+    materialRefs: normalizeStringArray(value.materialRefs),
+    bbox: normalizeNumberTuple(value.bbox),
+    center: normalizeNumberTuple(value.center),
+    triangleCount: Number.isFinite(value.triangleCount) ? Number(value.triangleCount) : undefined,
+    vertexCount: Number.isFinite(value.vertexCount) ? Number(value.vertexCount) : undefined,
+    materialName: typeof value.materialName === "string" ? value.materialName : null,
+    confidence: Number.isFinite(value.confidence) ? Number(value.confidence) : 0.5,
+    observations: normalizeStringArray(value.observations),
+    inferredFunctions: normalizeStringArray(value.inferredFunctions),
+    knowledgeTags: normalizeStringArray(value.knowledgeTags),
+    notePath: typeof value.notePath === "string" ? value.notePath : undefined,
+    reviewed: value.reviewed === true,
+  };
+}
+
+export async function collectRegisteredPartsFromProfiles(
+  app: App,
+  profiles: Record<string, ModelAssetProfile>,
+  currentModelPath: string,
+): Promise<PartRecord[]> {
+  const parts: PartRecord[] = [];
+  const seen = new Set<string>();
+  const pushPart = (value: unknown, fallbackAssetId: string): void => {
+    const part = normalizeRegisteredPartRecord(value, fallbackAssetId);
+    if (!part) return;
+    const key = `${part.assetId}:${part.partId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    parts.push(part);
+  };
+
+  for (const [modelPath, profile] of Object.entries(profiles)) {
+    if (modelPath === currentModelPath) continue;
+
+    if (profile.analysisSidecarPath) {
+      const sidecarFile = app.vault.getAbstractFileByPath(profile.analysisSidecarPath);
+      if (sidecarFile instanceof TFile) {
+        try {
+          const raw = await app.vault.read(sidecarFile);
+          const parsed = JSON.parse(raw) as unknown;
+          if (isRecord(parsed) && Array.isArray(parsed.parts)) {
+            for (const value of parsed.parts) {
+              pushPart(value, modelPath);
+            }
+          }
+        } catch (error) {
+          console.warn("[AI3D] Failed to read registered part sidecar:", profile.analysisSidecarPath, error);
+        }
+      }
+    }
+
+    for (const value of profile.registeredParts ?? []) {
+      pushPart(value, modelPath);
+    }
+  }
+  return parts;
+}
+
 function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
   const linkedPartIds = new Set((analysis.annotationLinks ?? []).flatMap((link) => link.nearestPartId ? [link.nearestPartId] : []));
   return new Set(
@@ -746,6 +912,11 @@ function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
         const rightLinked = linkedPartIds.has(right.partId) ? 1 : 0;
         if (leftLinked !== rightLinked) {
           return rightLinked - leftLinked;
+        }
+        const leftRegistered = left.registeredMatches?.length ? 1 : 0;
+        const rightRegistered = right.registeredMatches?.length ? 1 : 0;
+        if (leftRegistered !== rightRegistered) {
+          return rightRegistered - leftRegistered;
         }
         return (right.triangleCount ?? 0) - (left.triangleCount ?? 0);
       })
@@ -791,12 +962,17 @@ function buildPartNoteContent(options: {
     "",
     `- Source model: [[${options.sourcePath}|${options.baseName}]]`,
     `- Parent report: [[${options.notePath}|${options.baseName} Report]]`,
+    `- Source: ${options.part.source === "group" ? "model group" : "mesh"}`,
     `- Category: ${options.part.category ?? "unclassified"}`,
+    ...(options.part.source === "group" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
     `- Triangles: ${(options.part.triangleCount ?? 0).toLocaleString()}`,
     `- Vertices: ${(options.part.vertexCount ?? 0).toLocaleString()}`,
     `- Material: ${options.part.materialName ?? "-"}`,
     `- Bounding size: ${formatVectorTuple(options.part.bbox)}`,
     `- Center: ${formatVectorTuple(options.part.center)}`,
+    ...(options.part.registeredMatches?.length
+      ? [`- Possible registered match: ${formatRegisteredMatch(options.part.registeredMatches[0])}`]
+      : []),
     "",
     "## Renderer Observations",
     "",
@@ -903,7 +1079,11 @@ export function buildKnowledgeIndexManagedSection(options: {
     "## Part Notes",
     "",
     ...(partNotes.length > 0
-      ? partNotes.map((part) => `- [[${part.notePath}|${part.name}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}`)
+      ? partNotes.map((part) => {
+          const match = part.registeredMatches?.[0];
+          const matchText = match ? `, matches ${match.sourcePartName} (${Math.round(match.confidence * 100)}%)` : "";
+          return `- [[${part.notePath}|${part.name}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${matchText}`;
+        })
       : ["- No part note drafts were created in this pass."]),
     "",
     "## Evidence Images",
@@ -1034,12 +1214,14 @@ export async function generateKnowledgeNote(
     const knowledgeIndexPath = `${reportFolder}/${baseName} Index.md`;
     const evidence = options.preview?.getModelEvidence?.() ?? null;
     const snapshot = await captureEvidenceSnapshot(app, options.preview, state.settings.previewFolder, baseName);
+    const registeredParts = await collectRegisteredPartsFromProfiles(app, state.modelAssetProfiles, path);
     const analysis = buildLocalAnalysisResult({
       modelPath: path,
       profile,
       preview,
       evidence,
       previewImages: snapshot.paths,
+      registeredParts,
     });
     if (snapshot.warning) {
       analysis.warnings = [...analysis.warnings, snapshot.warning];
@@ -1126,19 +1308,31 @@ export async function generateKnowledgeNote(
     if (!outputFile) return;
 
     const currentProfiles = ps.store.getState().modelAssetProfiles;
-    const existingProfile = normalizeModelAssetProfile(currentProfiles[path]);
+    const existingProfile = normalizeModelAssetProfile(currentProfiles[path], path);
     ps.store.setState({
       modelAssetProfiles: {
         ...currentProfiles,
         [path]: {
           ...existingProfile,
           analysisVersion: LOCAL_ANALYSIS_VERSION,
+          registeredParts: analysis.parts,
           reportNotePath: outputFile.path,
           analysisSidecarPath,
           knowledgeIndexPath: analysis.knowledgeIndexPath,
           previewImagePaths: snapshot.paths,
           updatedAt: new Date().toISOString(),
         },
+      },
+      lastKnowledgeGeneration: {
+        modelPath: path,
+        reportNotePath: outputFile.path,
+        analysisSidecarPath,
+        knowledgeIndexPath: analysis.knowledgeIndexPath,
+        partNoteCount: analysis.partNotePaths?.length ?? 0,
+        previewImageCount: analysis.previewImages.length,
+        generatedAt: new Date().toISOString(),
+        status: "success",
+        warningCount: analysis.warnings.length,
       },
     });
     await app.workspace.getLeaf(true).openFile(outputFile, { active: true });

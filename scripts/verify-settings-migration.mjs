@@ -35,8 +35,22 @@ await writeFile(entryPath, `
     modelAssetProfiles: {
       "models/legacy.glb": {
         tags: ["legacy"],
+        reportNotePath: "Analysis/3D Reports/legacy Report.md",
+        analysisSidecarPath: "Analysis/3D Reports/legacy Analysis.json",
+        knowledgeIndexPath: "Analysis/3D Reports/legacy Index.md",
         annotations: [{ id: "pin-1", position: [0, 0, 0], label: "Legacy", color: "#fff", createdAt: "2026-01-01T00:00:00.000Z" }],
       },
+    },
+    lastKnowledgeGeneration: {
+      modelPath: "models/legacy.glb",
+      reportNotePath: "Analysis/3D Reports/legacy Report.md",
+      analysisSidecarPath: "Analysis/3D Reports/legacy Analysis.json",
+      knowledgeIndexPath: "Analysis/3D Reports/legacy Index.md",
+      partNoteCount: 2,
+      previewImageCount: 1,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      status: "success",
+      warningCount: 0,
     },
   };
 
@@ -64,9 +78,12 @@ await writeFile(entryPath, `
   assert(state.settings.enabledConverterIds.includes("obj2gltf"), "Legacy converter setting was not preserved");
   assert(state.modelAssetProfiles["models/legacy.glb"].notes === "", "Legacy profile notes were not normalized");
   assert(state.modelAssetProfiles["models/legacy.glb"].annotations.length === 1, "Legacy annotations were not preserved");
+  assert(state.modelAssetProfiles["models/legacy.glb"].knowledgeIndexPath === "Analysis/3D Reports/legacy Index.md", "Knowledge index path was not preserved");
+  assert(state.lastKnowledgeGeneration?.knowledgeIndexPath === "Analysis/3D Reports/legacy Index.md", "Last generation index path was not preserved");
 
   await ps.save();
   assert(saved.settings.experimentalThreeWorkbench === DEFAULT_SETTINGS.experimentalThreeWorkbench, "Saved data did not include defaulted setting");
+  assert(saved.lastKnowledgeGeneration?.partNoteCount === 2, "Saved data did not preserve last generation summary");
 `, "utf8");
 
 await esbuild.build({

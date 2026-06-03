@@ -35,7 +35,7 @@
 - **内联与文件视图**：实时预览、代码块、直接文件查看
 - **网格系统**：在单个视口中渲染多个模型，支持预设布局
 - **3D 标注**：点击模型表面添加带标签和颜色的书签，支持深度遮挡
-- **知识笔记**：从已加载的模型生成结构化 Markdown
+- **知识笔记**：从已加载的模型生成结构化 Markdown，并自动注册捕获到的零件候选用于跨模型复用识别
 - **快照功能**：复制、保存或下载渲染预览为 PNG
 - **国际化**：英文和简体中文，自动检测系统语言
 - **桌面端支持**：Windows、macOS、Linux 上的 Obsidian Desktop
@@ -391,7 +391,7 @@ ai-model-workbench/
 - `Media/3D Previews` 下的当前视口证据截图
 - 一个可直接编辑的本地草稿，把捕获到的证据、标注、标签和 profile notes 组织成第一版知识笔记正文，并附带本地草稿元数据、建议标签和下一步动作
 
-默认本地分析不会把模型数据发送到远程服务。它会先用渲染器证据、已保存标注、标签和 profile notes 建立后续 AI 草稿所需的 grounding 层。
+默认本地分析不会把模型数据发送到远程服务。它会先用渲染器证据、已保存标注、标签和 profile notes 建立后续 AI 草稿所需的 grounding 层。对于带有命名内部 group/assembly 的 GLB/GLTF，渲染器会自动把这些分组注册为更高置信度的部件候选，同时保留未归组 mesh 作为独立候选。直接文件视图在模型加载成功后会立刻把捕获到的候选零件写入模型 profile，所以后续导入的模型即使还没生成完整报告，也能识别疑似复用零件。生成笔记时，当前部件候选还会和其他 profile 或已分析模型 sidecar 中注册过的部件做本地相似度匹配，把疑似复用组件链接回已有部件笔记，方便人工复核。
 
 报告生成后，可以在 direct workbench 使用“打开索引”，或在命令面板执行“打开知识索引”，直接回到该模型的知识地图入口。
 
@@ -664,6 +664,7 @@ npm run verify:release   # 发布资产版本/hash/体积检查
 npm run verify:settings  # 旧 data.json/default settings 迁移检查
 npm run verify:remote-draft  # 远程草稿隐私/客户端行为检查
 npm run verify:knowledge-index  # 知识索引链接和刷新回归检查
+npm run verify:diagnostics  # 脱敏诊断报告回归检查
 ```
 
 ### 预览验证

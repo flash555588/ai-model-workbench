@@ -1,0 +1,170 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "ai-model-workbench grouped-parts fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Grouped Parts Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Grouped Parts Fixture",
+      "children": [
+        1,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "Left Assembly",
+      "children": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "Left Panel A",
+      "mesh": 0,
+      "translation": [
+        -1.1,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Left Panel B",
+      "mesh": 0,
+      "translation": [
+        -1.1,
+        0.65,
+        0
+      ]
+    },
+    {
+      "name": "Right Assembly",
+      "children": [
+        5,
+        6
+      ]
+    },
+    {
+      "name": "Right Panel A",
+      "mesh": 0,
+      "translation": [
+        1.1,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Right Panel B",
+      "mesh": 0,
+      "translation": [
+        1.1,
+        0.65,
+        0
+      ]
+    },
+    {
+      "name": "Loose Detail",
+      "mesh": 0,
+      "translation": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Panel Primitive",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1
+          },
+          "indices": 2,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "fixture blue",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.2,
+          0.45,
+          0.95,
+          1
+        ],
+        "roughnessFactor": 0.7,
+        "metallicFactor": 0.05
+      }
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,zczMPs3MzL7NzMy+zczMPs3MzD7NzMy+zczMPs3MzD7NzMw+zczMPs3MzL7NzMw+zczMvs3MzL7NzMw+zczMvs3MzD7NzMw+zczMvs3MzD7NzMy+zczMvs3MzL7NzMy+zczMvs3MzD7NzMw+zczMPs3MzD7NzMw+zczMPs3MzD7NzMy+zczMvs3MzD7NzMy+zczMvs3MzL7NzMy+zczMPs3MzL7NzMy+zczMPs3MzL7NzMw+zczMvs3MzL7NzMw+zczMPs3MzL7NzMw+zczMPs3MzD7NzMw+zczMvs3MzD7NzMw+zczMvs3MzL7NzMw+zczMvs3MzL7NzMy+zczMvs3MzD7NzMy+zczMPs3MzD7NzMy+zczMPs3MzL7NzMy+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA",
+      "byteLength": 648
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 72,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [
+        -0.4,
+        -0.4,
+        -0.4
+      ],
+      "max": [
+        0.4,
+        0.4,
+        0.4
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ]
+}

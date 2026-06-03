@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a model loading, rendering, or knowledge note issue.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, run **AI Model Workbench: Copy diagnostics report** from the Obsidian command palette and paste it below. The report intentionally omits draft service URLs and local converter command paths.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: Paste the copied diagnostics report here.
+      render: markdown
+    validations:
+      required: true
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+      placeholder: "Example: 1.12.7"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: "Example: 0.4.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: model-format
+    attributes:
+      label: Model format
+      options:
+        - GLB
+        - GLTF + external resources
+        - OBJ / MTL
+        - STL
+        - PLY
+        - FBX
+        - STEP / IGES / CAD
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include console errors if available. Remove any private paths, tokens, or model content you cannot share.
+    validations:
+      required: true

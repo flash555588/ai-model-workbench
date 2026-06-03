@@ -9,10 +9,13 @@ import type {
   ModelPartSummary,
   ModelPreviewSummary,
   PartRecord,
+  RegisteredPartMatch,
 } from "../../domain/models";
 import { getPortableStem } from "../../utils/resolve-path";
 
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
+const MAX_REGISTERED_MATCHES_PER_PART = 3;
+const REGISTERED_PART_MATCH_THRESHOLD = 0.58;
 
 export interface BuildLocalAnalysisOptions {
   modelPath: string;
@@ -20,6 +23,7 @@ export interface BuildLocalAnalysisOptions {
   preview: ModelPreviewSummary | null;
   evidence?: ModelEvidence | null;
   previewImages?: string[];
+  registeredParts?: PartRecord[];
   startedAt?: number;
 }
 
@@ -27,8 +31,8 @@ function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
-function formatObservationCount(value: number, label: string): string {
-  return `${value.toLocaleString()} ${label}${value === 1 ? "" : "s"}`;
+function formatObservationCount(value: number, label: string, pluralLabel = `${label}s`): string {
+  return `${value.toLocaleString()} ${value === 1 ? label : pluralLabel}`;
 }
 
 function createPipelineStage(startedAt: number): AnalysisPipelineStage {
@@ -62,8 +66,98 @@ function createPartId(modelPath: string, index: number): string {
   return `${getPortableStem(modelPath) || "model"}:part:${index + 1}`;
 }
 
+function normalizePartText(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[_\-./\\]+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenSet(value: string | null | undefined): Set<string> {
+  return new Set(normalizePartText(value).split(" ").filter((token) => token.length >= 2));
+}
+
+function overlapRatio(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let overlap = 0;
+  for (const token of left) {
+    if (right.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(left.size, right.size);
+}
+
+function dimensionsSimilarity(left?: readonly number[], right?: readonly number[]): number {
+  if (!left || !right || left.length < 3 || right.length < 3) return 0;
+  const a = [...left].slice(0, 3).map((value) => Math.max(0.0001, Math.abs(value))).sort((x, y) => x - y);
+  const b = [...right].slice(0, 3).map((value) => Math.max(0.0001, Math.abs(value))).sort((x, y) => x - y);
+  let total = 0;
+  for (let index = 0; index < 3; index++) {
+    total += Math.min(a[index], b[index]) / Math.max(a[index], b[index]);
+  }
+  return total / 3;
+}
+
+function materialMatches(left?: string | null, right?: string | null): boolean {
+  const leftValue = normalizePartText(left);
+  const rightValue = normalizePartText(right);
+  return !!leftValue && !!rightValue && leftValue === rightValue;
+}
+
+function buildRegisteredPartMatches(part: PartRecord, registeredParts: readonly PartRecord[]): RegisteredPartMatch[] {
+  const partNameTokens = tokenSet(part.name);
+  const partMeshTokens = tokenSet(part.meshRefs.join(" "));
+  const matches = registeredParts
+    .filter((candidate) => candidate.assetId !== part.assetId || candidate.partId !== part.partId)
+    .flatMap((candidate): RegisteredPartMatch[] => {
+      const reasons: string[] = [];
+      const nameScore = overlapRatio(partNameTokens, tokenSet(candidate.name));
+      const meshScore = overlapRatio(partMeshTokens, tokenSet(candidate.meshRefs.join(" ")));
+      const sizeScore = dimensionsSimilarity(part.bbox, candidate.bbox);
+      const sameCategory = !!part.category && !!candidate.category && part.category === candidate.category;
+      const sameMaterial = materialMatches(part.materialName, candidate.materialName);
+      let score = (nameScore * 0.38) + (meshScore * 0.22) + (sizeScore * 0.22);
+      if (sameCategory) score += 0.1;
+      if (sameMaterial) score += 0.08;
+      if (nameScore >= 0.5) reasons.push("similar part name");
+      if (meshScore >= 0.5) reasons.push("similar mesh names");
+      if (sizeScore >= 0.72) reasons.push("similar bounding size");
+      if (sameCategory) reasons.push(`same category: ${part.category}`);
+      if (sameMaterial && part.materialName) reasons.push(`same material: ${part.materialName}`);
+      if (score < REGISTERED_PART_MATCH_THRESHOLD || reasons.length === 0) {
+        return [];
+      }
+      return [{
+        sourceAssetId: candidate.assetId,
+        sourcePartId: candidate.partId,
+        sourcePartName: candidate.name,
+        sourceNotePath: candidate.notePath,
+        sourceCategory: candidate.category,
+        sourceModelPath: candidate.assetId,
+        matchScore: Number(score.toFixed(3)),
+        confidence: Math.max(0.35, Math.min(0.9, Number(score.toFixed(3)))),
+        reasons,
+      }];
+    })
+    .sort((left, right) => right.matchScore - left.matchScore)
+    .slice(0, MAX_REGISTERED_MATCHES_PER_PART);
+  return matches;
+}
+
+function attachRegisteredPartMatches(parts: readonly PartRecord[], registeredParts: readonly PartRecord[]): PartRecord[] {
+  if (registeredParts.length === 0) {
+    return parts.map((part) => ({ ...part }));
+  }
+  return parts.map((part) => {
+    const registeredMatches = buildRegisteredPartMatches(part, registeredParts);
+    return registeredMatches.length > 0 ? { ...part, registeredMatches } : { ...part };
+  });
+}
+
 function inferPartCategory(part: ModelPartSummary): string {
   const name = part.name.toLowerCase();
+  if (part.source === "group") return "group";
   if (name.includes("wheel") || name.includes("gear") || name.includes("axle")) return "mechanical";
   if (name.includes("shell") || name.includes("case") || name.includes("cover") || name.includes("housing")) return "enclosure";
   if (name.includes("button") || name.includes("key") || name.includes("switch")) return "control";
@@ -73,30 +167,36 @@ function inferPartCategory(part: ModelPartSummary): string {
 }
 
 function buildPartObservations(part: ModelPartSummary): string[] {
-  const observations = [
+  const observations = [];
+  if (part.source === "group") {
+    observations.push(`Registered from model group with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 0, "child mesh", "child meshes")}.`);
+  }
+  observations.push(
     `${formatObservationCount(part.triangleCount, "triangle")} and ${formatObservationCount(part.vertexCount, "vertex")}.`,
     `Bounding size ${part.boundingSize.x.toFixed(3)} x ${part.boundingSize.y.toFixed(3)} x ${part.boundingSize.z.toFixed(3)}.`,
-  ];
+  );
   if (part.materialName) {
     observations.push(`Uses material "${part.materialName}".`);
   }
   return observations;
 }
 
-function buildPartRecords(modelPath: string, parts: readonly ModelPartSummary[]): PartRecord[] {
+export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly ModelPartSummary[]): PartRecord[] {
   return parts.map((part, index) => ({
     partId: createPartId(modelPath, index),
     assetId: modelPath,
     name: part.name || `Part ${index + 1}`,
+    source: part.source,
     category: inferPartCategory(part),
-    meshRefs: [part.name || `mesh-${index + 1}`],
+    meshRefs: part.meshNames?.length ? [...part.meshNames] : [part.name || `mesh-${index + 1}`],
+    childCount: part.childCount,
     materialRefs: part.materialName ? [part.materialName] : [],
     bbox: toVectorTuple(part.boundingSize),
     center: toVectorTuple(part.center),
     triangleCount: part.triangleCount,
     vertexCount: part.vertexCount,
     materialName: part.materialName,
-    confidence: part.name ? 0.55 : 0.35,
+    confidence: part.source === "group" ? 0.72 : part.name ? 0.55 : 0.35,
     observations: buildPartObservations(part),
     inferredFunctions: [],
     knowledgeTags: [],
@@ -210,9 +310,13 @@ function buildDraftingInput(options: {
       partId: part.partId,
       name: part.name,
       notePath: part.notePath,
+      source: part.source,
       category: part.category,
+      meshRefs: [...part.meshRefs],
+      childCount: part.childCount,
       triangleCount: part.triangleCount,
       materialName: part.materialName,
+      registeredMatches: part.registeredMatches?.map((match) => ({ ...match, reasons: [...match.reasons] })),
       observations: part.observations,
     })),
     annotationLinks: [...options.annotationLinks],
@@ -230,7 +334,10 @@ function collectWarnings(preview: ModelPreviewSummary | null, evidence?: ModelEv
 export function buildLocalAnalysisResult(options: BuildLocalAnalysisOptions): AnalysisResult {
   const startedAt = options.startedAt ?? nowMs();
   const preview = options.evidence?.summary ?? options.preview;
-  const parts = buildPartRecords(options.modelPath, options.evidence?.parts ?? []);
+  const parts = attachRegisteredPartMatches(
+    buildPartRecordsFromEvidence(options.modelPath, options.evidence?.parts ?? []),
+    options.registeredParts ?? [],
+  );
   const importedAt = new Date().toISOString();
   const warnings = collectWarnings(options.preview, options.evidence);
   const annotationLinks = buildAnnotationLinks(options.profile, parts);

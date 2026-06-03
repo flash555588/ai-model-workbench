@@ -19,7 +19,11 @@ await writeFile(obsidianShimPath, `
     }
   }
 
-  export class TFile {}
+  export class TFile {
+    static [Symbol.hasInstance](value) {
+      return !!value && typeof value === "object" && value.kind === "file";
+    }
+  }
 
   export class TFolder {}
 
@@ -56,10 +60,13 @@ await writeFile(nodeShimPath, `
 `, "utf8");
 
 await writeFile(entryPath, `
-  import type { AnalysisResult, ModelAssetProfile, ModelPreviewSummary } from "../../src/domain/models";
+  import type { AnalysisResult, ModelAssetProfile, ModelEvidence, ModelPreviewSummary } from "../../src/domain/models";
+  import { buildLocalAnalysisResult } from "../../src/view/workbench/analysis-result";
   import {
+    buildKnowledgeNoteContent,
     buildKnowledgeIndexContent,
     buildKnowledgeIndexManagedSection,
+    collectRegisteredPartsFromProfiles,
     replaceManagedSection,
   } from "../../src/view/workbench/knowledge-note";
 
@@ -95,6 +102,161 @@ await writeFile(entryPath, `
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
+
+  const files = new Map<string, string>([
+    ["Analysis/3D Reports/legacy Analysis.json", JSON.stringify({
+      parts: [
+        {
+          partId: "legacy-model:part:1",
+          assetId: "models/legacy grouped parts.gltf",
+          name: "Left Assembly",
+          source: "group",
+          category: "group",
+          meshRefs: ["Left Panel A", "Left Panel B"],
+          childCount: 2,
+          materialRefs: ["fixture blue"],
+          bbox: [0.8, 1.45, 0.8],
+          center: [-1, 0.3, 0],
+          triangleCount: 2400,
+          vertexCount: 1400,
+          materialName: "fixture blue",
+          confidence: 0.72,
+          observations: ["Previously registered group part."],
+          inferredFunctions: [],
+          knowledgeTags: [],
+          notePath: "Parts/3D Components/legacy/01 Left Assembly.md",
+          reviewed: false,
+        },
+      ],
+    })],
+    ["Analysis/3D Reports/current Analysis.json", JSON.stringify({
+      parts: [{ partId: "current:part:1", assetId: "models/grouped parts.gltf", name: "Should Skip", meshRefs: [] }],
+    })],
+  ]);
+  const app = {
+    vault: {
+      getAbstractFileByPath(path: string) {
+        return files.has(path) ? { kind: "file", path } : null;
+      },
+      read(file: { path: string }) {
+        return Promise.resolve(files.get(file.path) ?? "");
+      },
+    },
+  };
+  const registeredPartsFromSidecars = await collectRegisteredPartsFromProfiles(app as never, {
+    "models/legacy grouped parts.gltf": {
+      ...profile,
+      analysisSidecarPath: "Analysis/3D Reports/legacy Analysis.json",
+    },
+    "models/grouped parts.gltf": {
+      ...profile,
+      analysisSidecarPath: "Analysis/3D Reports/current Analysis.json",
+    },
+  }, "models/grouped parts.gltf");
+  assert(registeredPartsFromSidecars.length === 1, "Registered part collection should read other model sidecars only");
+  assert(registeredPartsFromSidecars[0].name === "Left Assembly", "Registered part collection did not normalize sidecar part records");
+
+  const registeredPartsFromProfiles = await collectRegisteredPartsFromProfiles(app as never, {
+    "models/auto registered parts.gltf": {
+      ...profile,
+      registeredParts: [
+        {
+          partId: "auto-model:part:1",
+          assetId: "models/auto registered parts.gltf",
+          name: "Right Assembly",
+          source: "group",
+          category: "group",
+          meshRefs: ["Right Panel A", "Right Panel B"],
+          childCount: 2,
+          materialRefs: ["fixture red"],
+          bbox: [0.8, 1.45, 0.8],
+          center: [1, 0.3, 0],
+          triangleCount: 2400,
+          vertexCount: 1400,
+          materialName: "fixture red",
+          confidence: 0.72,
+          observations: ["Auto-registered from renderer evidence."],
+          inferredFunctions: [],
+          knowledgeTags: [],
+          reviewed: false,
+        },
+      ],
+    },
+    "models/grouped parts.gltf": {
+      ...profile,
+      registeredParts: [{ partId: "current:part:1", assetId: "models/grouped parts.gltf", name: "Should Skip", meshRefs: [], materialRefs: [], confidence: 0.5, observations: [], inferredFunctions: [], knowledgeTags: [], reviewed: false }],
+    },
+  }, "models/grouped parts.gltf");
+  assert(registeredPartsFromProfiles.length === 1, "Registered part collection should read profile-registered parts without a sidecar");
+  assert(registeredPartsFromProfiles[0].name === "Right Assembly", "Profile registered part was not normalized");
+
+  const groupedEvidence: ModelEvidence = {
+    summary: preview,
+    parts: [
+      {
+        name: "Left Assembly",
+        source: "group",
+        meshNames: ["Left Panel A", "Left Panel B"],
+        childCount: 2,
+        triangleCount: 2400,
+        vertexCount: 1400,
+        materialName: "fixture blue",
+        boundingSize: { x: 0.8, y: 1.45, z: 0.8 },
+        center: { x: -1.1, y: 0.325, z: 0 },
+      },
+      {
+        name: "Loose Detail",
+        source: "mesh",
+        meshNames: ["Loose Detail"],
+        childCount: 1,
+        triangleCount: 1200,
+        vertexCount: 700,
+        materialName: "fixture blue",
+        boundingSize: { x: 0.8, y: 0.8, z: 0.8 },
+        center: { x: 0, y: 0, z: 0 },
+      },
+    ],
+    materialNames: ["fixture blue"],
+    resourceWarnings: [],
+    capturedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  const groupedAnalysis = buildLocalAnalysisResult({
+    modelPath: "models/grouped parts.gltf",
+    profile,
+    preview,
+    evidence: groupedEvidence,
+    registeredParts: registeredPartsFromSidecars,
+  });
+  const groupedPart = groupedAnalysis.parts.find((part) => part.name === "Left Assembly");
+  assert(groupedPart?.source === "group", "Grouped evidence part was not marked as source=group");
+  assert(groupedPart.category === "group", "Grouped evidence part did not receive group category");
+  assert(groupedPart.childCount === 2, "Grouped evidence part child count was not preserved");
+  assert(groupedPart.meshRefs.includes("Left Panel A") && groupedPart.meshRefs.includes("Left Panel B"), "Grouped evidence mesh refs were not preserved");
+  assert(groupedPart.confidence === 0.72, "Grouped evidence part confidence was not raised");
+  assert(groupedPart.registeredMatches?.[0]?.sourceAssetId === "models/legacy grouped parts.gltf", "Grouped part did not match a registered part from another model");
+  assert(groupedPart.registeredMatches[0].sourceModelPath === "models/legacy grouped parts.gltf", "Registered part match did not preserve source model path");
+  assert(groupedPart.registeredMatches[0].sourceNotePath === "Parts/3D Components/legacy/01 Left Assembly.md", "Registered part note path was not preserved");
+  assert(groupedPart.registeredMatches[0].reasons.includes("similar part name"), "Registered part match reasons did not include name similarity");
+  const groupedCandidate = groupedAnalysis.draftingInput?.partCandidates.find((part) => part.name === "Left Assembly");
+  assert(groupedCandidate?.source === "group", "Grouped drafting input source was not preserved");
+  assert(groupedCandidate.childCount === 2, "Grouped drafting input child count was not preserved");
+  assert(groupedCandidate.meshRefs?.includes("Left Panel B"), "Grouped drafting input mesh refs were not preserved");
+  assert(groupedCandidate.registeredMatches?.[0]?.sourcePartName === "Left Assembly", "Grouped drafting input did not preserve registered matches");
+  const groupedReport = buildKnowledgeNoteContent({
+    baseName: "grouped parts",
+    notePath: "Analysis/3D Reports/grouped parts Report.md",
+    sourcePath: "models/grouped parts.gltf",
+    analysisSidecarPath: "Analysis/3D Reports/grouped parts Analysis.json",
+    analysis: groupedAnalysis,
+    preview,
+    profile,
+  });
+  assert(groupedReport.includes("Left Assembly"), "Grouped report did not include group part name");
+  assert(groupedReport.includes("group (2)"), "Grouped report did not expose group source and child count");
+  assert(groupedReport.includes("Registered from model group with 2 child meshes."), "Grouped report did not include renderer group observation");
+  assert(groupedReport.includes("## Registered Part Matches"), "Grouped report did not include registered match section");
+  assert(groupedReport.includes("Parts/3D Components/legacy/01 Left Assembly.md"), "Grouped report did not link to registered part note");
 
   const analysis: AnalysisResult = {
     asset: {

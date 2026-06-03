@@ -77,6 +77,12 @@ export default class AI3DModelWorkbench extends Plugin {
       callback: () => void this.checkConverterCommands(),
     });
 
+    this.addCommand({
+      id: "copy-diagnostics-report",
+      name: t("main.commandCopyDiagnostics"),
+      callback: () => void this.copyDiagnosticsReport(),
+    });
+
     this.addSettingTab(new AI3DSettingTab(this.app, this));
 
     // Register direct file view for all supported formats. Conversion-capable formats
@@ -394,8 +400,7 @@ export default class AI3DModelWorkbench extends Plugin {
   }
 
   private async openKnowledgeIndex() {
-    const path = this.ps.store.getState().currentModelPath;
-    const indexPath = path ? this.ps.store.getState().modelAssetProfiles[path]?.knowledgeIndexPath : undefined;
+    const indexPath = this.resolveKnowledgeIndexPath();
     if (!indexPath) {
       new Notice(t("workbench.noIndexYet"));
       return;
@@ -406,6 +411,22 @@ export default class AI3DModelWorkbench extends Plugin {
     } else {
       new Notice(formatT("workbench.fileNotFound", { path: indexPath }));
     }
+  }
+
+  private resolveKnowledgeIndexPath(): string | undefined {
+    const state = this.ps.store.getState();
+    const currentPath = state.currentModelPath;
+    const currentIndex = currentPath ? state.modelAssetProfiles[currentPath]?.knowledgeIndexPath : undefined;
+    if (currentIndex) {
+      return currentIndex;
+    }
+    if (state.lastKnowledgeGeneration?.knowledgeIndexPath) {
+      return state.lastKnowledgeGeneration.knowledgeIndexPath;
+    }
+    const indexedProfiles = Object.values(state.modelAssetProfiles)
+      .filter((profile) => !!profile.knowledgeIndexPath)
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    return indexedProfiles[0]?.knowledgeIndexPath;
   }
 
   private clearConversionCache() {
@@ -432,5 +453,34 @@ export default class AI3DModelWorkbench extends Plugin {
       `AI 3D converter diagnostics: available ${available.join(", ") || "none"}; missing ${missing.join(", ")}.`,
       10000,
     );
+  }
+
+  private async copyDiagnosticsReport() {
+    const { buildDiagnosticsReport } = await import("./diagnostics/report");
+    const report = buildDiagnosticsReport({
+      manifest: this.manifest,
+      state: this.ps.store.getState(),
+    });
+    try {
+      await navigator.clipboard.writeText(report);
+      new Notice(t("main.diagnosticsCopied"), 8000);
+    } catch {
+      const folder = this.getSettings().reportFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").trim() || "Analysis/3D Reports";
+      await this.ensureVaultFolder(folder);
+      const fileName = `AI Model Workbench Diagnostics ${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+      const file = await this.app.vault.create(`${folder}/${fileName}`, report);
+      await this.app.workspace.getLeaf(true).openFile(file, { active: true });
+      new Notice(t("main.diagnosticsCopyFailed"), 10000);
+    }
+  }
+
+  private async ensureVaultFolder(folder: string): Promise<void> {
+    let current = "";
+    for (const part of folder.split("/").filter(Boolean)) {
+      current = current ? `${current}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(current)) {
+        await this.app.vault.createFolder(current).catch(() => {});
+      }
+    }
   }
 }

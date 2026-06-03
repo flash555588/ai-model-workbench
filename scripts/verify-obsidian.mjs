@@ -621,6 +621,118 @@ async function verifyDirectWorkbench(page) {
     return window.app?.workspace?.getActiveFile?.()?.path === expectedPath;
   }, analysis.knowledgeIndexPath, { timeout: 10_000 });
 
+  const diagnosticsReport = await page.evaluate(async ({ modelPath, secretUrl }) => {
+    const plugin = window.app?.plugins?.plugins?.["ai-model-workbench"];
+    const store = plugin?.ps?.store;
+    const state = store?.getState?.();
+    if (!store || !state) {
+      throw new Error("AI Model Workbench store was unavailable for diagnostics");
+    }
+    if (!window.app?.commands?.commands?.["ai-model-workbench:copy-diagnostics-report"]) {
+      throw new Error("Diagnostics command is not registered");
+    }
+
+    const originalSettings = state.settings;
+    store.setState({
+      settings: {
+        ...originalSettings,
+        analysisMode: "hybrid",
+        serviceBaseUrl: secretUrl,
+        freecadCommand: "/private/freecad",
+        obj2gltfCommand: "/private/obj2gltf",
+        fbx2gltfCommand: "/private/fbx2gltf",
+        assimpCommand: "/private/python",
+        freecadcmdCommand: "/private/freecadcmd",
+      },
+      currentModelPath: modelPath,
+    });
+
+    const clipboard = navigator.clipboard;
+    const writes = [];
+    const originalDescriptor = Object.getOwnPropertyDescriptor(clipboard, "writeText");
+    const originalWriteText = clipboard.writeText.bind(clipboard);
+    Object.defineProperty(clipboard, "writeText", {
+      configurable: true,
+      value: async (text) => {
+        writes.push(String(text));
+      },
+    });
+
+    try {
+      window.app.commands.executeCommandById("ai-model-workbench:copy-diagnostics-report");
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && writes.length === 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      return writes.at(-1) ?? "";
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(clipboard, "writeText", originalDescriptor);
+      } else {
+        Object.defineProperty(clipboard, "writeText", {
+          configurable: true,
+          value: originalWriteText,
+        });
+      }
+      store.setState({ settings: originalSettings });
+    }
+  }, {
+    modelPath: workbenchModelVaultPath,
+    secretUrl: "https://diagnostics.example.invalid/draft?token=placeholder",
+  });
+  assert(diagnosticsReport.includes("# AI Model Workbench Diagnostics"), "Diagnostics report title missing");
+  assert(diagnosticsReport.includes("Knowledge index: set"), "Diagnostics report is missing knowledge index status");
+  assert(diagnosticsReport.includes(analysis.knowledgeIndexPath), "Diagnostics report is missing generated index path");
+  assert(diagnosticsReport.includes("Last generation: success"), "Diagnostics report is missing last generation state");
+  assert(diagnosticsReport.includes("service configured"), "Diagnostics report is missing remote service configured status");
+  assert(!diagnosticsReport.includes("diagnostics.example.invalid"), "Diagnostics report leaked draft service host");
+  assert(!diagnosticsReport.includes("token=placeholder"), "Diagnostics report leaked draft service token");
+  assert(!diagnosticsReport.includes("/private/"), "Diagnostics report leaked converter command path");
+
+  const fallbackIndexPath = await page.evaluate(async ({ modelPath, expectedPath }) => {
+    const plugin = window.app?.plugins?.plugins?.["ai-model-workbench"];
+    const store = plugin?.ps?.store;
+    if (!store || !window.app?.commands?.commands?.["ai-model-workbench:open-knowledge-index"]) {
+      throw new Error("AI Model Workbench open index command was unavailable");
+    }
+    const state = store.getState();
+    store.setState({
+      currentModelPath: null,
+      lastKnowledgeGeneration: {
+        modelPath,
+        reportNotePath: "Analysis/3D Reports/rubiks-cube-3x3 Report.md",
+        analysisSidecarPath: "Analysis/3D Reports/rubiks-cube-3x3 Analysis.json",
+        knowledgeIndexPath: expectedPath,
+        partNoteCount: 1,
+        previewImageCount: 1,
+        generatedAt: new Date().toISOString(),
+        status: "success",
+        warningCount: 0,
+      },
+    });
+    try {
+      window.app.commands.executeCommandById("ai-model-workbench:open-knowledge-index");
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const activePath = window.app?.workspace?.getActiveFile?.()?.path;
+        if (activePath === expectedPath) {
+          return activePath;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      return window.app?.workspace?.getActiveFile?.()?.path ?? null;
+    } finally {
+      store.setState({
+        currentModelPath: modelPath,
+        lastKnowledgeGeneration: state.lastKnowledgeGeneration,
+      });
+    }
+  }, {
+    modelPath: workbenchModelVaultPath,
+    expectedPath: analysis.knowledgeIndexPath,
+  });
+  assert(fallbackIndexPath === analysis.knowledgeIndexPath, `Open knowledge index fallback failed: ${fallbackIndexPath}`);
+
   const directViewResult = await page.evaluate(({ beforeDataUrl, afterDataUrl, analysisPartCount }) => {
     const host = document.querySelector(".ai3d-direct-view .ai3d-preview-host");
     const panel = document.querySelector(".ai3d-direct-workbench-panel");
@@ -640,6 +752,7 @@ async function verifyDirectWorkbench(page) {
       explodeValue: explodeInput instanceof HTMLInputElement ? explodeInput.value : null,
       hasKnowledgeAction: actions.includes("generate-note"),
       hasOpenIndexAction: actions.includes("open-index"),
+      hasDiagnosticsCommand: !!window.app?.commands?.commands?.["ai-model-workbench:copy-diagnostics-report"],
       canvasChangedAfterControls: beforeDataUrl !== afterDataUrl,
       activeFile: window.app?.workspace?.getActiveFile?.()?.path ?? null,
       analysisPartCount,
@@ -650,6 +763,7 @@ async function verifyDirectWorkbench(page) {
   assert(directViewResult.explodeValue === "0" || directViewResult.explodeValue === "0.65", `Unexpected explode value: ${directViewResult.explodeValue}`);
   assert(directViewResult.hasKnowledgeAction, "Direct workbench panel is missing knowledge action");
   assert(directViewResult.hasOpenIndexAction, "Direct workbench panel is missing open index action");
+  assert(directViewResult.hasDiagnosticsCommand, "Diagnostics command is missing");
   assert(directViewResult.activeFile === analysis.knowledgeIndexPath, `Open index action did not activate the index: ${directViewResult.activeFile}`);
   assert(directViewResult.canvasChangedAfterControls, "Direct workbench controls did not change the rendered canvas");
   return directViewResult;

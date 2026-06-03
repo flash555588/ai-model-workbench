@@ -139,6 +139,13 @@ function describeMaterial(material: Material | null | undefined): string | null 
   return material.name || material.type || `material-${material.uuid}`;
 }
 
+function getObjectDisplayName(object: Object3D, fallback: string): string {
+  const originalName = object.userData?.name;
+  return typeof originalName === "string" && originalName.trim().length > 0
+    ? originalName
+    : object.name || fallback;
+}
+
 function createFocusDimMaterial(material: Material): Material {
   const clone = material.clone();
   clone.transparent = true;
@@ -466,7 +473,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       format: this.loadedExt.toUpperCase(),
       summary,
       meshBreakdown: renderableMeshes.map((mesh) => ({
-        name: mesh.name || `mesh-${mesh.id}`,
+        name: getObjectDisplayName(mesh, `mesh-${mesh.id}`),
         triangleCount: triangleCountForMesh(mesh),
         vertexCount: vertexCountForMesh(mesh),
         materialName: describeMaterial(materialList(mesh.material)[0]),
@@ -476,9 +483,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootObject) return null;
-    const parts = this.getRenderableMeshes(this.rootObject).map((mesh) => this.computePartSummary(mesh));
+    const renderableMeshes = this.getRenderableMeshes(this.rootObject);
+    const groupedPartCandidates = this.computeGroupedPartSummaries(this.rootObject, renderableMeshes);
+    const meshParts = renderableMeshes
+      .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
+      .map((mesh) => this.computePartSummary(mesh));
+    const parts = groupedPartCandidates.parts.length > 0 ? [...groupedPartCandidates.parts, ...meshParts] : meshParts;
     const materialNames = new Set<string>();
-    for (const mesh of this.getRenderableMeshes(this.rootObject)) {
+    for (const mesh of renderableMeshes) {
       for (const material of materialList(mesh.material)) {
         const name = describeMaterial(material);
         if (name) materialNames.add(name);
@@ -1584,14 +1596,83 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private computePartSummary(mesh: Mesh): ModelPartSummary {
     mesh.updateWorldMatrix(true, false);
     const bounds = getObjectPreviewBounds(mesh);
+    const name = getObjectDisplayName(mesh, `mesh-${mesh.id}`);
     return createPreviewPartSummary({
-      name: mesh.name || `mesh-${mesh.id}`,
+      name,
       triangleCount: triangleCountForMesh(mesh),
       vertexCount: vertexCountForMesh(mesh),
       materialName: describeMaterial(materialList(mesh.material)[0]),
       boundingSize: getPreviewBoundsSize(bounds),
       center: getPreviewBoundsCenter(bounds),
+      source: "mesh",
+      meshNames: [name],
+      childCount: 1,
     });
+  }
+
+  private computeGroupedPartSummaries(root: Object3D, renderableMeshes: readonly Mesh[]): {
+    parts: ModelPartSummary[];
+    groupedMeshes: Set<Mesh>;
+  } {
+    const renderableSet = new Set(renderableMeshes);
+    const parts: ModelPartSummary[] = [];
+    const groupedMeshes = new Set<Mesh>();
+    root.updateWorldMatrix(true, true);
+    root.traverse((object) => {
+      if (object === root || isMesh(object) || !object.name.trim()) {
+        return;
+      }
+      const childMeshes: Mesh[] = [];
+      object.traverse((child) => {
+        if (isMesh(child) && renderableSet.has(child)) {
+          childMeshes.push(child);
+        }
+      });
+      if (childMeshes.length < 2 || childMeshes.length === renderableMeshes.length) {
+        return;
+      }
+      for (const mesh of childMeshes) {
+        groupedMeshes.add(mesh);
+      }
+      const bounds = new Box3();
+      for (const mesh of childMeshes) {
+        mesh.updateWorldMatrix(true, false);
+        bounds.union(new Box3().setFromObject(mesh));
+      }
+      const materialNames = new Set<string>();
+      let triangleCount = 0;
+      let vertexCount = 0;
+      for (const mesh of childMeshes) {
+        triangleCount += triangleCountForMesh(mesh);
+        vertexCount += vertexCountForMesh(mesh);
+        for (const material of materialList(mesh.material)) {
+          const name = describeMaterial(material);
+          if (name) materialNames.add(name);
+        }
+      }
+      parts.push(createPreviewPartSummary({
+        name: getObjectDisplayName(object, `group-${object.id}`),
+        triangleCount,
+        vertexCount,
+        materialName: materialNames.size === 0
+          ? null
+          : materialNames.size === 1
+            ? Array.from(materialNames)[0]
+            : `${materialNames.size} materials`,
+        boundingSize: getPreviewBoundsSize({
+          min: toPreviewWorldPoint(bounds.min),
+          max: toPreviewWorldPoint(bounds.max),
+        }),
+        center: getPreviewBoundsCenter({
+          min: toPreviewWorldPoint(bounds.min),
+          max: toPreviewWorldPoint(bounds.max),
+        }),
+        source: "group",
+        meshNames: childMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
+        childCount: childMeshes.length,
+      }));
+    });
+    return { parts, groupedMeshes };
   }
 
   private computeSummary(root: Object3D): ModelPreviewSummary {

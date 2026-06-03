@@ -1,9 +1,11 @@
 import type { AnnotationPin } from "../src/domain/models";
+import type { ModelPreview } from "../src/render/preview/types";
 import { AnnotationManager } from "../src/render/preview/annotations";
 import { createModelPreview } from "../src/render/preview/factory";
 import { resolvePreviewRoute } from "../src/render/preview/routing";
-import type { AnnotationPreview, ModelPreview } from "../src/render/preview/types";
+import type { AnnotationPreview } from "../src/render/preview/types";
 import { createHelperButtons } from "../src/view/inline/helper-buttons";
+import { renderRegisteredPartMatchRow } from "../src/view/direct-workbench-registered-match";
 
 interface DomCreateOptions {
   cls?: string;
@@ -30,8 +32,18 @@ declare global {
       rendererRollout?: "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
       summary?: unknown;
       route?: unknown;
+      evidence?: unknown;
       pinCount?: number;
       pinLabels?: string[];
+      registeredMatchRows?: Array<{
+        title: string;
+        source: string;
+        model: string;
+        target: string;
+        button: string;
+        targetPath: string;
+        disabled: boolean;
+      }>;
       error?: string;
     };
   }
@@ -153,6 +165,52 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
     throw new Error("Preview shell was not created");
   }
   return { host, canvas };
+}
+
+function renderRegisteredPartMatchHarness(): Array<{
+  title: string;
+  source: string;
+  model: string;
+  target: string;
+  button: string;
+  targetPath: string;
+  disabled: boolean;
+}> {
+  const section = document.createElement("section");
+  section.id = "registered-match-harness";
+  section.className = "ai3d-direct-workbench-match-list";
+  document.body.appendChild(section);
+  renderRegisteredPartMatchRow(section, "Left Assembly", {
+    sourceAssetId: "models/legacy grouped parts.gltf",
+    sourcePartId: "legacy-model:part:1",
+    sourcePartName: "Legacy Left Assembly",
+    sourceNotePath: "Parts/3D Components/legacy/01 Left Assembly.md",
+    sourceModelPath: "models/legacy grouped parts.gltf",
+    matchScore: 0.82,
+    confidence: 0.82,
+    reasons: ["similar part name", "similar bounding size"],
+  });
+  renderRegisteredPartMatchRow(section, "Right Assembly", {
+    sourceAssetId: "models/auto registered parts.gltf",
+    sourcePartId: "auto-model:part:1",
+    sourcePartName: "Auto Right Assembly",
+    sourceModelPath: "models/auto registered parts.gltf",
+    matchScore: 0.74,
+    confidence: 0.74,
+    reasons: ["similar mesh names"],
+  });
+  return Array.from(section.querySelectorAll(".ai3d-direct-workbench-match")).map((row) => {
+    const button = row.querySelector("[data-ai3d-action='open-registered-part']");
+    return {
+      title: row.querySelector(".ai3d-direct-workbench-match-title")?.textContent ?? "",
+      source: row.querySelector(".ai3d-direct-workbench-match-source")?.textContent ?? "",
+      model: row.querySelector(".ai3d-direct-workbench-match-model")?.textContent ?? "",
+      target: row.querySelector(".ai3d-direct-workbench-match-target")?.textContent ?? "",
+      button: button?.textContent ?? "",
+      targetPath: button instanceof HTMLElement ? button.dataset.ai3dTargetPath ?? "" : "",
+      disabled: button instanceof HTMLButtonElement ? button.disabled : true,
+    };
+  });
 }
 
 async function loadSampleModel(): Promise<ArrayBuffer> {
@@ -348,7 +406,7 @@ async function runBasicPreview(
   const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   attachHelperToolbar(host, preview);
   window.__ai3dPreview = preview;
-  setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route });
+  setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route, evidence: preview.getModelEvidence?.() ?? null });
 }
 
 async function runDirectEditPreview(
@@ -393,6 +451,7 @@ async function runDirectEditPreview(
     rendererRollout,
     summary,
     route,
+    evidence: preview.getModelEvidence?.() ?? null,
     pinCount: 0,
     pinLabels: [],
   });
@@ -454,6 +513,7 @@ async function runReadonlyPinPreview(
     rendererRollout,
     summary,
     route,
+    evidence: preview.getModelEvidence?.() ?? null,
     pinCount: initialPins.length,
     pinLabels: initialPins.map((pin) => pin.label),
   });
@@ -513,8 +573,10 @@ async function runWorkbenchPreview(
     rendererRollout,
     summary,
     route,
+    evidence: preview.getModelEvidence?.() ?? null,
     pinCount: initialPins.length,
     pinLabels: initialPins.map((pin) => pin.label),
+    registeredMatchRows: renderRegisteredPartMatchHarness(),
   });
 }
 

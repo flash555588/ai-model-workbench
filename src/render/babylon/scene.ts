@@ -8,6 +8,7 @@ import { SpotLight } from "@babylonjs/core/Lights/spotLight.js";
 import { Vector3, Matrix } from "@babylonjs/core/Maths/math.vector.js";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
@@ -41,6 +42,7 @@ import { createBabylonDisassemblyController } from "./disassembly";
 import {
   createBabylonModelPreviewSummary,
   createBabylonPartPreviewSummary,
+  getBabylonMeshesPreviewBounds,
   getBabylonRenderableMeshes,
   getBabylonRenderablePreviewBounds,
   getBabylonTriangleCount,
@@ -63,6 +65,7 @@ import {
   createPreviewModelInfoMarkdown,
   createPreviewPartInfoMarkdown,
 } from "../preview/report";
+import { createPreviewPartSummary } from "../preview/summary";
 import type {
   AnnotationViewportProvider,
   PreviewAxis,
@@ -154,6 +157,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private camera: ArcRotateCamera;
   private rootMesh: Mesh | null = null;
   private loadedMeshes: AbstractMesh[] = [];
+  private loadedTransformNodes: TransformNode[] = [];
   private loadedExt: string = "";
   private rendering = false;
   private cleanupPicking: (() => void) | null = null;
@@ -255,6 +259,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.rootMesh = null;
     }
     this.loadedMeshes = [];
+    this.loadedTransformNodes = [];
     this.disassembly?.dispose();
     this.disassembly = null;
     this.clearFocusedMesh();
@@ -353,6 +358,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
         const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
         this.loadedMeshes = result.meshes;
+        this.loadedTransformNodes = result.transformNodes;
         if (result.meshes.length > 0) this.rootMesh = result.meshes[0] as Mesh;
 
         // Restore original _loadMTL
@@ -375,6 +381,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     } else {
       const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
       this.loadedMeshes = result.meshes;
+      this.loadedTransformNodes = result.transformNodes;
       if (result.meshes.length > 0) this.rootMesh = result.meshes[0] as Mesh;
     }
 
@@ -856,13 +863,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootMesh) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    const groupedPartCandidates = this.computeGroupedPartSummaries(renderableMeshes);
+    const meshParts = renderableMeshes
+      .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
+      .map((mesh) => this.computePartSummary(mesh));
+    const parts = groupedPartCandidates.parts.length > 0 ? [...groupedPartCandidates.parts, ...meshParts] : meshParts;
     const materialNames = new Set<string>();
     for (const mesh of renderableMeshes) {
       if (mesh.material?.name) materialNames.add(mesh.material.name);
     }
     return {
       summary: this.computeSummary(this.rootMesh),
-      parts: renderableMeshes.map((mesh) => this.computePartSummary(mesh)),
+      parts,
       materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
       resourceWarnings: [...this.resourceWarnings],
       capturedAt: new Date().toISOString(),
@@ -1161,7 +1173,59 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private computePartSummary(mesh: AbstractMesh): ModelPartSummary {
-    return createBabylonPartPreviewSummary(mesh);
+    return {
+      ...createBabylonPartPreviewSummary(mesh),
+      source: "mesh",
+      meshNames: [mesh.name || `mesh-${mesh.uniqueId}`],
+      childCount: 1,
+    };
+  }
+
+  private computeGroupedPartSummaries(renderableMeshes: readonly AbstractMesh[]): {
+    parts: ModelPartSummary[];
+    groupedMeshes: Set<AbstractMesh>;
+  } {
+    const renderableSet = new Set(renderableMeshes);
+    const parts: ModelPartSummary[] = [];
+    const groupedMeshes = new Set<AbstractMesh>();
+    for (const node of this.loadedTransformNodes) {
+      if (!node.name.trim()) continue;
+      const childMeshes = node.getChildMeshes(false).filter((mesh) => renderableSet.has(mesh));
+      if (childMeshes.length < 2 || childMeshes.length === renderableMeshes.length) {
+        continue;
+      }
+      for (const mesh of childMeshes) {
+        groupedMeshes.add(mesh);
+      }
+      const bounds = getBabylonMeshesPreviewBounds(childMeshes);
+      if (!bounds) continue;
+      const materialNames = new Set<string>();
+      let triangleCount = 0;
+      let vertexCount = 0;
+      for (const mesh of childMeshes) {
+        triangleCount += getBabylonTriangleCount(mesh);
+        vertexCount += getBabylonVertexCount(mesh);
+        if (mesh.material?.name) {
+          materialNames.add(mesh.material.name);
+        }
+      }
+      parts.push(createPreviewPartSummary({
+        name: node.name,
+        triangleCount,
+        vertexCount,
+        materialName: materialNames.size === 0
+          ? null
+          : materialNames.size === 1
+            ? Array.from(materialNames)[0]
+            : `${materialNames.size} materials`,
+        boundingSize: getPreviewBoundsSize(bounds),
+        center: getPreviewBoundsCenter(bounds),
+        source: "group",
+        meshNames: childMeshes.map((mesh) => mesh.name || `mesh-${mesh.uniqueId}`),
+        childCount: childMeshes.length,
+      }));
+    }
+    return { parts, groupedMeshes };
   }
 
   private computeSummary(root: Mesh): ModelPreviewSummary {

@@ -35,7 +35,7 @@
 - **Inline and file previews**: Live Preview, code blocks, and direct file view
 - **Grid system**: render multiple models in a single viewport with presets
 - **3D annotations**: click-to-pin bookmarks with labels, colors, and depth-aware occlusion
-- **Knowledge notes**: generate structured Markdown from loaded models
+- **Knowledge notes**: generate structured Markdown from loaded models and auto-register captured part candidates for cross-model reuse checks
 - **Snapshots**: copy, save, or download rendered previews as PNG
 - **i18n**: English and Simplified Chinese with auto-detect system locale
 - **Desktop support**: Obsidian Desktop on Windows, macOS, and Linux
@@ -377,7 +377,7 @@ The workbench `Generate note` action creates an evidence-backed Markdown note ra
 - a current viewport evidence snapshot in `Media/3D Previews`
 - an editable local draft that turns the captured evidence, annotations, tags, and profile notes into a first-pass knowledge note body, plus local draft metadata for tags and next actions
 
-The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting.
+The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting. When a GLB/GLTF file contains named internal groups or assemblies, the renderer registers those groups as higher-confidence part candidates and keeps ungrouped meshes as standalone candidates. Direct file view stores those captured candidates in the model profile immediately after a successful load, so later imported models can match reused parts even before a full report exists. During note generation, current part candidates are also compared with parts registered in other profiles or analyzed model sidecars, so likely reused components can be linked back to their existing part notes for review.
 
 After a report has been generated, use the direct workbench `Open index` action or the command palette `Open knowledge index` command to jump back into the model's knowledge map.
 
@@ -651,6 +651,7 @@ npm run verify:release   # Release asset version/hash/size check
 npm run verify:settings  # Legacy data.json/default-settings migration check
 npm run verify:remote-draft  # Remote draft privacy/client behavior check
 npm run verify:knowledge-index  # Knowledge index link and refresh regression check
+npm run verify:diagnostics  # Sanitized diagnostics report regression check
 ```
 
 ### Preview Verification

@@ -80,6 +80,14 @@ const cases = [
     args: ["--model", join(rootDir, "models", "resource-fixtures", "gltf-external", "外部 资源.gltf")],
   },
   {
+    label: "GLTF named groups register as part candidates",
+    args: [
+      "--model",
+      join(rootDir, "models", "resource-fixtures", "grouped-parts", "grouped parts.gltf"),
+      "--expect-group-parts",
+    ],
+  },
+  {
     label: "OBJ/MTL texture resolves with case-insensitive texture path",
     args: [
       "--model",

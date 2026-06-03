@@ -76,6 +76,7 @@ export interface PersistedPluginState {
   modelAssetProfiles: Record<string, ModelAssetProfile>;
   agentDraft: string;
   agentPlan: AgentTaskPlan | null;
+  lastKnowledgeGeneration?: KnowledgeGenerationRecord | null;
 }
 
 // ── Store State (extends persisted with transient fields) ────────
@@ -89,6 +90,19 @@ export interface PluginState {
   agentPlan: AgentTaskPlan | null;
   modelPreview: ModelPreviewSummary | null;
   selectedPart: ModelPartSummary | null;
+  lastKnowledgeGeneration: KnowledgeGenerationRecord | null;
+}
+
+export interface KnowledgeGenerationRecord {
+  modelPath: string;
+  reportNotePath?: string;
+  analysisSidecarPath?: string;
+  knowledgeIndexPath?: string;
+  partNoteCount: number;
+  previewImageCount: number;
+  generatedAt: string;
+  status: "success" | "failed";
+  warningCount: number;
 }
 
 // ── Per-Model Asset Profile ──────────────────────────────────────
@@ -109,6 +123,7 @@ export interface ModelAssetProfile {
   tags: string[];
   notes: string;
   annotations: AnnotationPin[];
+  registeredParts?: PartRecord[];
   analysisVersion?: string;
   reportNotePath?: string;
   analysisSidecarPath?: string;
@@ -140,6 +155,9 @@ export interface ModelPartSummary {
   materialName: string | null;
   boundingSize: { x: number; y: number; z: number };
   center: { x: number; y: number; z: number };
+  source?: "mesh" | "group";
+  meshNames?: string[];
+  childCount?: number;
 }
 
 export interface ModelEvidence {
@@ -177,8 +195,10 @@ export interface PartRecord {
   assetId: string;
   parentPartId?: string;
   name: string;
+  source?: "mesh" | "group";
   category?: string;
   meshRefs: string[];
+  childCount?: number;
   materialRefs: string[];
   bbox?: [number, number, number];
   center?: [number, number, number];
@@ -190,7 +210,20 @@ export interface PartRecord {
   inferredFunctions: string[];
   knowledgeTags: string[];
   notePath?: string;
+  registeredMatches?: RegisteredPartMatch[];
   reviewed: boolean;
+}
+
+export interface RegisteredPartMatch {
+  sourceAssetId: string;
+  sourcePartId: string;
+  sourcePartName: string;
+  sourceNotePath?: string;
+  sourceCategory?: string;
+  sourceModelPath?: string;
+  matchScore: number;
+  confidence: number;
+  reasons: string[];
 }
 
 // ── Knowledge Node ───────────────────────────────────────────────
@@ -247,9 +280,13 @@ export interface AnalysisDraftingInput {
     partId: string;
     name: string;
     notePath?: string;
+    source?: "mesh" | "group";
     category?: string;
+    meshRefs?: string[];
+    childCount?: number;
     triangleCount?: number;
     materialName?: string | null;
+    registeredMatches?: RegisteredPartMatch[];
     observations: string[];
   }>;
   annotationLinks: AnnotationPartLink[];

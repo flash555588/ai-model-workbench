@@ -1,5 +1,5 @@
 import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
-import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary } from "../domain/models";
+import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import { supportsWorkbenchPreview, type AnnotationPreview, type PreviewAxis } from "../render/preview/types";
@@ -14,10 +14,12 @@ import { listPreferredConversionExts } from "../io/formats/route-preferences";
 import { createNoteReader, createHeadingSearch } from "../utils/note-reader";
 import { createLoadingOverlay } from "./inline/loading-overlay";
 import { describeModelLoadFailure, isMissingConverterError } from "../io/conversion/errors";
-import { t } from "../i18n";
+import { formatT, t } from "../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "./model-load-feedback";
 import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
+import { buildLocalAnalysisResult, buildPartRecordsFromEvidence } from "./workbench/analysis-result";
+import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
 
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
@@ -55,6 +57,29 @@ function formatBackendName(backend: string): string {
 
 function isMissingExternalModelResourceError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Missing external model resource:");
+}
+
+function createPartMergeKey(part: Pick<PartRecord, "source" | "name" | "meshRefs">): string {
+  const meshRefs = part.meshRefs
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  return `${part.source ?? "mesh"}:${part.name.trim().toLowerCase()}:${meshRefs}`;
+}
+
+function mergeAutoRegisteredPart(previous: PartRecord | undefined, next: PartRecord): PartRecord {
+  if (!previous) {
+    return next;
+  }
+
+  return {
+    ...next,
+    notePath: previous.notePath,
+    reviewed: previous.reviewed,
+    inferredFunctions: previous.inferredFunctions.length > 0 ? previous.inferredFunctions : next.inferredFunctions,
+    knowledgeTags: previous.knowledgeTags.length > 0 ? previous.knowledgeTags : next.knowledgeTags,
+  };
 }
 
 export class DirectModelView extends FileView {
@@ -236,6 +261,8 @@ export class DirectModelView extends FileView {
       host.dataset.ai3dRouteReason = created.route.reason;
       toolbar?.syncCapabilities();
       const summary = created.summary;
+      const evidence = this.preview.getModelEvidence?.() ?? null;
+      this.registerModelPartsFromEvidence(file.path, evidence);
       renderModelPerformanceFeedback(host, summary);
       this.workbenchPanel = workbenchPanel;
       this.workbenchSummary = summary;
@@ -322,6 +349,35 @@ export class DirectModelView extends FileView {
     }
   }
 
+  private registerModelPartsFromEvidence(modelPath: string, evidence: ModelEvidence | null): void {
+    if (!evidence?.parts.length) {
+      return;
+    }
+
+    const nextParts = buildPartRecordsFromEvidence(modelPath, evidence.parts);
+    if (nextParts.length === 0) {
+      return;
+    }
+
+    const currentProfiles = this.ps.store.getState().modelAssetProfiles;
+    const existingProfile = currentProfiles[modelPath] ?? createDefaultProfile();
+    const existingByKey = new Map(
+      (existingProfile.registeredParts ?? []).map((part) => [createPartMergeKey(part), part]),
+    );
+    const registeredParts = nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part));
+
+    this.ps.store.setState({
+      modelAssetProfiles: {
+        ...currentProfiles,
+        [modelPath]: {
+          ...existingProfile,
+          registeredParts,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
   private renderWorkbenchPanel(
     panel: HTMLElement,
     summary: ModelPreviewSummary,
@@ -345,6 +401,11 @@ export class DirectModelView extends FileView {
     this.renderMetric(metrics, t("workbench.meshesLabel"), formatCount(summary.meshCount));
     this.renderMetric(
       metrics,
+      t("directWorkbench.partCandidatesLabel"),
+      formatCount(this.ps.store.getState().modelAssetProfiles[modelPath]?.registeredParts?.length),
+    );
+    this.renderMetric(
+      metrics,
       summary.splatCount !== undefined ? t("workbench.splatsLabel") : t("workbench.trianglesLabel"),
       formatCount(summary.splatCount ?? summary.triangleCount),
     );
@@ -354,6 +415,7 @@ export class DirectModelView extends FileView {
 
     const controls = panel.createDiv({ cls: "ai3d-direct-workbench-controls" });
     this.renderExplodeControls(controls);
+    this.renderRegisteredPartMatches(controls, modelPath, summary);
     this.renderKnowledgeControls(controls, modelPath);
   }
 
@@ -498,6 +560,83 @@ export class DirectModelView extends FileView {
         void this.app.workspace.getLeaf(true).openFile(file, { active: true });
       }
     });
+  }
+
+  private renderRegisteredPartMatches(parent: HTMLElement, modelPath: string, summary: ModelPreviewSummary): void {
+    const generation = this.loadGeneration;
+    const control = parent.createDiv({ cls: "ai3d-direct-workbench-control ai3d-direct-workbench-registered" });
+    const header = control.createDiv({ cls: "ai3d-direct-workbench-control-head" });
+    header.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.registeredTitle") });
+    const status = header.createSpan({ cls: "ai3d-direct-workbench-value", text: t("directWorkbench.registeredLoading") });
+    const body = control.createDiv({ cls: "ai3d-direct-workbench-registered-body" });
+
+    const renderEmpty = (messageKey: Parameters<typeof t>[0]) => {
+      status.setText("");
+      body.empty();
+      body.createDiv({ cls: "ai3d-direct-workbench-empty", text: t(messageKey) });
+    };
+
+    const evidence = this.preview?.getModelEvidence?.() ?? null;
+    if (!evidence?.parts.length) {
+      renderEmpty("directWorkbench.registeredUnavailable");
+      return;
+    }
+
+    void import("./workbench/knowledge-note")
+      .then(async ({ collectRegisteredPartsFromProfiles }) => {
+        const state = this.ps.store.getState();
+        const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath);
+        if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath || !control.isConnected) {
+          return;
+        }
+        if (registeredParts.length === 0) {
+          renderEmpty("directWorkbench.registeredEmpty");
+          return;
+        }
+
+        const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
+        const analysis = buildLocalAnalysisResult({
+          modelPath,
+          profile,
+          preview: summary,
+          evidence,
+          registeredParts,
+        });
+        const matchedParts = analysis.parts
+          .filter((part) => part.registeredMatches?.length)
+          .sort((left, right) => (right.registeredMatches?.[0]?.matchScore ?? 0) - (left.registeredMatches?.[0]?.matchScore ?? 0))
+          .slice(0, 5);
+
+        if (matchedParts.length === 0) {
+          renderEmpty("directWorkbench.registeredEmpty");
+          return;
+        }
+
+        status.setText(formatT("directWorkbench.registeredCount", { count: String(matchedParts.length) }));
+        body.empty();
+        const list = body.createDiv({ cls: "ai3d-direct-workbench-match-list" });
+        for (const part of matchedParts) {
+          const match = part.registeredMatches?.[0];
+          if (!match) continue;
+          const row = renderRegisteredPartMatchRow(list, part.name, match);
+          const openButton = row.querySelector("[data-ai3d-action='open-registered-part']");
+          if (!(openButton instanceof HTMLButtonElement)) continue;
+          openButton.addEventListener("click", () => {
+            const targetPath = openButton.getAttribute("data-ai3d-target-path") || undefined;
+            if (!targetPath) return;
+            const file = this.app.vault.getAbstractFileByPath(targetPath);
+            if (file instanceof TFile) {
+              void this.app.workspace.getLeaf(true).openFile(file, { active: true });
+            }
+          });
+        }
+      })
+      .catch((error) => {
+        console.warn("[AI3D] Registered part match preview failed:", error);
+        if (generation === this.loadGeneration && this.workbenchModelPath === modelPath && control.isConnected) {
+          renderEmpty("directWorkbench.registeredUnavailable");
+        }
+      });
   }
 
   private async createPreviewWithFallback(

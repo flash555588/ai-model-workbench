@@ -68,6 +68,10 @@ function parseExpectNoWarnings() {
   return process.argv.includes("--expect-no-warnings");
 }
 
+function parseExpectGroupParts() {
+  return process.argv.includes("--expect-group-parts");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
@@ -75,6 +79,7 @@ const verifyExpectedBackend = parseExpectBackend();
 const verifyRouteOnly = parseRouteOnly();
 const verifyExpectedWarning = parseExpectWarning();
 const verifyExpectNoWarnings = parseExpectNoWarnings();
+const verifyExpectGroupParts = parseExpectGroupParts();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -553,6 +558,27 @@ async function verifyThreePerformanceBudgetSnapshot(page, route, performanceSnap
   );
 }
 
+function verifyGroupedPartsEvidence(state) {
+  if (!verifyExpectGroupParts) return;
+  const parts = Array.isArray(state?.evidence?.parts) ? state.evidence.parts : [];
+  const groupParts = parts.filter((part) => part?.source === "group");
+  const meshParts = parts.filter((part) => part?.source === "mesh");
+  const groupNames = new Set(groupParts.map((part) => part.name));
+
+  assert(groupParts.length >= 2, `Expected at least 2 grouped parts, got ${JSON.stringify(parts)}`);
+  assert(groupNames.has("Left Assembly"), `Missing Left Assembly group part: ${JSON.stringify(parts)}`);
+  assert(groupNames.has("Right Assembly"), `Missing Right Assembly group part: ${JSON.stringify(parts)}`);
+  assert(!groupNames.has("Grouped Parts Fixture"), `Whole-model wrapper was registered as a group part: ${JSON.stringify(parts)}`);
+  assert(
+    groupParts.every((part) => part.childCount >= 2 && Array.isArray(part.meshNames) && part.meshNames.length >= 2),
+    `Grouped parts did not keep child mesh evidence: ${JSON.stringify(groupParts)}`,
+  );
+  assert(
+    meshParts.some((part) => part.name === "Loose Detail"),
+    `Ungrouped mesh part was not preserved alongside grouped parts: ${JSON.stringify(parts)}`,
+  );
+}
+
 async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, selectedPartMarkdown) {
   assert(state?.mode === "workbench", `Expected workbench mode, received ${state?.mode ?? "unknown"}`);
   assert(state?.route?.requireWorkbenchFeatures === true, "Workbench route did not require workbench features");
@@ -606,6 +632,24 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   assert(result.evidence?.parts?.length > 0, `Workbench evidence is missing parts: ${JSON.stringify(result.evidence)}`);
   assert(result.evidence?.summary?.meshCount === state.summary.meshCount, "Workbench evidence summary did not match preview summary");
   assert(result.modelInfo.includes("Model Info"), "Workbench model info export failed");
+  const rows = Array.isArray(state.registeredMatchRows) ? state.registeredMatchRows : [];
+  const noteRow = rows.find((row) => row.title === "Left Assembly");
+  const modelRow = rows.find((row) => row.title === "Right Assembly");
+  assert(noteRow?.button === "Note", `Registered match part-note row did not render Note action: ${JSON.stringify(rows)}`);
+  assert(
+    noteRow.targetPath === "Parts/3D Components/legacy/01 Left Assembly.md",
+    `Registered match part-note target path was wrong: ${JSON.stringify(noteRow)}`,
+  );
+  assert(noteRow.target === "Opens matched part note", `Registered match part-note target copy was wrong: ${JSON.stringify(noteRow)}`);
+  assert(noteRow.model === "From legacy grouped parts.gltf", `Registered match source model label was wrong: ${JSON.stringify(noteRow)}`);
+  assert(noteRow.disabled === false, `Registered match part-note action was disabled: ${JSON.stringify(noteRow)}`);
+  assert(modelRow?.button === "Model", `Registered match source-model row did not render Model action: ${JSON.stringify(rows)}`);
+  assert(
+    modelRow.targetPath === "models/auto registered parts.gltf",
+    `Registered match source-model target path was wrong: ${JSON.stringify(modelRow)}`,
+  );
+  assert(modelRow.target === "Opens source model", `Registered match source-model target copy was wrong: ${JSON.stringify(modelRow)}`);
+  assert(modelRow.disabled === false, `Registered match source-model action was disabled: ${JSON.stringify(modelRow)}`);
 
   console.log("Workbench preview verification passed");
   console.log(JSON.stringify({
@@ -804,6 +848,7 @@ async function verify() {
     if (verifyExpectNoWarnings) {
       assert(warnings.length === 0, `Expected no resource warnings, got ${JSON.stringify(warnings)}`);
     }
+    verifyGroupedPartsEvidence(state);
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     await page.waitForTimeout(500);

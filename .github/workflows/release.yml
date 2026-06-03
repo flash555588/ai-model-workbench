@@ -39,6 +39,9 @@ jobs:
       - name: Verify knowledge index
         run: npm run verify:knowledge-index
 
+      - name: Verify diagnostics
+        run: npm run verify:diagnostics
+
       - name: Build
         run: npm run build
 

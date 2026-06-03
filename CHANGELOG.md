@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+## 0.4.3
+
+- Add a command-palette diagnostics report that copies sanitized runtime, renderer, model, knowledge-generation, and conversion status for bug reports.
+- Preserve generated `knowledgeIndexPath` and the last knowledge-generation summary across Obsidian restarts.
+- Let the `Open knowledge index` command fall back to the latest generated index when no model file is currently focused.
+- Add `npm run verify:diagnostics` to confirm diagnostics include useful support context without leaking draft service URLs or local converter command paths.
+- Register named model groups/assemblies as higher-confidence part candidates, while preserving ungrouped meshes as standalone parts.
+- Auto-register captured part candidates into each model profile as soon as a direct file view loads, so later imported models can match reused parts before a report has been generated.
+- Match current part candidates against previously registered parts from other analyzed models, linking likely reused parts in the report, sidecar, draft input, index, and part notes.
+- Show the source model for direct-workbench registered part matches and let the Open action fall back to that source model when no part note exists yet.
+
 ## 0.4.0
 
 - Generate first-pass part note drafts for the strongest captured part candidates and link them from the main knowledge report and analysis sidecar.
