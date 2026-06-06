@@ -477,7 +477,7 @@ export class DirectModelView extends FileView {
     // Vertical resize: adjust bottom panel height
     let bottomHeight = 220;
     setupDrag(vHandle, (_dx, dy) => {
-      bottomHeight = Math.max(120, Math.min(500, bottomHeight + dy));
+      bottomHeight = Math.max(120, Math.min(500, bottomHeight - dy));
       workspace.style.gridTemplateRows = `1fr 4px ${bottomHeight}px`;
     }, () => {});
   }
