@@ -525,37 +525,124 @@ body {
 .ai3d-workspace-sidebar {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 4px;
   background: var(--background-secondary);
   border-left: 1px solid var(--background-modifier-border);
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
 }
-.ai3d-sidebar-btn {
+.ai3d-sidebar-content {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-control {
+  min-width: 0;
+  padding: 6px 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  flex-shrink: 0;
 }
-.ai3d-sidebar-btn:hover {
-  background: var(--background-modifier-hover);
+.ai3d-sidebar-content .ai3d-direct-workbench-control-head,
+.ai3d-sidebar-content .ai3d-direct-workbench-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-control-head {
+  justify-content: space-between;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-action {
+  padding: 5px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
   color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-action:hover {
+  background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
-.ai3d-sidebar-btn:disabled {
-  opacity: 0.4;
+.ai3d-sidebar-content .ai3d-direct-workbench-action:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 8px 0;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-main,
+.ai3d-sidebar-content .ai3d-direct-workbench-match-side {
+  min-width: 0;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-side {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-title,
+.ai3d-sidebar-content .ai3d-direct-workbench-match-source,
+.ai3d-sidebar-content .ai3d-direct-workbench-match-model,
+.ai3d-sidebar-content .ai3d-direct-workbench-match-target,
+.ai3d-sidebar-content .ai3d-direct-workbench-match-reasons {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-title {
+  color: var(--text-normal);
+  font-weight: 600;
+  font-size: 12px;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-source {
+  color: var(--text-muted);
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-model {
+  color: var(--text-faint);
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-target {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-reasons {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-score {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ai3d-sidebar-content .ai3d-direct-workbench-match-open {
+  min-width: 44px;
 }
 .ai3d-resize-handle {
   background: var(--background-modifier-border);
@@ -798,9 +885,14 @@ body {
     flex-direction: row;
     border-left: none;
     border-top: 1px solid var(--background-modifier-border);
-    padding: 4px;
     overflow-x: auto;
     overflow-y: hidden;
+  }
+  .ai3d-sidebar-content {
+    flex-direction: row;
+    gap: 8px;
+    padding: 4px;
+    min-width: min-content;
   }
   .ai3d-direct-workbench-panel {
     grid-template-columns: 1fr;
