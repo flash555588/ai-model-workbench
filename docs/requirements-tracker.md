@@ -30,7 +30,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-001 | Single-model previews use Three.js by default while Babylon remains fallback/capability backend | P0 | Verified | `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-002 | `3dgrid` and conservative workbench routes remain on Babylon until workflow evidence justifies migration | P0 | Accepted | `docs/preview-routing-matrix.md`, `npm run verify:preview` |
 | REQ-003 | Knowledge generation remains local-first and records report, sidecar, index, preview evidence, and part notes | P0 | Verified | `npm run verify:knowledge-index` |
-| REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts` |
+| REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
 | REQ-005 | Registered part reuse feedback is visible in generated notes and direct workbench UI | P1 | Verified | `npm run verify:knowledge-index`, `npm run typecheck`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three` |
 | REQ-006 | Diagnostics reports expose support context without leaking draft service URLs or converter command paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
@@ -42,15 +42,18 @@ future agent notes can refer to the same requirement over time.
 
 - Status: Verified
 - Priority: P1
-- User value: Named groups and assemblies in GLB/GLTF files should become reusable part candidates without requiring a full report first.
+- User value: Named groups, assemblies, and converted source components should become reusable part candidates without requiring a full report first.
 - Current behavior:
   - Named model groups are promoted to higher-confidence part candidates.
   - GLB/GLTF `extras.ai3d` component metadata is promoted to individual component parts with stable component/occurrence identifiers.
+  - STEP XDE assembly/component labels are preserved during CAD conversion as individual GLB component meshes with `extras.ai3d` metadata.
+  - Source formats such as STEP, FBX, 3MF, and DAE are preserved in analysis records so registered matches can connect reused parts across converted model types.
   - Ungrouped mesh parts remain available as lower-confidence candidates.
   - The grouped-parts browser fixture verifies that group and mesh evidence are both preserved.
 - Verification:
   - `npm run verify:knowledge-index`
   - `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`
+  - `AstroInk_v1_1_3D模型.step` conversion probe exported 82 named component meshes and preview verification passed on the generated GLB.
 
 ### REQ-005: Registered Part Reuse Feedback
 
@@ -61,6 +64,7 @@ future agent notes can refer to the same requirement over time.
   - Knowledge reports, sidecars, draft input, index entries, and part notes preserve registered matches.
   - Direct workbench shows the strongest cross-model matches.
   - Direct workbench now includes the source model label, explains what the action opens, and opens the matched part note, falling back to the source model file if no part note exists yet.
+  - Direct workbench omits explode controls so reuse feedback and knowledge actions remain the primary panel controls.
 - Acceptance criteria:
   - Match rows show the current part, matched registered part, match reasons, score, and source model.
   - The action label distinguishes opening a part note from opening a source model fallback.

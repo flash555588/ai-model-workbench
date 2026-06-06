@@ -2,7 +2,7 @@ import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
 import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
-import { supportsWorkbenchPreview, type AnnotationPreview, type PreviewAxis } from "../render/preview/types";
+import type { AnnotationPreview } from "../render/preview/types";
 import { createHelperButtons } from "./inline/helper-buttons";
 import { createConversionManager } from "../io/conversion/factory";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
@@ -25,7 +25,6 @@ export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
 const THREE_WORKBENCH_DIRECT_EXTS = new Set(["glb", "gltf"]);
-const EXPLODE_AXES: PreviewAxis[] = ["x", "y", "z"];
 
 function createDefaultProfile(): ModelAssetProfile {
   return { tags: [], notes: "", annotations: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -399,7 +398,8 @@ export class DirectModelView extends FileView {
     panel.dataset.ai3dBackend = route.backend;
     panel.dataset.ai3dRouteReason = route.reason;
 
-    const status = panel.createDiv({ cls: "ai3d-direct-workbench-status" });
+    const overview = panel.createDiv({ cls: "ai3d-direct-workbench-overview" });
+    const status = overview.createDiv({ cls: "ai3d-direct-workbench-status" });
     const backendLine = status.createDiv({ cls: "ai3d-direct-workbench-line" });
     backendLine.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.backendLabel") });
     backendLine.createSpan({ cls: "ai3d-direct-workbench-value", text: formatBackendName(route.backend) });
@@ -407,7 +407,7 @@ export class DirectModelView extends FileView {
     routeLine.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.routeLabel") });
     routeLine.createSpan({ cls: "ai3d-direct-workbench-value", text: route.reason });
 
-    const metrics = panel.createDiv({ cls: "ai3d-direct-workbench-metrics" });
+    const metrics = overview.createDiv({ cls: "ai3d-direct-workbench-metrics" });
     this.renderMetric(metrics, t("workbench.meshesLabel"), formatCount(summary.meshCount));
     this.renderMetric(
       metrics,
@@ -424,9 +424,8 @@ export class DirectModelView extends FileView {
     this.renderMetric(metrics, t("directWorkbench.performanceLabel"), summary.performanceTier ?? "light");
 
     const controls = panel.createDiv({ cls: "ai3d-direct-workbench-controls" });
-    this.renderExplodeControls(controls);
-    this.renderRegisteredPartMatches(controls, modelPath, summary);
     this.renderKnowledgeControls(controls, modelPath);
+    this.renderRegisteredPartMatches(controls, modelPath, summary);
   }
 
   private refreshWorkbenchPanel(): void {
@@ -440,73 +439,6 @@ export class DirectModelView extends FileView {
     const metric = parent.createDiv({ cls: "ai3d-direct-workbench-metric" });
     metric.createSpan({ cls: "ai3d-direct-workbench-label", text: label });
     metric.createSpan({ cls: "ai3d-direct-workbench-value", text: value });
-  }
-
-  private renderExplodeControls(parent: HTMLElement): void {
-    const supportsExplode = !!this.preview && supportsWorkbenchPreview(this.preview);
-    const control = parent.createDiv({ cls: "ai3d-direct-workbench-control" });
-    const header = control.createDiv({ cls: "ai3d-direct-workbench-control-head" });
-    header.createSpan({ cls: "ai3d-direct-workbench-label", text: t("workbench.explodeLabel") });
-    const valueLabel = header.createSpan({ cls: "ai3d-direct-workbench-value", text: "0%" });
-
-    let axis: PreviewAxis = "x";
-    const axisGroup = control.createDiv({
-      cls: "ai3d-direct-workbench-axis",
-      attr: { "aria-label": t("directWorkbench.explodeAxisLabel") },
-    });
-    for (const nextAxis of EXPLODE_AXES) {
-      const button = axisGroup.createEl("button", {
-        cls: nextAxis === axis ? "is-active" : "",
-        text: nextAxis.toUpperCase(),
-        attr: { type: "button", "data-ai3d-action": `set-explode-axis-${nextAxis}` },
-      });
-      button.disabled = !supportsExplode;
-      button.addEventListener("click", () => {
-        axis = nextAxis;
-        for (const peer of Array.from(axisGroup.querySelectorAll("button"))) {
-          peer.classList.toggle("is-active", peer === button);
-        }
-        applyExplode();
-      });
-    }
-
-    const row = control.createDiv({ cls: "ai3d-direct-workbench-range-row" });
-    const range = row.createEl("input", {
-      cls: "ai3d-direct-workbench-range",
-      attr: { "data-ai3d-action": "set-explode" },
-    });
-    range.type = "range";
-    range.min = "0";
-    range.max = "0.85";
-    range.step = "0.05";
-    range.value = "0";
-    range.disabled = !supportsExplode;
-
-    const resetButton = row.createEl("button", {
-      cls: "ai3d-direct-workbench-reset",
-      text: t("directWorkbench.explodeResetLabel"),
-      attr: { type: "button", "data-ai3d-action": "reset-explode" },
-    });
-    resetButton.disabled = !supportsExplode;
-
-    const applyExplode = () => {
-      const factor = Number.parseFloat(range.value);
-      valueLabel.setText(`${Math.round(factor * 100)}%`);
-      resetButton.classList.toggle("is-active", factor > 0);
-      if (this.preview && supportsWorkbenchPreview(this.preview)) {
-        this.preview.setExplode(factor, axis);
-      }
-    };
-
-    range.addEventListener("input", applyExplode);
-    resetButton.addEventListener("click", () => {
-      range.value = "0";
-      valueLabel.setText("0%");
-      resetButton.classList.remove("is-active");
-      if (this.preview && supportsWorkbenchPreview(this.preview)) {
-        this.preview.resetExplode();
-      }
-    });
   }
 
   private renderKnowledgeControls(parent: HTMLElement, modelPath: string): void {

@@ -276,8 +276,6 @@ export const en = {
   "directWorkbench.routeLabel": "Route",
   "directWorkbench.performanceLabel": "Performance",
   "directWorkbench.partCandidatesLabel": "Part candidates",
-  "directWorkbench.explodeAxisLabel": "Explode axis",
-  "directWorkbench.explodeResetLabel": "Reset",
   "directWorkbench.knowledgeTitle": "Knowledge",
   "directWorkbench.registeredTitle": "Registered part matches",
   "directWorkbench.registeredLoading": "Checking...",

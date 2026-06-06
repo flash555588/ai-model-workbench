@@ -278,8 +278,6 @@ export const zhCN: Record<TranslationKey, string> = {
   "directWorkbench.routeLabel": "路由",
   "directWorkbench.performanceLabel": "性能",
   "directWorkbench.partCandidatesLabel": "候选零件",
-  "directWorkbench.explodeAxisLabel": "爆炸轴向",
-  "directWorkbench.explodeResetLabel": "重置",
   "directWorkbench.knowledgeTitle": "知识",
   "directWorkbench.registeredTitle": "已注册零件匹配",
   "directWorkbench.registeredLoading": "检查中...",
