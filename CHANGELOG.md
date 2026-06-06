@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
 
 - Add annotation bookmark display modes for full snippets, compact surfaces, and dots; keep bookmark popovers open while hovered and hide occluded bookmarks fully.
 - Register GLB/GLTF component metadata from `extras.ai3d` as individual parts, preserving component IDs, occurrence IDs, part numbers, and component paths through reports and part notes.
 - Preserve STEP XDE component labels during CAD conversion, exporting PCB/CAD components as individual GLB component meshes with `extras.ai3d` identity metadata.
 - Remove the direct-workbench explode controls and reorganize the panel around model status, knowledge actions, and registered part matches.
 - Preserve source extensions such as STEP, FBX, 3MF, and DAE in analysis records so registered part matching can link reused components across converted model formats.
+- Replace the legacy bottom workbench panel with a track-based workspace layout: main preview area gets full remaining space without being squeezed by the panel.
+- Add a right sidebar with icon buttons for focus, disassembly, reset, annotation, generate-note, and open-index actions.
+- Add draggable resize handles for sidebar width and bottom panel height (like IDE split panes).
+- Organize the bottom information panel into Overview / Matches / Knowledge tabs to reduce visual clutter.
+- Add tab translation keys for Overview, Matches, and Knowledge in both English and Chinese.
+- Make the workspace layout responsive: sidebar becomes a horizontal scrollable row on narrow screens.
 
 ## 0.4.3
 
