@@ -141,7 +141,7 @@ function describeMaterial(material: Material | null | undefined): string | null 
 }
 
 function getObjectDisplayName(object: Object3D, fallback: string): string {
-  const originalName = object.userData?.name;
+  const originalName: unknown = object.userData?.name;
   return typeof originalName === "string" && originalName.trim().length > 0
     ? originalName
     : object.name || fallback;
@@ -762,10 +762,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.markDirty();
 
       if (t < 1) {
-        this.cameraAnimHandle = requestAnimationFrame(tick);
+        this.cameraAnimHandle = window.requestAnimationFrame(tick);
       }
     };
-    this.cameraAnimHandle = requestAnimationFrame(tick);
+    this.cameraAnimHandle = window.requestAnimationFrame(tick);
   }
 
   private startRenderLoop(): void {
@@ -775,10 +775,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.renderHandle = 0;
         return;
       }
-      this.renderHandle = requestAnimationFrame(tick);
+      this.renderHandle = window.requestAnimationFrame(tick);
       this.renderNow(performance.now());
     };
-    this.renderHandle = requestAnimationFrame(tick);
+    this.renderHandle = window.requestAnimationFrame(tick);
   }
 
   private renderNow(now: number): void {

@@ -463,16 +463,16 @@ export class DirectModelView extends FileView {
         startY = e.clientY;
       };
       const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
+        activeDocument.removeEventListener("mousemove", onMouseMove);
+        activeDocument.removeEventListener("mouseup", onMouseUp);
         onEnd();
       };
       handle.addEventListener("mousedown", (e) => {
         e.preventDefault();
         startX = e.clientX;
         startY = e.clientY;
-        document.addEventListener("mousemove", onMouseMove);
-        document.addEventListener("mouseup", onMouseUp);
+        activeDocument.addEventListener("mousemove", onMouseMove);
+        activeDocument.addEventListener("mouseup", onMouseUp);
       });
     };
     // Horizontal resize: adjust sidebar width

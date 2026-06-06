@@ -1003,12 +1003,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
       const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       this.camera.target = Vector3.Lerp(start, target, ease);
       if (t < 1 && !this.scene.isDisposed) {
-        this.focusWorldPointFrame = activeWindow.requestAnimationFrame(tick);
+        this.focusWorldPointFrame = window.requestAnimationFrame(tick);
         return;
       }
       this.focusWorldPointFrame = 0;
     };
-    this.focusWorldPointFrame = activeWindow.requestAnimationFrame(tick);
+    this.focusWorldPointFrame = window.requestAnimationFrame(tick);
   }
 
   private getAnnotationCameraStateKey(): string {
