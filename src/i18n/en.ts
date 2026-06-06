@@ -272,6 +272,7 @@ export const en = {
   "workbench.mobileHint": "Mobile tip: tap Interact to move the model, then switch back to Scroll to keep reading the note.",
   "workbench.mobileHintInteractive": "Interaction mode is on. Switch back to Scroll when you want to move through the note again.",
   "directView.mobileHint": "Mobile tip: use the toolbar Interact button to switch between model interaction and note scrolling.",
+  "directWorkbench.modelLoadInterrupted": "Model load was interrupted by a newer request.",
   "directWorkbench.backendLabel": "Backend",
   "directWorkbench.routeLabel": "Route",
   "directWorkbench.performanceLabel": "Performance",

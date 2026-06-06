@@ -274,6 +274,7 @@ export const zhCN: Record<TranslationKey, string> = {
   "workbench.mobileHint": "移动端提示：需要操作模型时点“交互”，继续阅读笔记时切回“滚动”。",
   "workbench.mobileHintInteractive": "当前为交互模式。需要继续滚动笔记时，请切回“滚动”。",
   "directView.mobileHint": "移动端提示：使用下方工具栏里的“交互”按钮，在模型操作和笔记滚动之间切换。",
+  "directWorkbench.modelLoadInterrupted": "模型加载被新请求中断。",
   "directWorkbench.backendLabel": "后端",
   "directWorkbench.routeLabel": "路由",
   "directWorkbench.performanceLabel": "性能",

@@ -1,4 +1,4 @@
-import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
+import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
 import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
@@ -247,7 +247,10 @@ export class DirectModelView extends FileView {
         conversionManager,
         convertedAssetCache: this.convertedAssetCache,
       });
-      if (gen !== this.loadGeneration) return;
+      if (gen !== this.loadGeneration) {
+        new Notice(t("directWorkbench.modelLoadInterrupted"));
+        return;
+      }
       const source = toPreviewSource(prepared);
 
       const basePreviewOptions = {
@@ -263,7 +266,11 @@ export class DirectModelView extends FileView {
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, source.path);
       const created = await this.createPreviewWithFallback(canvas, data, source, basePreviewOptions, file.path);
-      if (gen !== this.loadGeneration) { created.preview.destroy(); return; }
+      if (gen !== this.loadGeneration) {
+        created.preview.destroy();
+        new Notice(t("directWorkbench.modelLoadInterrupted"));
+        return;
+      }
       this.preview = created.preview;
       host.dataset.ai3dBackend = created.route.backend;
       host.dataset.ai3dRouteReason = created.route.reason;
