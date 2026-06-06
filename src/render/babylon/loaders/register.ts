@@ -5,6 +5,7 @@
 // loader registers itself through GLTFFileLoader._CreateGLTF2Loader.
 import "@babylonjs/loaders/glTF/glTFFileLoader";
 import "@babylonjs/loaders/glTF/2.0/glTFLoader";
+import "@babylonjs/loaders/glTF/2.0/Extensions/ExtrasAsMetadata";
 
 // OBJ: classic mesh format with MTL material support.
 import "@babylonjs/loaders/OBJ/objFileLoader";

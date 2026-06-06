@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   maxFileSizeMb: 50,
   autoGenerateKnowledgeNotes: true,
   annotationPreviewMode: "plain-text",
+  annotationDisplayMode: "surface",
   previewRendererRollout: "three-direct-glb",
   useThreeRenderer: true,
   experimentalThreeWorkbench: false,

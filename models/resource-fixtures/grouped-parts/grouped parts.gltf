@@ -18,7 +18,8 @@
       "children": [
         1,
         4,
-        7
+        7,
+        8
       ]
     },
     {
@@ -79,6 +80,23 @@
         0,
         0
       ]
+    },
+    {
+      "name": "Tagged CAD Fastener",
+      "mesh": 0,
+      "translation": [
+        0,
+        -0.75,
+        0
+      ],
+      "extras": {
+        "ai3d": {
+          "partId": "FASTENER-M3",
+          "occurrenceId": "ASM-ROOT/FASTENER-001",
+          "partNumber": "DIN912-M3x8",
+          "componentPath": "ASM-ROOT/FASTENER-001"
+        }
+      }
     }
   ],
   "meshes": [

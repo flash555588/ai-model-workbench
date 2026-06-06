@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add annotation bookmark display modes for full snippets, compact surfaces, and dots; keep bookmark popovers open while hovered and hide occluded bookmarks fully.
+- Register GLB/GLTF component metadata from `extras.ai3d` as individual parts, preserving component IDs, occurrence IDs, part numbers, and component paths through reports and part notes.
+
 ## 0.4.3
 
 - Add a command-palette diagnostics report that copies sanitized runtime, renderer, model, knowledge-generation, and conversion status for bug reports.

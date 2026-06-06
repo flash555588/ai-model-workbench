@@ -45,6 +45,7 @@ future agent notes can refer to the same requirement over time.
 - User value: Named groups and assemblies in GLB/GLTF files should become reusable part candidates without requiring a full report first.
 - Current behavior:
   - Named model groups are promoted to higher-confidence part candidates.
+  - GLB/GLTF `extras.ai3d` component metadata is promoted to individual component parts with stable component/occurrence identifiers.
   - Ungrouped mesh parts remain available as lower-confidence candidates.
   - The grouped-parts browser fixture verifies that group and mesh evidence are both preserved.
 - Verification:

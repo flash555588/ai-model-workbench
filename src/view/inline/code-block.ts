@@ -318,7 +318,11 @@ export function registerCodeBlockProcessor(
                 undefined,
                 createNoteReader(app),
                 undefined,
-                { app, previewMode: settings.annotationPreviewMode },
+                {
+                  app,
+                  previewMode: settings.annotationPreviewMode,
+                  displayMode: settings.annotationDisplayMode,
+                },
               );
               toolbar.showAnnotateButton();
               toolbar.updateAnnotationBadge(pins.length);

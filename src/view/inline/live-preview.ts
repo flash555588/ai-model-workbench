@@ -53,6 +53,7 @@ class ModelEmbedWidget extends WidgetType {
     private preferObj2gltfForObj: boolean,
     private preferFbx2gltfForFbx: boolean,
     private annotationPreviewMode: PluginSettings["annotationPreviewMode"],
+    private annotationDisplayMode: PluginSettings["annotationDisplayMode"],
     private previewRendererRollout: PluginSettings["previewRendererRollout"],
     private useThreeRenderer: boolean,
     private convertedAssetCache: ConvertedAssetCache,
@@ -75,6 +76,7 @@ class ModelEmbedWidget extends WidgetType {
       this.preferObj2gltfForObj === other.preferObj2gltfForObj &&
       this.preferFbx2gltfForFbx === other.preferFbx2gltfForFbx &&
       this.annotationPreviewMode === other.annotationPreviewMode &&
+      this.annotationDisplayMode === other.annotationDisplayMode &&
       this.previewRendererRollout === other.previewRendererRollout &&
       this.convertedAssetCache === other.convertedAssetCache
     );
@@ -236,7 +238,11 @@ class ModelEmbedWidget extends WidgetType {
             undefined,
             createNoteReader(this.app),
             undefined,
-            { app: this.app, previewMode: this.annotationPreviewMode },
+            {
+              app: this.app,
+              previewMode: this.annotationPreviewMode,
+              displayMode: this.annotationDisplayMode,
+            },
           );
         }
       }
@@ -300,6 +306,7 @@ function findEmbeds(
   preferObj2gltfForObj: boolean,
   preferFbx2gltfForFbx: boolean,
   annotationPreviewMode: PluginSettings["annotationPreviewMode"],
+  annotationDisplayMode: PluginSettings["annotationDisplayMode"],
   previewRendererRollout: PluginSettings["previewRendererRollout"],
   useThreeRenderer: boolean,
   convertedAssetCache: ConvertedAssetCache,
@@ -374,6 +381,7 @@ function findEmbeds(
             preferObj2gltfForObj,
             preferFbx2gltfForFbx,
             annotationPreviewMode,
+            annotationDisplayMode,
             previewRendererRollout,
             useThreeRenderer,
             convertedAssetCache,
@@ -422,6 +430,7 @@ export function registerLivePreviewExtension(
         s.preferObj2gltfForObj,
         s.preferFbx2gltfForFbx,
         s.annotationPreviewMode,
+        s.annotationDisplayMode,
         s.previewRendererRollout,
         s.useThreeRenderer,
         convertedAssetCache,
@@ -444,6 +453,7 @@ export function registerLivePreviewExtension(
           s.preferObj2gltfForObj,
           s.preferFbx2gltfForFbx,
           s.annotationPreviewMode,
+          s.annotationDisplayMode,
           s.previewRendererRollout,
           s.useThreeRenderer,
           convertedAssetCache,

@@ -53,6 +53,7 @@ interface ProjectedPinEntry {
 export interface AnnotationPreviewOptions {
   app?: App;
   previewMode?: PluginSettings["annotationPreviewMode"];
+  displayMode?: PluginSettings["annotationDisplayMode"];
 }
 
 export class AnnotationManager {
@@ -73,6 +74,7 @@ export class AnnotationManager {
   private static readonly _scratchProjection: PreviewProjectionResult = { screenX: 0, screenY: 0, depth: 0 };
   private hoverPopover: HTMLDivElement | null = null;
   private hoverTimeout: number | null = null;
+  private hoverCloseTimeout: number | null = null;
   private hoverRequestId = 0;
   private _highlightHandler: ((e: Event) => void) | null = null;
   private _pulseTimeout: number | null = null;
@@ -83,6 +85,7 @@ export class AnnotationManager {
   private readonly previewRenderChildren = new WeakMap<HTMLElement, Component>();
   private readonly previewApp?: App;
   private readonly previewMode: PluginSettings["annotationPreviewMode"];
+  private readonly displayMode: PluginSettings["annotationDisplayMode"];
 
   constructor(
     private provider: AnnotationViewportProvider,
@@ -96,6 +99,7 @@ export class AnnotationManager {
   ) {
     this.previewApp = previewOptions.app;
     this.previewMode = previewOptions.previewMode ?? "plain-text";
+    this.displayMode = previewOptions.displayMode ?? "surface";
     this.previewRenderRoot.load();
 
     // Create overlay container on hostEl (in DOM) to inherit Obsidian CSS variables
@@ -124,7 +128,7 @@ export class AnnotationManager {
 
   setAnnotations(pins: AnnotationPin[]): void {
     // Remove old pins
-    for (const [, entry] of this.pinEls) entry.el.remove();
+    for (const [, entry] of this.pinEls) this.removePinElement(entry.el);
     this.pinEls.clear();
 
     this.annotations = [...pins];
@@ -152,7 +156,7 @@ export class AnnotationManager {
   removePin(id: string): void {
     const entry = this.pinEls.get(id);
     if (entry) {
-      entry.el.remove();
+      this.removePinElement(entry.el);
       this.pinEls.delete(id);
     }
     this.annotations = this.annotations.filter(p => p.id !== id);
@@ -172,6 +176,9 @@ export class AnnotationManager {
       if (labelEl && partial.label !== undefined) labelEl.textContent = partial.label;
       const dotEl = entry.el.querySelector<HTMLElement>(".ai3d-pin-dot");
       if (dotEl && partial.color !== undefined) dotEl.style.setProperty("--pin-color", partial.color);
+      if (partial.notePath !== undefined || partial.headingRef !== undefined || partial.label !== undefined) {
+        this.renderPinDisplay(entry.el, pin);
+      }
     }
     this.updateProjections();
     this.onChange?.(this.annotations);
@@ -498,24 +505,31 @@ export class AnnotationManager {
     title.textContent = pin.headingRef;
 
     const body = popover.createDiv({ cls: "ai3d-pin-popover-body" });
-    await this.renderPreviewContent(body, content, pin.notePath, "popover");
-
-    if (requestId !== this.hoverRequestId || !pinEl.isConnected || !this.hostEl.isConnected) {
-      this.clearRenderedPreview(body);
-      return;
-    }
 
     // Position relative to pin
     const rect = pinEl.getBoundingClientRect();
     popover.style.setProperty("--popover-left", `${rect.left + rect.width / 2}px`);
     popover.style.setProperty("--popover-top", `${rect.bottom + 4}px`);
+    popover.addEventListener("mouseenter", () => this.cancelHoverClose());
+    popover.addEventListener("mouseleave", () => this.scheduleHoverClose());
 
     activeDocument.body.appendChild(popover);
     this.hoverPopover = popover;
+
+    await this.renderPreviewContent(body, content, pin.notePath, "popover");
+
+    if (requestId !== this.hoverRequestId || !pinEl.isConnected || !this.hostEl.isConnected) {
+      this.clearRenderedPreview(body);
+      if (this.hoverPopover === popover) {
+        this.hoverPopover = null;
+      }
+      popover.remove();
+    }
   }
 
   private hideHoverPopover(): void {
     if (this.hoverTimeout) { window.clearTimeout(this.hoverTimeout); this.hoverTimeout = null; }
+    if (this.hoverCloseTimeout) { window.clearTimeout(this.hoverCloseTimeout); this.hoverCloseTimeout = null; }
     if (this.hoverPopover) {
       const body = this.hoverPopover.querySelector<HTMLDivElement>(".ai3d-pin-popover-body");
       if (body) {
@@ -524,6 +538,27 @@ export class AnnotationManager {
       this.hoverPopover.remove();
       this.hoverPopover = null;
     }
+  }
+
+  private cancelHoverClose(): void {
+    if (this.hoverCloseTimeout) {
+      window.clearTimeout(this.hoverCloseTimeout);
+      this.hoverCloseTimeout = null;
+    }
+  }
+
+  private scheduleHoverClose(): void {
+    if (this.hoverTimeout) {
+      window.clearTimeout(this.hoverTimeout);
+      this.hoverTimeout = null;
+      this.hoverRequestId++;
+    }
+    this.cancelHoverClose();
+    this.hoverCloseTimeout = window.setTimeout(() => {
+      this.hoverCloseTimeout = null;
+      this.hoverRequestId++;
+      this.hideHoverPopover();
+    }, 180);
   }
 
   private clearRenderedPreview(el: HTMLElement): void {
@@ -535,19 +570,32 @@ export class AnnotationManager {
     el.replaceChildren();
   }
 
+  private removePinElement(el: HTMLDivElement): void {
+    el.querySelectorAll<HTMLElement>(".ai3d-rendered-preview").forEach((previewEl) => {
+      this.clearRenderedPreview(previewEl);
+    });
+    el.remove();
+  }
+
   private async renderPreviewContent(
     el: HTMLDivElement,
     content: string,
     notePath: string,
-    target: "editor" | "popover",
+    target: "editor" | "popover" | "pin-snippet",
   ): Promise<void> {
     const shouldRenderMarkdown = this.previewMode === "markdown" && !!this.previewApp;
     const isEditor = target === "editor";
+    const isPinSnippet = target === "pin-snippet";
 
     if (!shouldRenderMarkdown) {
-      const truncated = isEditor && content.length > 300 ? content.slice(0, 300) + "..." : content;
+      const maxLength = isEditor ? 300 : isPinSnippet ? 180 : Infinity;
+      const truncated = content.length > maxLength ? content.slice(0, maxLength) + "..." : content;
       el.textContent = truncated;
-      el.className = isEditor ? "ai3d-editor-content-preview" : "ai3d-pin-popover-body";
+      el.className = isEditor
+        ? "ai3d-editor-content-preview"
+        : isPinSnippet
+          ? "ai3d-pin-snippet ai3d-rendered-preview"
+          : "ai3d-pin-popover-body ai3d-rendered-preview";
       if (isEditor) {
         el.classList.remove("is-hidden");
       }
@@ -556,7 +604,9 @@ export class AnnotationManager {
 
     el.className = isEditor
       ? "ai3d-editor-content-preview ai3d-editor-content-preview--markdown markdown-rendered"
-      : "ai3d-pin-popover-body ai3d-pin-popover-body--markdown markdown-rendered";
+      : isPinSnippet
+        ? "ai3d-pin-snippet ai3d-pin-snippet--markdown ai3d-rendered-preview markdown-rendered"
+        : "ai3d-pin-popover-body ai3d-pin-popover-body--markdown ai3d-rendered-preview markdown-rendered";
     if (isEditor) {
       el.classList.remove("is-hidden");
     }
@@ -569,8 +619,13 @@ export class AnnotationManager {
     } catch (error) {
       this.previewRenderRoot.removeChild(renderChild);
       this.previewRenderChildren.delete(el);
-      el.textContent = isEditor && content.length > 300 ? content.slice(0, 300) + "..." : content;
-      el.className = isEditor ? "ai3d-editor-content-preview" : "ai3d-pin-popover-body";
+      const maxLength = isEditor ? 300 : isPinSnippet ? 180 : Infinity;
+      el.textContent = content.length > maxLength ? content.slice(0, maxLength) + "..." : content;
+      el.className = isEditor
+        ? "ai3d-editor-content-preview"
+        : isPinSnippet
+          ? "ai3d-pin-snippet ai3d-rendered-preview"
+          : "ai3d-pin-popover-body ai3d-rendered-preview";
       if (isEditor) {
         el.classList.remove("is-hidden");
       }
@@ -619,11 +674,7 @@ export class AnnotationManager {
     const el = this.overlay.createDiv({ cls: "ai3d-annotation-pin" });
     el.dataset.pinId = pin.id;
 
-    const dot = el.createDiv({ cls: "ai3d-pin-dot" });
-    dot.style.setProperty("--pin-color", pin.color);
-
-    const label = el.createSpan({ cls: "ai3d-pin-label" });
-    label.textContent = pin.label;
+    this.renderPinDisplay(el, pin);
 
     // Readonly mode: no delete button
     if (this.mode === "edit") {
@@ -665,6 +716,7 @@ export class AnnotationManager {
     // Hover popover for linked notes
     if (pin.notePath && pin.headingRef && this.noteReader) {
       el.addEventListener("mouseenter", () => {
+        this.cancelHoverClose();
         if (this.hoverTimeout) { window.clearTimeout(this.hoverTimeout); }
         const requestId = ++this.hoverRequestId;
         this.hoverTimeout = window.setTimeout(() => {
@@ -674,9 +726,7 @@ export class AnnotationManager {
         }, 300);
       });
       el.addEventListener("mouseleave", () => {
-        if (this.hoverTimeout) { window.clearTimeout(this.hoverTimeout); this.hoverTimeout = null; }
-        this.hoverRequestId++;
-        this.hideHoverPopover();
+        this.scheduleHoverClose();
       });
     }
 
@@ -684,6 +734,42 @@ export class AnnotationManager {
       el,
       worldPos: { x: pin.position[0], y: pin.position[1], z: pin.position[2] },
     });
+  }
+
+  private renderPinDisplay(el: HTMLDivElement, pin: AnnotationPin): void {
+    const deleteButton = el.querySelector<HTMLButtonElement>(".ai3d-pin-delete");
+    el.querySelectorAll<HTMLElement>(".ai3d-rendered-preview").forEach((previewEl) => {
+      this.clearRenderedPreview(previewEl);
+    });
+    el.replaceChildren();
+    el.className = `ai3d-annotation-pin ai3d-annotation-pin--${this.displayMode}`;
+
+    const dot = el.createDiv({ cls: "ai3d-pin-dot" });
+    dot.style.setProperty("--pin-color", pin.color);
+    el.title = pin.label;
+    el.setAttribute("aria-label", pin.label);
+
+    if (this.displayMode !== "dot") {
+      const content = el.createDiv({ cls: "ai3d-pin-content" });
+      const label = content.createSpan({ cls: "ai3d-pin-label" });
+      label.textContent = pin.label;
+
+      if (this.displayMode === "snippet" && pin.notePath && pin.headingRef && this.noteReader) {
+        const snippet = content.createDiv({ cls: "ai3d-pin-snippet ai3d-rendered-preview" });
+        void this.loadPinSnippet(snippet, pin.notePath, pin.headingRef);
+      }
+    }
+
+    if (deleteButton) {
+      el.appendChild(deleteButton);
+    }
+  }
+
+  private async loadPinSnippet(el: HTMLDivElement, notePath: string, heading: string): Promise<void> {
+    if (!this.noteReader) return;
+    const content = await this.noteReader(notePath, heading);
+    if (!content || !el.isConnected) return;
+    await this.renderPreviewContent(el, content, notePath, "pin-snippet");
   }
 
   private startProjectionLoop(): void {
@@ -797,7 +883,7 @@ export class AnnotationManager {
 
     const placed: DOMRect[] = [];
     const ordered = projectedPins
-      .filter((pin) => !pin.el.classList.contains("ai3d-pin-hidden"))
+      .filter((pin) => !pin.el.classList.contains("ai3d-pin-hidden") && !pin.el.classList.contains("ai3d-pin-occluded"))
       .sort((a, b) => a.depth - b.depth);
 
     for (const pin of ordered) {

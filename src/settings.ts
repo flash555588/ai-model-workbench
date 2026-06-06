@@ -182,6 +182,20 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.annotationDisplayMode"))
+      .setDesc(t("settings.annotationDisplayMode.desc"))
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("snippet", t("settings.annotationDisplayMode.snippet"))
+          .addOption("surface", t("settings.annotationDisplayMode.surface"))
+          .addOption("dot", t("settings.annotationDisplayMode.dot"))
+          .setValue(this.plugin.getSettings().annotationDisplayMode)
+          .onChange((val: string) => {
+            this.plugin.updateSettings({ annotationDisplayMode: val as "snippet" | "surface" | "dot" });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.previewRendererRollout"))
       .setDesc(t("settings.previewRendererRollout.desc"))
       .addDropdown((dropdown) =>

@@ -62,8 +62,30 @@ function toVectorTuple(point: { x: number; y: number; z: number }): [number, num
   return [point.x, point.y, point.z];
 }
 
-function createPartId(modelPath: string, index: number): string {
-  return `${getPortableStem(modelPath) || "model"}:part:${index + 1}`;
+function sanitizePartIdSegment(value: string): string {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|#[\]^]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 96);
+}
+
+function createPartId(modelPath: string, part: ModelPartSummary, index: number, seen: Set<string>): string {
+  const modelStem = sanitizePartIdSegment(getPortableStem(modelPath) || "model") || "model";
+  const identifier = part.occurrenceId ?? part.componentId ?? part.partNumber;
+  const rawId = identifier
+    ? `${modelStem}:component:${sanitizePartIdSegment(identifier) || index + 1}`
+    : `${modelStem}:part:${index + 1}`;
+  let candidate = rawId;
+  let suffix = 2;
+  while (seen.has(candidate)) {
+    candidate = `${rawId}:${suffix}`;
+    suffix++;
+  }
+  seen.add(candidate);
+  return candidate;
 }
 
 function normalizePartText(value: string | null | undefined): string {
@@ -105,6 +127,12 @@ function materialMatches(left?: string | null, right?: string | null): boolean {
   return !!leftValue && !!rightValue && leftValue === rightValue;
 }
 
+function identifierMatches(left?: string | null, right?: string | null): boolean {
+  const leftValue = normalizePartText(left);
+  const rightValue = normalizePartText(right);
+  return !!leftValue && !!rightValue && leftValue === rightValue;
+}
+
 function buildRegisteredPartMatches(part: PartRecord, registeredParts: readonly PartRecord[]): RegisteredPartMatch[] {
   const partNameTokens = tokenSet(part.name);
   const partMeshTokens = tokenSet(part.meshRefs.join(" "));
@@ -117,14 +145,24 @@ function buildRegisteredPartMatches(part: PartRecord, registeredParts: readonly 
       const sizeScore = dimensionsSimilarity(part.bbox, candidate.bbox);
       const sameCategory = !!part.category && !!candidate.category && part.category === candidate.category;
       const sameMaterial = materialMatches(part.materialName, candidate.materialName);
+      const sameComponentId = identifierMatches(part.componentId, candidate.componentId);
+      const samePartNumber = identifierMatches(part.partNumber, candidate.partNumber);
+      const sameOccurrenceId = identifierMatches(part.occurrenceId, candidate.occurrenceId);
       let score = (nameScore * 0.38) + (meshScore * 0.22) + (sizeScore * 0.22);
+      if (sameComponentId) score += 0.5;
+      if (samePartNumber) score += 0.4;
+      if (sameOccurrenceId) score += 0.25;
       if (sameCategory) score += 0.1;
       if (sameMaterial) score += 0.08;
+      if (sameComponentId) reasons.push(`same component id: ${part.componentId}`);
+      if (samePartNumber) reasons.push(`same part number: ${part.partNumber}`);
+      if (sameOccurrenceId) reasons.push("same occurrence id");
       if (nameScore >= 0.5) reasons.push("similar part name");
       if (meshScore >= 0.5) reasons.push("similar mesh names");
       if (sizeScore >= 0.72) reasons.push("similar bounding size");
       if (sameCategory) reasons.push(`same category: ${part.category}`);
       if (sameMaterial && part.materialName) reasons.push(`same material: ${part.materialName}`);
+      score = Math.min(1, score);
       if (score < REGISTERED_PART_MATCH_THRESHOLD || reasons.length === 0) {
         return [];
       }
@@ -157,6 +195,7 @@ function attachRegisteredPartMatches(parts: readonly PartRecord[], registeredPar
 
 function inferPartCategory(part: ModelPartSummary): string {
   const name = part.name.toLowerCase();
+  if (part.source === "component") return "component";
   if (part.source === "group") return "group";
   if (name.includes("wheel") || name.includes("gear") || name.includes("axle")) return "mechanical";
   if (name.includes("shell") || name.includes("case") || name.includes("cover") || name.includes("housing")) return "enclosure";
@@ -171,6 +210,21 @@ function buildPartObservations(part: ModelPartSummary): string[] {
   if (part.source === "group") {
     observations.push(`Registered from model group with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 0, "child mesh", "child meshes")}.`);
   }
+  if (part.source === "component") {
+    observations.push(`Registered from GLB/GLTF component with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 1, "child mesh", "child meshes")}.`);
+  }
+  if (part.componentId) {
+    observations.push(`Component ID: ${part.componentId}.`);
+  }
+  if (part.occurrenceId) {
+    observations.push(`Occurrence ID: ${part.occurrenceId}.`);
+  }
+  if (part.partNumber) {
+    observations.push(`Part number: ${part.partNumber}.`);
+  }
+  if (part.componentPath) {
+    observations.push(`Component path: ${part.componentPath}.`);
+  }
   observations.push(
     `${formatObservationCount(part.triangleCount, "triangle")} and ${formatObservationCount(part.vertexCount, "vertex")}.`,
     `Bounding size ${part.boundingSize.x.toFixed(3)} x ${part.boundingSize.y.toFixed(3)} x ${part.boundingSize.z.toFixed(3)}.`,
@@ -182,11 +236,16 @@ function buildPartObservations(part: ModelPartSummary): string[] {
 }
 
 export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly ModelPartSummary[]): PartRecord[] {
+  const seenPartIds = new Set<string>();
   return parts.map((part, index) => ({
-    partId: createPartId(modelPath, index),
+    partId: createPartId(modelPath, part, index, seenPartIds),
     assetId: modelPath,
     name: part.name || `Part ${index + 1}`,
     source: part.source,
+    componentId: part.componentId,
+    occurrenceId: part.occurrenceId,
+    partNumber: part.partNumber,
+    componentPath: part.componentPath,
     category: inferPartCategory(part),
     meshRefs: part.meshNames?.length ? [...part.meshNames] : [part.name || `mesh-${index + 1}`],
     childCount: part.childCount,
@@ -196,7 +255,7 @@ export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly 
     triangleCount: part.triangleCount,
     vertexCount: part.vertexCount,
     materialName: part.materialName,
-    confidence: part.source === "group" ? 0.72 : part.name ? 0.55 : 0.35,
+    confidence: part.source === "component" ? 0.82 : part.source === "group" ? 0.72 : part.name ? 0.55 : 0.35,
     observations: buildPartObservations(part),
     inferredFunctions: [],
     knowledgeTags: [],
@@ -311,6 +370,10 @@ function buildDraftingInput(options: {
       name: part.name,
       notePath: part.notePath,
       source: part.source,
+      componentId: part.componentId,
+      occurrenceId: part.occurrenceId,
+      partNumber: part.partNumber,
+      componentPath: part.componentPath,
       category: part.category,
       meshRefs: [...part.meshRefs],
       childCount: part.childCount,

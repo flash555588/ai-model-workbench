@@ -73,6 +73,16 @@ function formatMeshRefs(meshRefs: readonly string[], limit = 12): string {
   return remaining > 0 ? `${head}, +${remaining.toLocaleString()} more` : head;
 }
 
+function formatPartSource(part: PartRecord): string {
+  if (part.source === "component") {
+    return part.childCount && part.childCount > 1 ? `component (${part.childCount})` : "component";
+  }
+  if (part.source === "group") {
+    return `group (${part.childCount ?? part.meshRefs.length})`;
+  }
+  return "mesh";
+}
+
 function formatRegisteredMatch(match: RegisteredPartMatch): string {
   const target = match.sourceNotePath
     ? `[[${match.sourceNotePath}|${match.sourcePartName}]]`
@@ -529,7 +539,7 @@ function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
     const center = formatVectorTuple(part.center);
     const observations = part.observations.slice(0, 2).join(" ");
     const partNote = part.notePath ? `[[${part.notePath}]]` : "-";
-    const source = part.source === "group" ? `group (${part.childCount ?? part.meshRefs.length})` : "mesh";
+    const source = formatPartSource(part);
     lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(partNote)} | ${escapeTableCell(source)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
   }
   if (parts.length > 32) {
@@ -841,7 +851,11 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     assetId,
     parentPartId: typeof value.parentPartId === "string" ? value.parentPartId : undefined,
     name,
-    source: value.source === "group" || value.source === "mesh" ? value.source : undefined,
+    source: value.source === "group" || value.source === "mesh" || value.source === "component" ? value.source : undefined,
+    componentId: typeof value.componentId === "string" ? value.componentId : undefined,
+    occurrenceId: typeof value.occurrenceId === "string" ? value.occurrenceId : undefined,
+    partNumber: typeof value.partNumber === "string" ? value.partNumber : undefined,
+    componentPath: typeof value.componentPath === "string" ? value.componentPath : undefined,
     category: typeof value.category === "string" ? value.category : undefined,
     meshRefs: normalizeStringArray(value.meshRefs),
     childCount: Number.isFinite(value.childCount) ? Number(value.childCount) : undefined,
@@ -946,6 +960,9 @@ function buildPartNoteContent(options: {
     `parent_report: ${markdownQuote(options.notePath)}`,
     `part_id: ${markdownQuote(options.part.partId)}`,
     `asset_id: ${markdownQuote(options.part.assetId)}`,
+    ...(options.part.componentId ? [`component_id: ${markdownQuote(options.part.componentId)}`] : []),
+    ...(options.part.occurrenceId ? [`occurrence_id: ${markdownQuote(options.part.occurrenceId)}`] : []),
+    ...(options.part.partNumber ? [`part_number: ${markdownQuote(options.part.partNumber)}`] : []),
     `category: ${markdownQuote(options.part.category ?? "unclassified")}`,
     `status: draft`,
     `generated_by: ai-model-workbench`,
@@ -962,9 +979,13 @@ function buildPartNoteContent(options: {
     "",
     `- Source model: [[${options.sourcePath}|${options.baseName}]]`,
     `- Parent report: [[${options.notePath}|${options.baseName} Report]]`,
-    `- Source: ${options.part.source === "group" ? "model group" : "mesh"}`,
+    `- Source: ${formatPartSource(options.part)}`,
     `- Category: ${options.part.category ?? "unclassified"}`,
-    ...(options.part.source === "group" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
+    ...(options.part.componentId ? [`- Component ID: ${options.part.componentId}`] : []),
+    ...(options.part.occurrenceId ? [`- Occurrence ID: ${options.part.occurrenceId}`] : []),
+    ...(options.part.partNumber ? [`- Part number: ${options.part.partNumber}`] : []),
+    ...(options.part.componentPath ? [`- Component path: ${options.part.componentPath}`] : []),
+    ...(options.part.source === "group" || options.part.source === "component" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
     `- Triangles: ${(options.part.triangleCount ?? 0).toLocaleString()}`,
     `- Vertices: ${(options.part.vertexCount ?? 0).toLocaleString()}`,
     `- Material: ${options.part.materialName ?? "-"}`,

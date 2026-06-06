@@ -59,7 +59,13 @@ function isMissingExternalModelResourceError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Missing external model resource:");
 }
 
-function createPartMergeKey(part: Pick<PartRecord, "source" | "name" | "meshRefs">): string {
+function createPartMergeKey(
+  part: Pick<PartRecord, "source" | "name" | "meshRefs" | "componentId" | "occurrenceId" | "partNumber">,
+): string {
+  const identity = part.occurrenceId ?? part.componentId ?? part.partNumber;
+  if (identity?.trim()) {
+    return `component:${identity.trim().toLowerCase()}`;
+  }
   const meshRefs = part.meshRefs
     .map((name) => name.trim().toLowerCase())
     .filter(Boolean)
@@ -309,7 +315,11 @@ export class DirectModelView extends FileView {
           },
           noteReader,
           headingSearch,
-          { app: this.app, previewMode: this.getSettings().annotationPreviewMode },
+          {
+            app: this.app,
+            previewMode: this.getSettings().annotationPreviewMode,
+            displayMode: this.getSettings().annotationDisplayMode,
+          },
         );
 
         // Show annotate button with badge

@@ -25,9 +25,13 @@ export interface PreviewPartSummaryInput {
   materialName?: string | null;
   boundingSize: PreviewWorldPoint;
   center: PreviewWorldPoint;
-  source?: "mesh" | "group";
+  source?: ModelPartSummary["source"];
   meshNames?: readonly string[];
   childCount?: number;
+  componentId?: string;
+  occurrenceId?: string;
+  partNumber?: string;
+  componentPath?: string;
 }
 
 export function createPreviewModelSummary(input: PreviewModelSummaryInput): ModelPreviewSummary {
@@ -117,6 +121,10 @@ export function createPreviewPartSummary(input: PreviewPartSummaryInput): ModelP
     source: input.source,
     meshNames: input.meshNames ? [...input.meshNames] : undefined,
     childCount: input.childCount,
+    componentId: input.componentId,
+    occurrenceId: input.occurrenceId,
+    partNumber: input.partNumber,
+    componentPath: input.componentPath,
   };
 }
 

@@ -62,6 +62,7 @@ import {
   createPreviewModelSummary,
   createPreviewPartSummary,
 } from "../preview/summary";
+import { extractPreviewComponentIdentity, type PreviewComponentIdentity } from "../preview/component-identity";
 import type {
   PreviewAxis,
   WorkbenchPreview,
@@ -144,6 +145,20 @@ function getObjectDisplayName(object: Object3D, fallback: string): string {
   return typeof originalName === "string" && originalName.trim().length > 0
     ? originalName
     : object.name || fallback;
+}
+
+function getObjectComponentPath(root: Object3D, object: Object3D): string {
+  const names: string[] = [];
+  let current: Object3D | null = object;
+  while (current && current !== root) {
+    names.push(getObjectDisplayName(current, current.type || `object-${current.id}`));
+    current = current.parent;
+  }
+  return names.reverse().join("/");
+}
+
+function getPartDisplayName(identity: PreviewComponentIdentity, fallback: string): string {
+  return identity.displayName?.trim() || identity.partNumber || identity.componentId || fallback;
 }
 
 function createFocusDimMaterial(material: Material): Material {
@@ -484,7 +499,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootObject) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
-    const groupedPartCandidates = this.computeGroupedPartSummaries(this.rootObject, renderableMeshes);
+    const groupedPartCandidates = this.computeComponentPartSummaries(this.rootObject, renderableMeshes);
     const meshParts = renderableMeshes
       .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
       .map((mesh) => this.computePartSummary(mesh));
@@ -1597,29 +1612,42 @@ export class ThreeModelPreview implements WorkbenchPreview {
     mesh.updateWorldMatrix(true, false);
     const bounds = getObjectPreviewBounds(mesh);
     const name = getObjectDisplayName(mesh, `mesh-${mesh.id}`);
-    return createPreviewPartSummary({
+    const identity = extractPreviewComponentIdentity(mesh.userData, {
       name,
+      path: this.rootObject ? getObjectComponentPath(this.rootObject, mesh) : name,
+    });
+    return createPreviewPartSummary({
+      name: getPartDisplayName(identity, name),
       triangleCount: triangleCountForMesh(mesh),
       vertexCount: vertexCountForMesh(mesh),
       materialName: describeMaterial(materialList(mesh.material)[0]),
       boundingSize: getPreviewBoundsSize(bounds),
       center: getPreviewBoundsCenter(bounds),
-      source: "mesh",
+      source: identity.hasExplicitIdentity ? "component" : "mesh",
       meshNames: [name],
       childCount: 1,
+      componentId: identity.componentId,
+      occurrenceId: identity.occurrenceId,
+      partNumber: identity.partNumber,
+      componentPath: identity.componentPath,
     });
   }
 
-  private computeGroupedPartSummaries(root: Object3D, renderableMeshes: readonly Mesh[]): {
+  private computeComponentPartSummaries(root: Object3D, renderableMeshes: readonly Mesh[]): {
     parts: ModelPartSummary[];
     groupedMeshes: Set<Mesh>;
   } {
     const renderableSet = new Set(renderableMeshes);
     const parts: ModelPartSummary[] = [];
     const groupedMeshes = new Set<Mesh>();
+    const candidates: Array<{
+      object: Object3D;
+      childMeshes: Mesh[];
+      identity: PreviewComponentIdentity;
+    }> = [];
     root.updateWorldMatrix(true, true);
     root.traverse((object) => {
-      if (object === root || isMesh(object) || !object.name.trim()) {
+      if (object === root || isMesh(object)) {
         return;
       }
       const childMeshes: Mesh[] = [];
@@ -1629,20 +1657,42 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
       });
       if (childMeshes.length < 2 || childMeshes.length === renderableMeshes.length) {
+        const identity = extractPreviewComponentIdentity(object.userData, {
+          name: getObjectDisplayName(object, `component-${object.id}`),
+          path: getObjectComponentPath(root, object),
+        });
+        if (!identity.hasExplicitIdentity || childMeshes.length < 1 || childMeshes.length === renderableMeshes.length) {
+          return;
+        }
+        candidates.push({ object, childMeshes, identity });
         return;
       }
-      for (const mesh of childMeshes) {
-        groupedMeshes.add(mesh);
-      }
+      const identity = extractPreviewComponentIdentity(object.userData, {
+        name: getObjectDisplayName(object, `group-${object.id}`),
+        path: getObjectComponentPath(root, object),
+      });
+      if (!identity.hasExplicitIdentity && !object.name.trim()) return;
+      candidates.push({ object, childMeshes, identity });
+    });
+
+    candidates
+      .sort((left, right) => left.childMeshes.length - right.childMeshes.length)
+      .forEach(({ object, childMeshes, identity }) => {
+        const availableMeshes = childMeshes.filter((mesh) => !groupedMeshes.has(mesh));
+        if (availableMeshes.length < 1) return;
+        if (!identity.hasExplicitIdentity && availableMeshes.length < 2) return;
+        for (const mesh of availableMeshes) {
+          groupedMeshes.add(mesh);
+        }
       const bounds = new Box3();
-      for (const mesh of childMeshes) {
+      for (const mesh of availableMeshes) {
         mesh.updateWorldMatrix(true, false);
         bounds.union(new Box3().setFromObject(mesh));
       }
       const materialNames = new Set<string>();
       let triangleCount = 0;
       let vertexCount = 0;
-      for (const mesh of childMeshes) {
+      for (const mesh of availableMeshes) {
         triangleCount += triangleCountForMesh(mesh);
         vertexCount += vertexCountForMesh(mesh);
         for (const material of materialList(mesh.material)) {
@@ -1651,7 +1701,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
       }
       parts.push(createPreviewPartSummary({
-        name: getObjectDisplayName(object, `group-${object.id}`),
+        name: getPartDisplayName(identity, getObjectDisplayName(object, `group-${object.id}`)),
         triangleCount,
         vertexCount,
         materialName: materialNames.size === 0
@@ -1667,11 +1717,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
           min: toPreviewWorldPoint(bounds.min),
           max: toPreviewWorldPoint(bounds.max),
         }),
-        source: "group",
-        meshNames: childMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
-        childCount: childMeshes.length,
+        source: identity.hasExplicitIdentity ? "component" : "group",
+        meshNames: availableMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
+        childCount: availableMeshes.length,
+        componentId: identity.componentId,
+        occurrenceId: identity.occurrenceId,
+        partNumber: identity.partNumber,
+        componentPath: identity.componentPath,
       }));
-    });
+      });
     return { parts, groupedMeshes };
   }
 

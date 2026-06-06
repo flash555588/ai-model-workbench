@@ -18,6 +18,7 @@ export interface PluginSettings {
   maxFileSizeMb: number;
   autoGenerateKnowledgeNotes: boolean;
   annotationPreviewMode: "plain-text" | "markdown";
+  annotationDisplayMode: "snippet" | "surface" | "dot";
   previewRendererRollout: PreviewRendererRollout;
   /** Simple toggle: true = Three.js, false = Babylon.js (compatibility). */
   useThreeRenderer: boolean;
@@ -148,6 +149,8 @@ export interface ModelPreviewSummary {
   rootName: string;
 }
 
+export type ModelPartSource = "mesh" | "group" | "component";
+
 export interface ModelPartSummary {
   name: string;
   triangleCount: number;
@@ -155,9 +158,13 @@ export interface ModelPartSummary {
   materialName: string | null;
   boundingSize: { x: number; y: number; z: number };
   center: { x: number; y: number; z: number };
-  source?: "mesh" | "group";
+  source?: ModelPartSource;
   meshNames?: string[];
   childCount?: number;
+  componentId?: string;
+  occurrenceId?: string;
+  partNumber?: string;
+  componentPath?: string;
 }
 
 export interface ModelEvidence {
@@ -195,7 +202,11 @@ export interface PartRecord {
   assetId: string;
   parentPartId?: string;
   name: string;
-  source?: "mesh" | "group";
+  source?: ModelPartSource;
+  componentId?: string;
+  occurrenceId?: string;
+  partNumber?: string;
+  componentPath?: string;
   category?: string;
   meshRefs: string[];
   childCount?: number;
@@ -280,7 +291,11 @@ export interface AnalysisDraftingInput {
     partId: string;
     name: string;
     notePath?: string;
-    source?: "mesh" | "group";
+    source?: ModelPartSource;
+    componentId?: string;
+    occurrenceId?: string;
+    partNumber?: string;
+    componentPath?: string;
     category?: string;
     meshRefs?: string[];
     childCount?: number;

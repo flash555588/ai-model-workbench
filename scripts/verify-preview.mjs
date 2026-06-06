@@ -439,12 +439,12 @@ async function verifyReadonlyPinMode(page, state) {
   await page.waitForTimeout(200);
   assert(await page.locator(".ai3d-annotation-editor").count() === 0, "Readonly pin unexpectedly opened editor");
 
-  const occludedPin = page.locator(".ai3d-annotation-pin", { hasText: "Occluded Pin" }).first();
-  await occludedPin.waitFor({ state: "visible", timeout: 5000 });
   await page.waitForFunction(() => {
     const pins = Array.from(document.querySelectorAll(".ai3d-annotation-pin"));
     const pin = pins.find((entry) => entry.textContent?.includes("Occluded Pin"));
-    return pin?.classList.contains("ai3d-pin-occluded") ?? false;
+    if (!pin?.classList.contains("ai3d-pin-occluded")) return false;
+    const styles = getComputedStyle(pin);
+    return styles.visibility === "hidden" && styles.pointerEvents === "none" && Number(styles.opacity) === 0;
   }, null, { timeout: 5000 });
   await verifyOcclusionUpdatesWhileRotating(page);
 }
@@ -474,7 +474,7 @@ async function verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedP
 
 async function verifyOcclusionUpdatesWhileRotating(page) {
   const occludedPin = page.locator(".ai3d-annotation-pin", { hasText: "Occluded Pin" }).first();
-  await occludedPin.waitFor({ state: "visible", timeout: 5000 });
+  await occludedPin.waitFor({ state: "attached", timeout: 5000 });
   const before = await occludedPin.evaluate((pin) => ({
     left: pin.style.getPropertyValue("--pin-left"),
     top: pin.style.getPropertyValue("--pin-top"),
@@ -563,6 +563,7 @@ function verifyGroupedPartsEvidence(state) {
   const parts = Array.isArray(state?.evidence?.parts) ? state.evidence.parts : [];
   const groupParts = parts.filter((part) => part?.source === "group");
   const meshParts = parts.filter((part) => part?.source === "mesh");
+  const componentParts = parts.filter((part) => part?.source === "component");
   const groupNames = new Set(groupParts.map((part) => part.name));
 
   assert(groupParts.length >= 2, `Expected at least 2 grouped parts, got ${JSON.stringify(parts)}`);
@@ -576,6 +577,13 @@ function verifyGroupedPartsEvidence(state) {
   assert(
     meshParts.some((part) => part.name === "Loose Detail"),
     `Ungrouped mesh part was not preserved alongside grouped parts: ${JSON.stringify(parts)}`,
+  );
+  const taggedComponent = componentParts.find((part) => part.componentId === "FASTENER-M3");
+  assert(
+    taggedComponent?.occurrenceId === "ASM-ROOT/FASTENER-001"
+      && taggedComponent.partNumber === "DIN912-M3x8"
+      && taggedComponent.componentPath === "ASM-ROOT/FASTENER-001",
+    `Tagged GLB component metadata was not preserved: ${JSON.stringify(parts)}`,
   );
 }
 
