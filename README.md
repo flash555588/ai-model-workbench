@@ -232,6 +232,8 @@ SPLAT preview is temporarily disabled in packaged builds while its loader is rep
 | DAE | `.dae` | Python + trimesh | GLB |
 | FBX | `.fbx` | FBX2glTF | GLB |
 
+STEP conversion preserves XDE assembly/component labels when available, exporting each component as its own GLB node with `extras.ai3d` identity metadata. PCB STEP files from tools such as EasyEDA can therefore register reference-designator parts like `R1`, `USB1`, and `U4` instead of collapsing the board into one mesh.
+
 ### Format Feature Matrix
 
 | Feature | GLB/GLTF | STL | OBJ | PLY | FBX (converted) | CAD |
@@ -377,7 +379,7 @@ The workbench `Generate note` action creates an evidence-backed Markdown note ra
 - a current viewport evidence snapshot in `Media/3D Previews`
 - an editable local draft that turns the captured evidence, annotations, tags, and profile notes into a first-pass knowledge note body, plus local draft metadata for tags and next actions
 
-The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting. When a GLB/GLTF file contains named internal groups or assemblies, the renderer registers those groups as higher-confidence part candidates and keeps ungrouped meshes as standalone candidates. GLB/GLTF component metadata in `extras.ai3d` (`partId`, `occurrenceId`, `partNumber`, and `componentPath`) is registered as individual component parts when present. Direct file view stores those captured candidates in the model profile immediately after a successful load, so later imported models can match reused parts even before a full report exists. During note generation, current part candidates are also compared with parts registered in other profiles or analyzed model sidecars, so likely reused components can be linked back to their existing part notes for review.
+The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting. When a GLB/GLTF file contains named internal groups or assemblies, the renderer registers those groups as higher-confidence part candidates and keeps ungrouped meshes as standalone candidates. GLB/GLTF component metadata in `extras.ai3d` (`partId`, `occurrenceId`, `partNumber`, and `componentPath`) is registered as individual component parts when present. STEP conversion preserves XDE component labels as GLB component metadata, so PCB reference designators and CAD assembly children can become individual registered parts after conversion. Direct file view stores those captured candidates in the model profile immediately after a successful load, preserving source extensions such as STEP, FBX, 3MF, and DAE in the analysis record so later imported models can match reused parts across converted model types even before a full report exists. During note generation, current part candidates are also compared with parts registered in other profiles or analyzed model sidecars, so likely reused components can be linked back to their existing part notes for review.
 
 After a report has been generated, use the direct workbench `Open index` action or the command palette `Open knowledge index` command to jump back into the model's knowledge map.
 

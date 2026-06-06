@@ -258,6 +258,63 @@ await writeFile(entryPath, `
   assert(groupedReport.includes("## Registered Part Matches"), "Grouped report did not include registered match section");
   assert(groupedReport.includes("Parts/3D Components/legacy/01 Left Assembly.md"), "Grouped report did not link to registered part note");
 
+  const stepEvidence: ModelEvidence = {
+    summary: { ...preview, rootName: "pcb.step", meshCount: 1 },
+    parts: [
+      {
+        name: "R1",
+        source: "component",
+        componentId: "R0603-10K",
+        occurrenceId: "PCB/R1",
+        componentPath: "PCB/R1",
+        meshNames: ["R1"],
+        childCount: 1,
+        triangleCount: 420,
+        vertexCount: 210,
+        materialName: "component matte",
+        boundingSize: { x: 1.6, y: 0.8, z: 0.45 },
+        center: { x: 1, y: 2, z: 0.5 },
+      },
+    ],
+    materialNames: ["component matte"],
+    resourceWarnings: [],
+    capturedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const stepAnalysis = buildLocalAnalysisResult({
+    modelPath: "models/pcb.step",
+    profile,
+    preview,
+    evidence: stepEvidence,
+    registeredParts: [
+      {
+        partId: "other-board:component:R0603-10K",
+        assetId: "models/other-board.fbx",
+        name: "R1",
+        source: "component",
+        componentId: "R0603-10K",
+        occurrenceId: "OTHER/R1",
+        componentPath: "OTHER/R1",
+        category: "component",
+        meshRefs: ["R1"],
+        materialRefs: ["component matte"],
+        bbox: [1.6, 0.8, 0.45],
+        center: [4, 5, 0.5],
+        triangleCount: 430,
+        vertexCount: 215,
+        materialName: "component matte",
+        confidence: 0.82,
+        observations: [],
+        inferredFunctions: [],
+        knowledgeTags: [],
+        reviewed: false,
+      },
+    ],
+  });
+  assert(stepAnalysis.asset.format === "step", "STEP analysis should preserve source format");
+  const stepPart = stepAnalysis.parts.find((part) => part.name === "R1");
+  assert(stepPart?.registeredMatches?.[0]?.sourceAssetId === "models/other-board.fbx", "STEP component did not match registered part from another extension");
+  assert(stepPart.registeredMatches[0].reasons.some((reason) => reason.includes("same component id")), "Cross-extension match did not use component id");
+
   const analysis: AnalysisResult = {
     asset: {
       assetId: "models/rubiks-cube-3x3.glb",

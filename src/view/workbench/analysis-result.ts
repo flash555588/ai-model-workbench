@@ -16,6 +16,23 @@ import { getPortableStem } from "../../utils/resolve-path";
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
 const MAX_REGISTERED_MATCHES_PER_PART = 3;
 const REGISTERED_PART_MATCH_THRESHOLD = 0.58;
+const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
+  "glb",
+  "gltf",
+  "stl",
+  "obj",
+  "splat",
+  "ply",
+  "fbx",
+  "step",
+  "stp",
+  "iges",
+  "igs",
+  "brep",
+  "sldprt",
+  "3mf",
+  "dae",
+]);
 
 export interface BuildLocalAnalysisOptions {
   modelPath: string;
@@ -52,8 +69,8 @@ function distance3d(left: readonly [number, number, number], right: readonly [nu
 
 function inferFormat(path: string): AnalysisResult["asset"]["format"] {
   const ext = path.split(".").pop()?.trim().toLowerCase();
-  if (ext === "glb" || ext === "gltf" || ext === "stl" || ext === "obj" || ext === "splat" || ext === "ply") {
-    return ext;
+  if (SUPPORTED_ANALYSIS_FORMATS.has(ext as AnalysisResult["asset"]["format"])) {
+    return ext as AnalysisResult["asset"]["format"];
   }
   return "glb";
 }
@@ -211,7 +228,7 @@ function buildPartObservations(part: ModelPartSummary): string[] {
     observations.push(`Registered from model group with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 0, "child mesh", "child meshes")}.`);
   }
   if (part.source === "component") {
-    observations.push(`Registered from GLB/GLTF component with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 1, "child mesh", "child meshes")}.`);
+    observations.push(`Registered from model component metadata with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 1, "child mesh", "child meshes")}.`);
   }
   if (part.componentId) {
     observations.push(`Component ID: ${part.componentId}.`);

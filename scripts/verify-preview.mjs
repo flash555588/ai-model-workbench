@@ -600,8 +600,6 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     }
     const methods = [
       "getAnnotationProvider",
-      "setExplode",
-      "resetExplode",
       "focusWorldPoint",
       "hasAnimations",
       "setRenderQuality",
@@ -612,10 +610,6 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     ];
     const missingMethods = methods.filter((method) => typeof preview[method] !== "function");
     const before = canvas.toDataURL("image/png");
-    preview.setExplode?.(0.55, "x");
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const exploded = canvas.toDataURL("image/png");
-    preview.resetExplode?.();
     preview.focusWorldPoint?.({ x: 0.8, y: 0.8, z: 0.8 });
     await new Promise((resolve) => activeWindow.setTimeout(resolve, 450));
     const focused = canvas.toDataURL("image/png");
@@ -624,8 +618,7 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     return {
       missing: false,
       missingMethods,
-      explodeChanged: before !== exploded,
-      focusChanged: exploded !== focused,
+      focusChanged: before !== focused,
       snapshot,
       evidence,
       modelInfo: preview.exportModelInfo?.("rubiks-cube-3x3.glb") ?? "",
@@ -634,7 +627,6 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
 
   assert(!result.missing, "Workbench preview was unavailable");
   assert(result.missingMethods.length === 0, `Workbench preview is missing methods: ${result.missingMethods.join(", ")}`);
-  assert(result.explodeChanged, "Workbench explode did not change the rendered canvas");
   assert(result.focusChanged, "Workbench focusWorldPoint did not change the rendered canvas");
   assert(result.snapshot.startsWith("data:image/png;base64,"), "Workbench snapshot did not return a PNG data URL");
   assert(result.evidence?.parts?.length > 0, `Workbench evidence is missing parts: ${JSON.stringify(result.evidence)}`);
@@ -670,38 +662,6 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     performance: performanceSnapshot,
     selectedPart: selectedPartMarkdown,
   }, null, 2));
-}
-
-async function verifyThreeResetViewImmediate(page, route, summary) {
-  if (route?.backend !== "three") return;
-  if ((summary?.meshCount ?? 0) <= 1) return;
-
-  const result = await page.evaluate(async () => {
-    const preview = window.__ai3dPreview;
-    const canvas = document.querySelector("#preview-canvas");
-    if (!preview || !(canvas instanceof HTMLCanvasElement) || typeof preview.setExplode !== "function") {
-      return { skipped: true };
-    }
-
-    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-    const before = canvas.toDataURL("image/png");
-    preview.setExplode(0.75, "x");
-    await nextFrame();
-    await nextFrame();
-    const exploded = canvas.toDataURL("image/png");
-    preview.resetView();
-    const reset = canvas.toDataURL("image/png");
-
-    return {
-      skipped: false,
-      changedByExplode: before !== exploded,
-      changedByReset: exploded !== reset,
-    };
-  });
-
-  assert(!result.skipped, "Three reset verification could not access the preview");
-  assert(result.changedByExplode, "Explode did not change the rendered canvas before reset");
-  assert(result.changedByReset, "Reset view did not refresh the Three canvas immediately");
 }
 
 async function verifyThreeDisassemblyDragResponsive(page, route, pickPoint) {
@@ -901,7 +861,6 @@ async function verify() {
     assert(selectedPartMarkdown.includes("| Triangles |"), "Selected part info is missing triangle count");
     await verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown);
     await verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedPartMarkdown);
-    await verifyThreeResetViewImmediate(page, state.route, state.summary);
     if (verifyMode === "basic") {
       await verifyThreeDisassemblyDragResponsive(page, state.route, {
         clientX: selectedPartPick.clientX,

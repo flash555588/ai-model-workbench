@@ -182,7 +182,22 @@ export interface AssetRecord {
   title: string;
   sourcePath: string;
   vaultPath?: string;
-  format: "glb" | "gltf" | "stl" | "obj" | "splat" | "ply";
+  format:
+    | "glb"
+    | "gltf"
+    | "stl"
+    | "obj"
+    | "splat"
+    | "ply"
+    | "fbx"
+    | "step"
+    | "stp"
+    | "iges"
+    | "igs"
+    | "brep"
+    | "sldprt"
+    | "3mf"
+    | "dae";
   importedAt: string;
   updatedAt: string;
   status: "idle" | "processing" | "ready" | "error";

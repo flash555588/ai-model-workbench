@@ -4,18 +4,19 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { chromium } from "playwright-core";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const vaultDir = parseArg("--vault") ? resolve(parseArg("--vault")) : join("/tmp", "ai-model-workbench-verify-vault");
+const vaultDir = parseArg("--vault") ? resolve(parseArg("--vault")) : join(tmpdir(), "ai-model-workbench-verify-vault");
 const noteName = "AI Model Workbench Obsidian Verification.md";
 const notePath = join(vaultDir, noteName);
 const modelDir = join(vaultDir, "models");
 const workbenchModelVaultPath = "models/rubiks-cube-3x3.glb";
 const conversionFailureVaultPath = "models/needs-converter.fbx";
-const obsidianApp = parseArg("--obsidian") ?? process.env.OBSIDIAN_APP ?? "/Applications/Obsidian.app";
+const obsidianApp = parseArg("--obsidian") ?? process.env.OBSIDIAN_APP ?? defaultObsidianApp();
 const debugPort = Number(parseArg("--debug-port") ?? process.env.OBSIDIAN_DEBUG_PORT ?? 9222);
 const pluginId = JSON.parse(await readFile(join(rootDir, "manifest.json"), "utf8")).id;
 const pluginFiles = ["main.js", "manifest.json", "styles.css"];
@@ -42,6 +43,17 @@ const noteContent = [
 function parseArg(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : null;
+}
+
+function defaultObsidianApp() {
+  if (process.platform === "darwin") {
+    return "/Applications/Obsidian.app";
+  }
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA ?? "";
+    return join(localAppData, "Programs", "Obsidian", "Obsidian.exe");
+  }
+  return "obsidian";
 }
 
 function assert(condition, message) {
@@ -87,7 +99,15 @@ function obsidianDirFor(vault) {
 }
 
 function obsidianConfigPath() {
-  return process.env.HOME ? join(process.env.HOME, "Library", "Application Support", "obsidian", "obsidian.json") : null;
+  if (process.platform === "darwin") {
+    return process.env.HOME ? join(process.env.HOME, "Library", "Application Support", "obsidian", "obsidian.json") : null;
+  }
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA ?? (process.env.HOME ? join(process.env.HOME, "AppData", "Roaming") : null);
+    return appData ? join(appData, "obsidian", "obsidian.json") : null;
+  }
+  const configHome = process.env.XDG_CONFIG_HOME ?? (process.env.HOME ? join(process.env.HOME, ".config") : null);
+  return configHome ? join(configHome, "obsidian", "obsidian.json") : null;
 }
 
 function vaultConfigId(vault) {
@@ -133,7 +153,7 @@ async function enablePlugin(obsidianDir) {
 }
 
 async function registerVault() {
-  if (process.platform !== "darwin" || process.argv.includes("--skip-register")) {
+  if (process.argv.includes("--skip-register")) {
     return;
   }
 
@@ -164,7 +184,7 @@ async function registerVault() {
 }
 
 async function unregisterVault() {
-  if (process.platform !== "darwin" || process.argv.includes("--skip-register")) {
+  if (process.argv.includes("--skip-register")) {
     return;
   }
   const configPath = obsidianConfigPath();
@@ -185,12 +205,20 @@ async function unregisterVault() {
 }
 
 async function cleanupVault() {
-  if (process.platform === "darwin") {
-    spawnSync("osascript", ["-e", "tell application \"Obsidian\" to quit"], { stdio: "ignore" });
-    await sleep(1000);
-  }
+  await closeObsidian();
   await unregisterVault();
   await rm(vaultDir, { recursive: true, force: true });
+}
+
+async function closeObsidian() {
+  if (process.platform === "darwin") {
+    spawnSync("osascript", ["-e", "tell application \"Obsidian\" to quit"], { stdio: "ignore" });
+  } else if (process.platform === "win32") {
+    spawnSync("taskkill", ["/IM", "Obsidian.exe", "/F"], { stdio: "ignore", windowsHide: true });
+  } else {
+    spawnSync("pkill", ["-f", "Obsidian"], { stdio: "ignore" });
+  }
+  await sleep(1000);
 }
 
 async function waitForDebugEndpoint() {
@@ -211,29 +239,67 @@ async function waitForDebugEndpoint() {
 
 async function openObsidian() {
   assert(existsSync(obsidianApp), `Obsidian app not found at ${obsidianApp}`);
-  spawnSync("osascript", ["-e", "tell application \"Obsidian\" to quit"], { stdio: "ignore" });
-  await sleep(1000);
+  await closeObsidian();
 
-  spawn("open", [
-    "-na",
-    obsidianApp,
-    "--args",
-    `--remote-debugging-port=${debugPort}`,
-  ], {
-    cwd: rootDir,
-    detached: true,
-    stdio: "ignore",
-  }).unref();
+  if (process.platform === "darwin") {
+    spawn("open", [
+      "-na",
+      obsidianApp,
+      "--args",
+      `--remote-debugging-port=${debugPort}`,
+    ], {
+      cwd: rootDir,
+      detached: true,
+      stdio: "ignore",
+    }).unref();
+  } else {
+    spawn(obsidianApp, [
+      `--remote-debugging-port=${debugPort}`,
+    ], {
+      cwd: rootDir,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+  }
 
   await waitForDebugEndpoint();
-  run("open", [
-    "-a",
-    "Obsidian",
-    `obsidian://open?path=${encodeURIComponent(notePath)}`,
-  ]);
+  openObsidianUri(`obsidian://open?path=${encodeURIComponent(notePath)}`);
+}
+
+function openObsidianUri(uri) {
+  if (process.platform === "darwin") {
+    run("open", ["-a", "Obsidian", uri]);
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnSync("cmd", ["/c", "start", "", uri], { stdio: "ignore", windowsHide: true });
+    return;
+  }
+  spawnSync("xdg-open", [uri], { stdio: "ignore" });
 }
 
 async function trustVaultIfPrompted(page) {
+  const robustClicked = await page.evaluate(() => {
+    const trustPattern = /(trust author|trust vault|enable plugins|\u4fe1\u4efb|\u542f\u7528\u63d2\u4ef6)/i;
+    const trustButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => trustPattern.test((button.textContent ?? "").trim()));
+    if (!trustButton) {
+      return false;
+    }
+    trustButton.click();
+    return true;
+  });
+
+  if (robustClicked) {
+    await page.waitForFunction(() => {
+      const trustPattern = /(Trust this vault|trust author|enable plugins|\u4fe1\u4efb|\u542f\u7528\u63d2\u4ef6)/i;
+      return !trustPattern.test(document.body.innerText ?? "");
+    }, null, { timeout: 15_000 }).catch(() => {});
+    await sleep(1000);
+    return;
+  }
+
   const clicked = await page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
     const trustButton = buttons.find((button) => {
@@ -288,6 +354,43 @@ async function verifyPage() {
     }
     assert(page, "Obsidian page not found through remote debugging");
     await trustVaultIfPrompted(page);
+    await page.waitForFunction(() => {
+      return window.app?.workspace?.layoutReady === true
+        && !!document.querySelector(".workspace-leaf");
+    }, null, { timeout: 20_000 });
+    await page.evaluate(() => {
+      window.__ai3dVerifyOpenFile = async (file) => {
+        const workspace = window.app?.workspace;
+        if (!workspace) {
+          throw new Error("Obsidian workspace unavailable");
+        }
+        if (workspace.layoutReady === false && workspace.onLayoutReady) {
+          await new Promise((resolve) => workspace.onLayoutReady(resolve));
+        }
+        const leafGetters = [
+          () => workspace.getMostRecentLeaf?.(),
+          () => workspace.activeLeaf,
+          () => workspace.getLeaf?.(false),
+          () => workspace.getLeaf?.(true),
+          () => workspace.getLeaf?.("tab"),
+        ];
+        for (const getLeaf of leafGetters) {
+          try {
+            const leaf = getLeaf();
+            if (leaf?.openFile) {
+              await leaf.openFile(file, { active: true });
+              return;
+            }
+          } catch {
+            // Try the next workspace leaf strategy.
+          }
+        }
+        throw new Error("No Obsidian leaf was available for opening files");
+      };
+    });
+    await page.waitForFunction((targetNote) => {
+      return !!window.app?.vault?.getAbstractFileByPath?.(targetNote);
+    }, noteName, { timeout: 20_000 });
 
     await page.evaluate(async ({ targetNote, content }) => {
       let file = window.app?.vault?.getAbstractFileByPath?.(targetNote);
@@ -296,8 +399,20 @@ async function verifyPage() {
       } else {
         file = await window.app.vault.create(targetNote, content);
       }
-      await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+      await window.__ai3dVerifyOpenFile(file);
     }, { targetNote: noteName, content: noteContent });
+
+    await page.evaluate(async (targetPluginId) => {
+      const plugins = window.app?.plugins;
+      const appId = window.app?.appId;
+      if (appId) {
+        localStorage.setItem(`enable-plugin-${appId}`, "true");
+      }
+      await plugins?.setEnable?.(true);
+      if (!plugins?.plugins?.[targetPluginId]) {
+        await plugins?.enablePluginAndSave?.(targetPluginId);
+      }
+    }, pluginId);
 
     await page.waitForFunction(() => {
       return !!window.app?.plugins?.enabledPlugins?.has?.("ai-model-workbench")
@@ -386,7 +501,7 @@ async function verifyDirectWorkbench(page) {
     if (!file) {
       throw new Error(`Missing workbench model: ${modelPath}`);
     }
-    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+    await window.__ai3dVerifyOpenFile(file);
   }, workbenchModelVaultPath);
 
   await page.waitForFunction(() => {
@@ -399,9 +514,9 @@ async function verifyDirectWorkbench(page) {
     const panel = document.querySelector(".ai3d-direct-workbench-panel");
     return host?.getAttribute("data-ai3d-backend") === "three"
       && panel?.getAttribute("data-ai3d-backend") === "three"
-      && panel.querySelector('[data-ai3d-action="set-explode"]')
       && panel.querySelector('[data-ai3d-action="generate-note"]')
-      && panel.querySelector('[data-ai3d-action="open-index"]');
+      && panel.querySelector('[data-ai3d-action="open-index"]')
+      && !panel.querySelector('[data-ai3d-action="set-explode"]');
   }, null, { timeout: 20_000 });
   await page.waitForTimeout(1200);
 
@@ -469,15 +584,6 @@ async function verifyDirectWorkbench(page) {
     });
   }, workbenchModelVaultPath);
 
-  await page.locator('.ai3d-direct-view [data-ai3d-action="set-explode"]').evaluate((input) => {
-    if (!(input instanceof HTMLInputElement)) {
-      throw new Error("Workbench explode input missing");
-    }
-    input.value = "0.65";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await page.waitForTimeout(300);
-
   const after = await page.evaluate(() => {
     const canvas = document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas");
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -491,7 +597,7 @@ async function verifyDirectWorkbench(page) {
     if (!file) {
       throw new Error(`Missing workbench model: ${modelPath}`);
     }
-    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+    await window.__ai3dVerifyOpenFile(file);
   }, workbenchModelVaultPath);
   await page.waitForFunction(() => {
     return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
@@ -581,7 +687,7 @@ async function verifyDirectWorkbench(page) {
     if (!file) {
       throw new Error(`Missing workbench model: ${modelPath}`);
     }
-    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+    await window.__ai3dVerifyOpenFile(file);
   }, workbenchModelVaultPath);
   await page.waitForFunction(() => {
     return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
@@ -604,7 +710,7 @@ async function verifyDirectWorkbench(page) {
     if (!file) {
       throw new Error(`Missing workbench model: ${modelPath}`);
     }
-    await window.app.workspace.getLeaf(true).openFile(file, { active: true });
+    await window.__ai3dVerifyOpenFile(file);
   }, workbenchModelVaultPath);
   await page.waitForFunction(() => {
     return document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas")
@@ -736,7 +842,6 @@ async function verifyDirectWorkbench(page) {
   const directViewResult = await page.evaluate(({ beforeDataUrl, afterDataUrl, analysisPartCount }) => {
     const host = document.querySelector(".ai3d-direct-view .ai3d-preview-host");
     const panel = document.querySelector(".ai3d-direct-workbench-panel");
-    const explodeInput = document.querySelector('.ai3d-direct-workbench-panel [data-ai3d-action="set-explode"]');
     const actions = Array.from(document.querySelectorAll(".ai3d-direct-view [data-ai3d-action]"))
       .map((element) => element.getAttribute("data-ai3d-action"))
       .filter(Boolean);
@@ -749,7 +854,6 @@ async function verifyDirectWorkbench(page) {
       hasAnnotation: actions.includes("toggle-annotation"),
       hasPanel: !!panel,
       hasExplodeControl: actions.includes("set-explode"),
-      explodeValue: explodeInput instanceof HTMLInputElement ? explodeInput.value : null,
       hasKnowledgeAction: actions.includes("generate-note"),
       hasOpenIndexAction: actions.includes("open-index"),
       hasDiagnosticsCommand: !!window.app?.commands?.commands?.["ai-model-workbench:copy-diagnostics-report"],
@@ -759,8 +863,7 @@ async function verifyDirectWorkbench(page) {
     };
   }, { beforeDataUrl: before, afterDataUrl: after, analysisPartCount: analysis.parts.length });
   assert(directViewResult.hasPanel, "Direct workbench panel did not render");
-  assert(directViewResult.hasExplodeControl, "Direct workbench panel is missing explode control");
-  assert(directViewResult.explodeValue === "0" || directViewResult.explodeValue === "0.65", `Unexpected explode value: ${directViewResult.explodeValue}`);
+  assert(!directViewResult.hasExplodeControl, "Direct workbench panel still exposes explode control");
   assert(directViewResult.hasKnowledgeAction, "Direct workbench panel is missing knowledge action");
   assert(directViewResult.hasOpenIndexAction, "Direct workbench panel is missing open index action");
   assert(directViewResult.hasDiagnosticsCommand, "Diagnostics command is missing");
