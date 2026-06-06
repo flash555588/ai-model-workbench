@@ -3,6 +3,7 @@ import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary, ModelEvide
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
+import { supportsDisassemblyPreview, supportsFocusSelectionPreview } from "../render/preview/types";
 import { createHelperButtons } from "./inline/helper-buttons";
 import { createConversionManager } from "../io/conversion/factory";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
@@ -100,6 +101,9 @@ export class DirectModelView extends FileView {
   private workbenchSummary: ModelPreviewSummary | null = null;
   private workbenchRoute: { backend: string; reason: string } | null = null;
   private workbenchModelPath: string | null = null;
+  private activeTab: "overview" | "matches" | "knowledge" = "overview";
+  private bottomPanel: HTMLElement | null = null;
+  private tabButtons: Map<string, HTMLButtonElement> = new Map();
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
     super(leaf);
@@ -156,6 +160,8 @@ export class DirectModelView extends FileView {
     this.workbenchSummary = null;
     this.workbenchRoute = null;
     this.workbenchModelPath = null;
+    this.bottomPanel = null;
+    this.tabButtons.clear();
     this.preview?.destroy();
     this.preview = null;
     this.ps.store.setState({
@@ -163,25 +169,25 @@ export class DirectModelView extends FileView {
       modelPreview: null,
       selectedPart: null,
     });
-
+    // === New workspace layout ===
+    const workspace = this.contentEl.createDiv({ cls: "ai3d-workspace" });
+    // Top track: main preview + sidebar
+    const topTrack = workspace.createDiv({ cls: "ai3d-workspace-track-top" });
+    const mainArea = topTrack.createDiv({ cls: "ai3d-workspace-main" });
+    const hHandle = topTrack.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-h" });
+    const sidebar = topTrack.createDiv({ cls: "ai3d-workspace-sidebar" });
     // Use a detached staging container to avoid "Only one element on document" error.
-    // This happens because contentEl may be the document itself during onLoadFile.
     const staging = createDiv();
     const host = staging.createDiv({ cls: "ai3d-preview-host" });
-
     const canvas = staging.createEl("canvas");
     canvas.className = "ai3d-canvas-full";
     host.appendChild(canvas);
-
     // Semi-transparent overlay for annotation mode
     const modeOverlay = staging.createDiv();
     modeOverlay.className = "ai3d-annot-mode-overlay is-hidden";
     host.appendChild(modeOverlay);
-
-    this.contentEl.appendChild(host);
-
+    mainArea.appendChild(host);
     let toolbar: ReturnType<typeof createHelperButtons> | null = null;
-
     const setAnnotationMode = (active: boolean) => {
       this.annotationMode = active;
       if (mobile && active) {
@@ -190,7 +196,6 @@ export class DirectModelView extends FileView {
       this.annotationMgr?.hideEditor();
       modeOverlay.classList.toggle("is-hidden", !active);
     };
-
     // ESC key to exit annotation mode
     if (this.escHandler) activeDocument.removeEventListener("keydown", this.escHandler);
     this.escHandler = (e: KeyboardEvent) => {
@@ -199,9 +204,8 @@ export class DirectModelView extends FileView {
       }
     };
     activeDocument.addEventListener("keydown", this.escHandler);
-
     toolbar = createHelperButtons(
-      this.contentEl,
+      mainArea,
       host,
       this.app,
       () => this.preview,
@@ -221,17 +225,22 @@ export class DirectModelView extends FileView {
         }
       },
     );
-    const workbenchPanel = this.contentEl.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
-
+    // Sidebar core actions
+    this.createSidebarButtons(sidebar, file);
+    // Vertical resize handle + bottom panel
+    const vHandle = workspace.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-v" });
+    const bottomPanel = workspace.createDiv({ cls: "ai3d-workspace-bottom is-hidden" });
+    this.bottomPanel = bottomPanel;
+    // Setup tabs and resize handles
+    this.workbenchPanel = this.createBottomTabs(bottomPanel, file);
+    this.setupResizeHandles(hHandle, vHandle, topTrack, workspace);
     if (mobile) {
-      this.contentEl.createDiv({
+      mainArea.createDiv({
         cls: "ai3d-mobile-mode-hint ai3d-mobile-mode-hint--inline",
         text: t("directView.mobileHint"),
       });
     }
-
     const loading = createLoadingOverlay(host);
-
     try {
       const settings = this.getSettings();
       const conversionManager = createConversionManager(settings);
@@ -269,11 +278,11 @@ export class DirectModelView extends FileView {
       const evidence = this.preview.getModelEvidence?.() ?? null;
       this.registerModelPartsFromEvidence(file.path, evidence);
       renderModelPerformanceFeedback(host, summary);
-      this.workbenchPanel = workbenchPanel;
+      this.workbenchPanel = this.workbenchPanel;
       this.workbenchSummary = summary;
       this.workbenchRoute = created.route;
       this.workbenchModelPath = file.path;
-      this.renderWorkbenchPanel(workbenchPanel, summary, created.route, file.path);
+      this.renderWorkbenchPanel(this.workbenchPanel, summary, created.route, file.path);
       this.ps.store.setState({
         currentModelPath: file.path,
         modelPreview: summary,
@@ -344,7 +353,7 @@ export class DirectModelView extends FileView {
       this.preview?.destroy();
       this.preview = null;
       host.replaceChildren();
-      workbenchPanel.addClass("is-hidden");
+      this.bottomPanel?.addClass("is-hidden");
       const failure = describeModelLoadFailure(err);
       if (isMissingConverterError(err)) {
         console.warn("[AI3D] Direct view blocked by converter settings:", failure.message);
@@ -397,7 +406,24 @@ export class DirectModelView extends FileView {
     panel.removeClass("is-hidden");
     panel.dataset.ai3dBackend = route.backend;
     panel.dataset.ai3dRouteReason = route.reason;
-
+    switch (this.activeTab) {
+      case "overview":
+        this.renderOverviewTab(panel, summary, route, modelPath);
+        break;
+      case "matches":
+        this.renderMatchesTab(panel, modelPath, summary);
+        break;
+      case "knowledge":
+        this.renderKnowledgeTab(panel, modelPath);
+        break;
+    }
+  }
+  private renderOverviewTab(
+    panel: HTMLElement,
+    summary: ModelPreviewSummary,
+    route: { backend: string; reason: string },
+    modelPath: string,
+  ): void {
     const overview = panel.createDiv({ cls: "ai3d-direct-workbench-overview" });
     const status = overview.createDiv({ cls: "ai3d-direct-workbench-status" });
     const backendLine = status.createDiv({ cls: "ai3d-direct-workbench-line" });
@@ -406,7 +432,6 @@ export class DirectModelView extends FileView {
     const routeLine = status.createDiv({ cls: "ai3d-direct-workbench-line ai3d-direct-workbench-route" });
     routeLine.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.routeLabel") });
     routeLine.createSpan({ cls: "ai3d-direct-workbench-value", text: route.reason });
-
     const metrics = overview.createDiv({ cls: "ai3d-direct-workbench-metrics" });
     this.renderMetric(metrics, t("workbench.meshesLabel"), formatCount(summary.meshCount));
     this.renderMetric(
@@ -422,10 +447,142 @@ export class DirectModelView extends FileView {
     this.renderMetric(metrics, t("workbench.materialsLabel"), formatCount(summary.materialCount));
     this.renderMetric(metrics, t("workbench.boundingSizeLabel"), formatBounds(summary));
     this.renderMetric(metrics, t("directWorkbench.performanceLabel"), summary.performanceTier ?? "light");
-
-    const controls = panel.createDiv({ cls: "ai3d-direct-workbench-controls" });
-    this.renderKnowledgeControls(controls, modelPath);
-    this.renderRegisteredPartMatches(controls, modelPath, summary);
+  }
+  private renderMatchesTab(
+    panel: HTMLElement,
+    modelPath: string,
+    summary: ModelPreviewSummary,
+  ): void {
+    this.renderRegisteredPartMatches(panel, modelPath, summary);
+  }
+  private renderKnowledgeTab(
+    panel: HTMLElement,
+    modelPath: string,
+  ): void {
+    this.renderKnowledgeControls(panel, modelPath);
+  }
+  private createSidebarButtons(sidebar: HTMLElement, file: TFile): void {
+    const createBtn = (action: string, label: string, icon: string, onClick: () => void): void => {
+      const btn = sidebar.createEl("button", {
+        cls: "ai3d-sidebar-btn",
+        attr: { "data-ai3d-action": action, "aria-label": label, title: label, type: "button" },
+      });
+      btn.innerHTML = icon;
+      btn.addEventListener("click", onClick);
+    };
+    createBtn("toggle-focus", t("helper.toggleFocusSelectionLabel"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>`, () => {
+      if (this.preview && supportsFocusSelectionPreview(this.preview)) {
+        this.preview.toggleFocusSelection();
+      }
+    });
+    createBtn("toggle-disassembly", t("helper.toggleDisassemblyLabel"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h3"/><path d="M4 17v3h3"/><path d="M20 7V4h-3"/><path d="M20 17v3h-3"/></svg>`, () => {
+      if (this.preview && supportsDisassemblyPreview(this.preview)) {
+        this.preview.toggleDisassembly();
+      }
+    });
+    createBtn("reset-parts", t("helper.resetPartsLabel"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74-2.74L3 12"/></svg>`, () => {
+      if (this.preview && supportsDisassemblyPreview(this.preview)) {
+        this.preview.resetDisassembly();
+      }
+    });
+    createBtn("toggle-annotation", t("helper.toggleAnnotationLabel"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h6"/></svg>`, () => {
+      // annotation toggle is handled by helper toolbar, sync sidebar state
+      // This is a simplified version; ideally we sync with the main toolbar
+    });
+    createBtn("generate-note", t("workbench.generateNoteAction"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`, () => {
+      const btn = sidebar.querySelector('[data-ai3d-action="generate-note"]');
+      if (btn instanceof HTMLButtonElement) btn.disabled = true;
+      void import("./workbench/knowledge-note")
+        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview: this.preview }))
+        .catch((err) => {
+          console.error("[AI3D] Generate knowledge note failed:", err);
+        })
+        .finally(() => {
+          if (btn instanceof HTMLButtonElement) btn.disabled = false;
+          this.refreshWorkbenchPanel();
+        });
+    });
+    createBtn("open-index", t("workbench.openIndexAction"), `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`, () => {
+      const indexPath = this.ps.store.getState().modelAssetProfiles[file.path]?.knowledgeIndexPath;
+      if (!indexPath) return;
+      const f = this.app.vault.getAbstractFileByPath(indexPath);
+      if (f instanceof TFile) {
+        void this.app.workspace.getLeaf(true).openFile(f, { active: true });
+      }
+    });
+  }
+  private createBottomTabs(bottomPanel: HTMLElement, file: TFile): HTMLElement {
+    const tabHeader = bottomPanel.createDiv({ cls: "ai3d-workspace-bottom-tabs" });
+    const tabContent = bottomPanel.createDiv({ cls: "ai3d-workspace-bottom-content" });
+    const tabs: { id: "overview" | "matches" | "knowledge"; labelKey: Parameters<typeof t>[0] }[] = [
+      { id: "overview", labelKey: "directWorkbench.tabOverview" },
+      { id: "matches", labelKey: "directWorkbench.tabMatches" },
+      { id: "knowledge", labelKey: "directWorkbench.tabKnowledge" },
+    ];
+    for (const tab of tabs) {
+      const btn = tabHeader.createEl("button", {
+        cls: "ai3d-workspace-tab-btn",
+        text: t(tab.labelKey),
+        attr: { type: "button", "data-tab": tab.id },
+      });
+      btn.addEventListener("click", () => {
+        this.activeTab = tab.id;
+        this.refreshWorkbenchPanel();
+        this.updateTabButtons();
+      });
+      this.tabButtons.set(tab.id, btn);
+    }
+    this.updateTabButtons();
+    return tabContent;
+  }
+  private updateTabButtons(): void {
+    for (const [id, btn] of this.tabButtons) {
+      btn.classList.toggle("is-active", id === this.activeTab);
+    }
+  }
+  private setupResizeHandles(
+    hHandle: HTMLElement,
+    vHandle: HTMLElement,
+    topTrack: HTMLElement,
+    workspace: HTMLElement,
+  ): void {
+    const setupDrag = (
+      handle: HTMLElement,
+      onMove: (dx: number, dy: number) => void,
+      onEnd: () => void,
+    ): void => {
+      let startX = 0;
+      let startY = 0;
+      const onMouseMove = (e: MouseEvent) => {
+        onMove(e.clientX - startX, e.clientY - startY);
+        startX = e.clientX;
+        startY = e.clientY;
+      };
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        onEnd();
+      };
+      handle.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startY = e.clientY;
+        document.addEventListener("mousemove", onMouseMove);
+        document.addEventListener("mouseup", onMouseUp);
+      });
+    };
+    // Horizontal resize: adjust sidebar width
+    let sidebarWidth = 200;
+    setupDrag(hHandle, (dx) => {
+      sidebarWidth = Math.max(48, Math.min(400, sidebarWidth - dx));
+      topTrack.style.gridTemplateColumns = `1fr 4px ${sidebarWidth}px`;
+    }, () => {});
+    // Vertical resize: adjust bottom panel height
+    let bottomHeight = 220;
+    setupDrag(vHandle, (_dx, dy) => {
+      bottomHeight = Math.max(120, Math.min(500, bottomHeight + dy));
+      workspace.style.gridTemplateRows = `1fr 4px ${bottomHeight}px`;
+    }, () => {});
   }
 
   private refreshWorkbenchPanel(): void {

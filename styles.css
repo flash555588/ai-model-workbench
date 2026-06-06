@@ -491,18 +491,139 @@ body {
 }
 
 /* --- Direct File View --- */
-
 .ai3d-direct-view {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
-
-.ai3d-direct-view .ai3d-preview-host {
-  flex: 1;
-  min-height: 300px;
+.ai3d-workspace {
+  display: grid;
+  grid-template-rows: 1fr 4px auto;
+  height: 100%;
+  min-height: 0;
 }
-
+/* Top track: main + sidebar */
+.ai3d-workspace-track-top {
+  display: grid;
+  grid-template-columns: 1fr 4px 200px;
+  min-height: 0;
+  overflow: hidden;
+}
+.ai3d-workspace-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.ai3d-workspace-main .ai3d-preview-host {
+  flex: 1;
+  min-height: 0;
+}
+.ai3d-workspace-main .ai3d-helper-toolbar {
+  flex-shrink: 0;
+}
+/* Sidebar */
+.ai3d-workspace-sidebar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  background: var(--background-secondary);
+  border-left: 1px solid var(--background-modifier-border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ai3d-sidebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.ai3d-sidebar-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+.ai3d-sidebar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Resize handles */
+.ai3d-resize-handle {
+  background: var(--background-modifier-border);
+  user-select: none;
+  position: relative;
+  z-index: 1;
+  transition: background 0.15s;
+}
+.ai3d-resize-handle:hover {
+  background: var(--interactive-accent);
+}
+.ai3d-resize-handle-h {
+  cursor: col-resize;
+}
+.ai3d-resize-handle-v {
+  cursor: row-resize;
+}
+/* Bottom panel */
+.ai3d-workspace-bottom {
+  display: flex;
+  flex-direction: column;
+  background: var(--background-secondary);
+  border-top: 1px solid var(--background-modifier-border);
+  min-height: 0;
+  overflow: hidden;
+}
+.ai3d-workspace-bottom.is-hidden {
+  display: none;
+}
+.ai3d-workspace-bottom-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+  background: var(--background-secondary);
+}
+.ai3d-workspace-tab-btn {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.ai3d-workspace-tab-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.ai3d-workspace-tab-btn.is-active {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border);
+  font-weight: 600;
+}
+.ai3d-workspace-bottom-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+/* Legacy workbench panel styles (used inside tabs) */
 .ai3d-direct-workbench-panel {
   display: grid;
   grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr);
@@ -515,7 +636,6 @@ body {
   background: var(--background-secondary);
   font-size: var(--font-ui-smaller);
 }
-
 .ai3d-direct-workbench-overview,
 .ai3d-direct-workbench-status,
 .ai3d-direct-workbench-metrics,
@@ -524,18 +644,15 @@ body {
   display: flex;
   gap: 8px;
 }
-
 .ai3d-direct-workbench-overview,
 .ai3d-direct-workbench-status,
 .ai3d-direct-workbench-controls {
   flex-direction: column;
 }
-
 .ai3d-direct-workbench-metrics {
   flex-wrap: wrap;
   align-content: flex-start;
 }
-
 .ai3d-direct-workbench-line,
 .ai3d-direct-workbench-metric,
 .ai3d-direct-workbench-control {
@@ -545,128 +662,106 @@ body {
   border-radius: var(--radius-s);
   background: var(--background-primary);
 }
-
 .ai3d-direct-workbench-line,
 .ai3d-direct-workbench-metric {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-
 .ai3d-direct-workbench-metric {
   flex: 1 1 84px;
 }
-
 .ai3d-direct-workbench-route {
   flex: 1;
 }
-
 .ai3d-direct-workbench-label {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.25;
 }
-
 .ai3d-direct-workbench-value {
   min-width: 0;
   color: var(--text-normal);
   font-weight: 600;
+  font-size: 12px;
   line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
-
 .ai3d-direct-workbench-control {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-
 .ai3d-direct-workbench-control-head,
 .ai3d-direct-workbench-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-
 .ai3d-direct-workbench-control-head {
   justify-content: space-between;
 }
-
 .ai3d-direct-workbench-action {
-  min-height: 26px;
-  padding: 2px 8px;
+  padding: 5px 10px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary);
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
-
 .ai3d-direct-workbench-action:hover {
-  color: var(--text-normal);
+  background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
-
 .ai3d-direct-workbench-action:disabled {
-  cursor: default;
-  opacity: 0.55;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
-
 .ai3d-direct-workbench-knowledge {
   gap: 4px;
 }
-
 .ai3d-direct-workbench-registered {
   gap: 6px;
 }
-
 .ai3d-direct-workbench-registered-body {
   min-width: 0;
 }
-
 .ai3d-direct-workbench-empty {
   color: var(--text-muted);
-  line-height: 1.35;
+  font-size: var(--font-ui-smaller);
+  padding: 8px 0;
 }
-
 .ai3d-direct-workbench-match-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-
 .ai3d-direct-workbench-match {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
   align-items: center;
-  min-width: 0;
-  padding: 6px;
+  padding: 6px 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
-  background: var(--background-secondary);
+  background: var(--background-primary);
 }
-
 .ai3d-direct-workbench-match-main,
 .ai3d-direct-workbench-match-side {
   min-width: 0;
 }
-
 .ai3d-direct-workbench-match-main {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-
 .ai3d-direct-workbench-match-side {
   display: flex;
-  align-items: center;
   gap: 6px;
+  align-items: center;
 }
-
 .ai3d-direct-workbench-match-title,
 .ai3d-direct-workbench-match-source,
 .ai3d-direct-workbench-match-model,
@@ -677,58 +772,63 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .ai3d-direct-workbench-match-title {
   color: var(--text-normal);
   font-weight: 600;
+  font-size: 12px;
 }
-
 .ai3d-direct-workbench-match-source {
   color: var(--text-muted);
 }
-
 .ai3d-direct-workbench-match-model {
   color: var(--text-faint);
 }
-
 .ai3d-direct-workbench-match-target {
-  color: var(--text-faint);
-  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-size: 11px;
 }
-
 .ai3d-direct-workbench-match-reasons {
   color: var(--text-faint);
+  font-size: 10px;
 }
-
 .ai3d-direct-workbench-match-score {
-  min-width: 34px;
-  color: var(--text-accent);
-  font-weight: 700;
-  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
-
 .ai3d-direct-workbench-match-open {
   min-width: 44px;
 }
-
+/* Mobile responsive */
 @media (max-width: 760px) {
+  .ai3d-workspace-track-top {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 4px auto;
+  }
+  .ai3d-resize-handle-h {
+    cursor: row-resize;
+  }
+  .ai3d-workspace-sidebar {
+    flex-direction: row;
+    border-left: none;
+    border-top: 1px solid var(--background-modifier-border);
+    padding: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
   .ai3d-direct-workbench-panel {
     grid-template-columns: 1fr;
   }
-
   .ai3d-direct-workbench-controls {
     gap: 8px;
   }
-
   .ai3d-direct-workbench-match {
     grid-template-columns: 1fr;
   }
-
   .ai3d-direct-workbench-match-side {
     justify-content: space-between;
   }
 }
-
 /* --- Responsive: Narrow Sidebar --- */
 
 @media (max-width: 400px) {
