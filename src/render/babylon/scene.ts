@@ -11,6 +11,7 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator.js";
 import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js";
@@ -265,6 +266,46 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private focusWorldPointFrame = 0;
   private _lastPickResult: PickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
+  private measurementActive = false;
+  private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Mesh; label: Mesh }> = [];
+  private measurementMarkers: Mesh[] = [];
+  private pendingPoint: Vector3 | null = null;
+  private pendingMarker: Mesh | null = null;
+  private hoveredMarkerIndex = -1;
+  private lastPointerClient = { x: 0, y: 0 };
+  private previewLine: Mesh | null = null;
+  private readonly handlePointerMove = (event: PointerEvent) => {
+    this.lastPointerClient = { x: event.clientX, y: event.clientY };
+    if (!this.measurementActive) return;
+    if (this.pendingPoint) {
+      this.updatePreviewLine();
+    }
+    if (this.measurementMarkers.length === 0) return;
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const pickResult = this.scene.pick(x, y, (mesh) => this.measurementMarkers.includes(mesh as Mesh));
+    const newHover = pickResult.hit ? this.measurementMarkers.indexOf(pickResult.pickedMesh as Mesh) : -1;
+    if (newHover !== this.hoveredMarkerIndex) {
+      if (this.hoveredMarkerIndex >= 0 && this.hoveredMarkerIndex < this.measurementMarkers.length) {
+        const prev = this.measurementMarkers[this.hoveredMarkerIndex];
+        if (prev !== this.pendingMarker) {
+          prev.scaling.setAll(1);
+          (prev.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
+          (prev.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+        }
+      }
+      if (newHover >= 0 && newHover < this.measurementMarkers.length) {
+        const next = this.measurementMarkers[newHover];
+        next.scaling.setAll(1.6);
+        (next.material as StandardMaterial).diffuseColor = new Color3(1, 0.83, 0.23);
+        (next.material as StandardMaterial).emissiveColor = new Color3(1, 0.83, 0.23);
+      }
+      this.hoveredMarkerIndex = newHover;
+    }
+  };
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -310,6 +351,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.lowerRadiusLimit = 0.1;
     this.camera.wheelPrecision = 30;
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
+    canvas.addEventListener("pointermove", this.handlePointerMove);
 
     this.scene.ambientColor = new Color3(0.3, 0.3, 0.3);
     const hemi = new HemisphericLight("default-light", new Vector3(0, 1, 0.5), this.scene);
@@ -341,6 +383,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     this.loadedMeshes = [];
     this.loadedTransformNodes = [];
+    this.clearMeasurements();
     this.disassembly?.dispose();
     this.disassembly = null;
     this.clearFocusedMesh();
@@ -501,6 +544,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.cleanupPicking?.();
     this.cleanupPicking = setupPicking(this.scene, (result) => {
       if (this.isDisassemblyActive()) return;
+      if (this.measurementActive && result.pickedPoint) {
+        this.addMeasurementPoint(toBabylonVector3(result.pickedPoint as { x: number; y: number; z: number }));
+        return;
+      }
       this._lastPickResult = result;
       if (this.focusSelectionEnabled && result.mesh) {
         this.setFocusedMesh(result.mesh);
@@ -790,6 +837,35 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
     }
     return this.animPlaying;
+  }
+
+  toggleMeasurement(): boolean {
+    this.measurementActive = !this.measurementActive;
+    if (!this.measurementActive) {
+      this.clearMeasurements();
+    }
+    return this.measurementActive;
+  }
+
+  isMeasurementActive(): boolean {
+    return this.measurementActive;
+  }
+
+  clearMeasurements(): void {
+    this.measurementActive = false;
+    this.pendingPoint = null;
+    this.pendingMarker = null;
+    this.hoveredMarkerIndex = -1;
+    this.removePreviewLine();
+    for (const segment of this.measurementSegments) {
+      segment.line.dispose();
+      segment.label.dispose();
+    }
+    this.measurementSegments = [];
+    for (const marker of this.measurementMarkers) {
+      marker.dispose();
+    }
+    this.measurementMarkers = [];
   }
 
   setAnimationSpeed(speed: number): void {
@@ -1151,6 +1227,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.gizmo = null;
     this.disassembly?.dispose();
     this.disassembly = null;
+    this.clearMeasurements();
     this.clearFocusedMesh();
     this.originalMeshVisibility.clear();
     this.bboxMesh?.dispose();
@@ -1158,6 +1235,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.detachControl();
     const canvas = this.engine.getRenderingCanvas();
     canvas?.removeEventListener("wheel", this.preventCanvasWheelScroll);
+    canvas?.removeEventListener("pointermove", this.handlePointerMove);
     this.resizeObs.disconnect();
     if (this.autoRotateBehavior) {
       this.camera.removeBehavior(this.autoRotateBehavior);
@@ -1348,6 +1426,161 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }));
       });
     return { parts, groupedMeshes };
+  }
+
+  private getMeasurementMarkerSize(): number {
+    if (!this.rootMesh) return 0.02;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    if (!bounds) return 0.02;
+    const maxSpan = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 0.001);
+    return maxSpan * 0.015;
+  }
+
+  private findNearestMarkerIndex(point: Vector3): number {
+    const threshold = this.getMeasurementMarkerSize() * 2.5;
+    for (let i = 0; i < this.measurementMarkers.length; i++) {
+      if (Vector3.Distance(this.measurementMarkers[i].position, point) < threshold) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private addMeasurementPoint(point: Vector3): void {
+    const existingIndex = this.findNearestMarkerIndex(point);
+    const usePoint = existingIndex >= 0
+      ? this.measurementMarkers[existingIndex].position.clone()
+      : point;
+
+    if (this.pendingPoint) {
+      if (Vector3.Distance(usePoint, this.pendingPoint) < 0.0001) {
+        return;
+      }
+      if (existingIndex < 0) {
+        const size = this.getMeasurementMarkerSize();
+        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
+        marker.position = usePoint;
+        marker.isPickable = false;
+        const mat = new StandardMaterial("measure-marker-mat", this.scene);
+        mat.diffuseColor = new Color3(1, 0.42, 0.42);
+        mat.emissiveColor = new Color3(1, 0.42, 0.42);
+        marker.material = mat;
+        marker.renderingGroupId = 2;
+        this.measurementMarkers.push(marker);
+      }
+      this.createMeasurementSegment(this.pendingPoint, usePoint);
+      if (this.pendingMarker) {
+        this.pendingMarker.scaling.setAll(1);
+        (this.pendingMarker.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
+        (this.pendingMarker.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+      }
+      this.pendingPoint = null;
+      this.pendingMarker = null;
+      this.removePreviewLine();
+    } else {
+      if (existingIndex < 0) {
+        const size = this.getMeasurementMarkerSize();
+        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
+        marker.position = usePoint;
+        marker.isPickable = false;
+        const mat = new StandardMaterial("measure-marker-mat", this.scene);
+        mat.diffuseColor = new Color3(1, 0.42, 0.42);
+        mat.emissiveColor = new Color3(1, 0.42, 0.42);
+        marker.material = mat;
+        marker.renderingGroupId = 2;
+        this.measurementMarkers.push(marker);
+        this.pendingMarker = marker;
+      } else {
+        this.pendingMarker = this.measurementMarkers[existingIndex];
+      }
+      this.pendingMarker.scaling.setAll(1.6);
+      (this.pendingMarker.material as StandardMaterial).diffuseColor = new Color3(0.32, 0.81, 0.4);
+      (this.pendingMarker.material as StandardMaterial).emissiveColor = new Color3(0.32, 0.81, 0.4);
+      this.pendingPoint = usePoint;
+      this.ensurePreviewLine();
+    }
+  }
+
+  private createMeasurementSegment(start: Vector3, end: Vector3): void {
+    const line = MeshBuilder.CreateLines("measure-line", { points: [start, end] }, this.scene);
+    (line as any).color = new Color3(1, 0.42, 0.42);
+    line.isPickable = false;
+    line.renderingGroupId = 2;
+
+    const distance = Vector3.Distance(start, end);
+    const labelText = distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : `${distance.toFixed(3)} m`;
+    const mid = Vector3.Center(start, end);
+    const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 4);
+
+    this.measurementSegments.push({ start, end, line, label });
+  }
+
+  private createMeasurementLabelMesh(text: string, position: Vector3, scale: number): Mesh {
+    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 4, height: scale }, this.scene);
+    plane.position = position;
+    plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    plane.isPickable = false;
+    plane.renderingGroupId = 2;
+
+    const texture = new DynamicTexture("measure-label-tex", { width: 512, height: 128 }, this.scene);
+    const ctx = texture.getContext() as CanvasRenderingContext2D;
+    ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
+    ctx.fillRect(0, 0, 512, 128);
+    ctx.strokeStyle = "#ff6b6b";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(0, 0, 512, 128);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 48px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 256, 64);
+    texture.update();
+
+    const mat = new StandardMaterial("measure-label-mat", this.scene);
+    mat.diffuseTexture = texture;
+    mat.emissiveColor = new Color3(1, 1, 1);
+    mat.disableLighting = true;
+    mat.opacityTexture = texture;
+    plane.material = mat;
+    return plane;
+  }
+
+  private ensurePreviewLine(): void {
+    if (this.previewLine) return;
+    this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [Vector3.Zero(), Vector3.Zero()] }, this.scene);
+    (this.previewLine as any).color = new Color3(1, 1, 1);
+    (this.previewLine as any).alpha = 0.5;
+    this.previewLine.isPickable = false;
+    this.previewLine.renderingGroupId = 2;
+  }
+
+  private updatePreviewLine(): void {
+    if (!this.pendingPoint || !this.previewLine || !this.rootMesh) return;
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = this.lastPointerClient.x - rect.left;
+    const y = this.lastPointerClient.y - rect.top;
+    const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
+    let endPoint: Vector3;
+    if (pickResult.hit && pickResult.pickedPoint) {
+      endPoint = pickResult.pickedPoint;
+    } else {
+      const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
+      endPoint = this.pendingPoint.add(ray.direction.scale(5));
+    }
+    this.previewLine.dispose();
+    this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [this.pendingPoint, endPoint] }, this.scene);
+    (this.previewLine as any).color = new Color3(1, 1, 1);
+    (this.previewLine as any).alpha = 0.5;
+    this.previewLine.isPickable = false;
+    this.previewLine.renderingGroupId = 2;
+  }
+
+  private removePreviewLine(): void {
+    if (!this.previewLine) return;
+    this.previewLine.dispose();
+    this.previewLine = null;
   }
 
   private computeSummary(root: Mesh): ModelPreviewSummary {

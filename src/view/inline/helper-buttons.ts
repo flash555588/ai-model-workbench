@@ -9,6 +9,7 @@ import {
   supportsFocusSelectionPreview,
   supportsOrientationGizmoPreview,
   supportsRenderScalePreview,
+  supportsMeasurementPreview,
   supportsWireframePreview,
 } from "../../render/preview/types";
 import type {
@@ -19,6 +20,7 @@ import type {
   ModelPreview,
   OrientationGizmoPreview,
   RenderScalePreview,
+  MeasurementPreview,
   WireframePreview,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
@@ -58,7 +60,7 @@ export type SnapshotProvider =
     | "exportModelInfo"
     | "exportSelectedPartInfo"
   >>
-  & Partial<AnimationPreview & BoundingBoxPreview & DisassemblyPreview & FocusSelectionPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
+  & Partial<AnimationPreview & BoundingBoxPreview & DisassemblyPreview & FocusSelectionPreview & MeasurementPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
 
 /** Handle returned by createHelperButtons — callers hold a direct reference. */
 export interface HelperToolbar {
@@ -224,6 +226,8 @@ export function createHelperButtons(
       toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
     toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview?.isDisassemblyEnabled());
+    toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
+    toggleCapabilityButton(clearMeasureBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
     syncGroupVisibility();
   };
@@ -409,6 +413,39 @@ export function createHelperButtons(
       : `<polygon points="5 3 19 12 5 21 5 3"/>`));
     setTogglePressed(animBtn, playing);
     showTooltip(animBtn, playing ? t("helper.playing") : t("helper.paused"));
+  });
+
+  // Measurement toggle button (ruler)
+  const measureBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn is-hidden",
+    attr: { "aria-label": t("helper.toggleMeasurementLabel"), "aria-pressed": "false" },
+  }));
+  setAction(measureBtn, "toggle-measurement");
+  measureBtn.appendChild(createSvgIcon(`<line x1="2" y1="21" x2="22" y2="21"/><line x1="2" y1="3" x2="22" y2="3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="6" y1="3" x2="6" y2="12"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="18" y1="3" x2="18" y2="12"/>`));
+  measureBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    const active = preview.toggleMeasurement();
+    setTogglePressed(measureBtn, active);
+    showTooltip(measureBtn, active ? t("helper.measurementOn") : t("helper.measurementOff"));
+    if (!active) {
+      setTogglePressed(clearMeasureBtn, false);
+    }
+  });
+
+  // Clear measurements button
+  const clearMeasureBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn is-hidden",
+    attr: { "aria-label": t("helper.clearMeasurementsLabel") },
+  }));
+  setAction(clearMeasureBtn, "clear-measurements");
+  clearMeasureBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>`));
+  clearMeasureBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    preview.clearMeasurements();
+    setTogglePressed(measureBtn, false);
+    showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
   });
 
   // Remove button (trash)

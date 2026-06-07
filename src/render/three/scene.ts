@@ -3,13 +3,19 @@ import {
   AnimationMixer,
   Box3,
   BoxHelper,
+  BufferGeometry,
+  CanvasTexture,
   Color,
   DirectionalLight,
+  Float32BufferAttribute,
   GridHelper,
   HemisphereLight,
   Light,
+  Line,
+  LineBasicMaterial,
   Material,
   Mesh,
+  MeshBasicMaterial,
   NoToneMapping,
   Object3D,
   OrthographicCamera,
@@ -21,6 +27,9 @@ import {
   Raycaster,
   Scene,
   ShadowMaterial,
+  SphereGeometry,
+  Sprite,
+  SpriteMaterial,
   SpotLight,
   SRGBColorSpace,
   Texture,
@@ -251,6 +260,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private initialPosition = new Vector3(3, 2, 3);
   private initialFov = 45;
   private lastPointerDown: { x: number; y: number } | null = null;
+  private measurementActive = false;
+  private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Line; label: Sprite }> = [];
+  private measurementMarkers: Mesh[] = [];
+  private pendingPoint: Vector3 | null = null;
+  private pendingMarker: Mesh | null = null;
+  private hoveredMarkerIndex = -1;
+  private lastPointerClient = { x: 0, y: 0 };
+  private previewLine: Line | null = null;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
   private readonly focusDimMaterials = new Map<number, Material | Material[]>();
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
@@ -302,6 +319,36 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (this.disassembly?.isEnabled()) return;
     this.dispatchPick(event);
   };
+  private readonly handlePointerMove = (event: PointerEvent) => {
+    this.lastPointerClient = { x: event.clientX, y: event.clientY };
+    if (!this.measurementActive) return;
+    if (this.pendingPoint) {
+      this.updatePreviewLine();
+    }
+    if (this.measurementMarkers.length === 0) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hits = this.raycaster.intersectObjects(this.measurementMarkers, false);
+    const newHover = hits.length > 0 ? this.measurementMarkers.indexOf(hits[0].object as Mesh) : -1;
+    if (newHover !== this.hoveredMarkerIndex) {
+      if (this.hoveredMarkerIndex >= 0 && this.hoveredMarkerIndex < this.measurementMarkers.length) {
+        const prev = this.measurementMarkers[this.hoveredMarkerIndex];
+        if (prev !== this.pendingMarker) {
+          prev.scale.setScalar(1);
+          (prev.material as MeshBasicMaterial).color.setHex(0xff6b6b);
+        }
+      }
+      if (newHover >= 0 && newHover < this.measurementMarkers.length) {
+        const next = this.measurementMarkers[newHover];
+        next.scale.setScalar(1.6);
+        (next.material as MeshBasicMaterial).color.setHex(0xffd43b);
+      }
+      this.hoveredMarkerIndex = newHover;
+      this.markDirty();
+    }
+  };
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new WebGLRenderer({
@@ -349,6 +396,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     canvas.addEventListener("pointerdown", this.handlePointerDown);
     canvas.addEventListener("pointerup", this.handlePointerUp);
+    canvas.addEventListener("pointermove", this.handlePointerMove);
 
     this.resizeRenderer();
     this.startRenderLoop();
@@ -405,6 +453,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (this.axesHelper) {
       const size = Math.max(summary.boundingSize.x, summary.boundingSize.y, summary.boundingSize.z) || 1;
       this.axesHelper.scale.setScalar(Math.max(0.5, size * 0.25));
+      this.axesHelper.position.copy(this.controls.target);
     }
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
@@ -447,6 +496,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.removeEventListener("wheel", this.preventCanvasWheelScroll);
     canvas.removeEventListener("pointerdown", this.handlePointerDown);
     canvas.removeEventListener("pointerup", this.handlePointerUp);
+    canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.resizeObs.disconnect();
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
@@ -608,9 +658,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.axesHelper) {
       this.axesHelper = new AxesHelper(1.2);
       this.axesHelper.visible = false;
+      const mat = this.axesHelper.material as LineBasicMaterial;
+      mat.depthTest = false;
+      mat.depthWrite = false;
+      this.axesHelper.renderOrder = 999;
       this.scene.add(this.axesHelper);
     }
     this.axesHelper.visible = !this.axesHelper.visible;
+    this.axesHelper.position.copy(this.controls.target);
     this.markDirty();
     return this.axesHelper.visible;
   }
@@ -643,6 +698,48 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.mixer.timeScale = this.animationPlaying ? 1 : 0;
     this.markDirty();
     return this.animationPlaying;
+  }
+
+  toggleMeasurement(): boolean {
+    this.measurementActive = !this.measurementActive;
+    if (!this.measurementActive) {
+      this.clearMeasurements();
+    }
+    return this.measurementActive;
+  }
+
+  isMeasurementActive(): boolean {
+    return this.measurementActive;
+  }
+
+  clearMeasurements(): void {
+    this.measurementActive = false;
+    this.pendingPoint = null;
+    this.pendingMarker = null;
+    this.hoveredMarkerIndex = -1;
+    this.removePreviewLine();
+    for (const segment of this.measurementSegments) {
+      segment.line.removeFromParent();
+      segment.line.geometry.dispose();
+      (segment.line.material as Material).dispose();
+      segment.label.removeFromParent();
+      const mat = segment.label.material;
+      mat.map?.dispose();
+      mat.dispose();
+    }
+    this.measurementSegments = [];
+    for (const marker of this.measurementMarkers) {
+      marker.removeFromParent();
+      marker.geometry.dispose();
+      const mat = marker.material;
+      if (Array.isArray(mat)) {
+        for (const m of mat) m.dispose();
+      } else {
+        mat.dispose();
+      }
+    }
+    this.measurementMarkers = [];
+    this.markDirty();
   }
 
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
@@ -1227,9 +1324,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private syncAxisHelper(visible: boolean): void {
     if (!this.axesHelper) {
       this.axesHelper = new AxesHelper(1.2);
+      const mat = this.axesHelper.material as LineBasicMaterial;
+      mat.depthTest = false;
+      mat.depthWrite = false;
+      this.axesHelper.renderOrder = 999;
       this.scene.add(this.axesHelper);
     }
     this.axesHelper.visible = visible;
+    this.axesHelper.position.copy(this.controls.target);
   }
 
   private createGroundShadow(): void {
@@ -1309,6 +1411,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
       screenY: event.clientY,
     };
     this._lastPickResult = result;
+
+    if (this.measurementActive && hit?.point) {
+      this.addMeasurementPoint(hit.point.clone());
+      return;
+    }
+
     if (this.focusSelectionEnabled && mesh) {
       this.clearSelectionHighlight();
       if (this.focusedMesh !== mesh) {
@@ -1330,6 +1438,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
+    this.clearMeasurements();
     this.bboxHelper?.removeFromParent();
     this.bboxHelper = null;
     this.bboxEnabled = false;
@@ -1606,6 +1715,157 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.selectionHelper = null;
     this.highlightedMesh = null;
     this.markDirty();
+  }
+
+  private getMeasurementMarkerSize(): number {
+    if (!this.rootObject) return 0.02;
+    const bounds = getObjectPreviewBounds(this.rootObject);
+    const size = getPreviewBoundsSize(bounds);
+    const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
+    return maxSpan * 0.015;
+  }
+
+  private findNearestMarkerIndex(point: Vector3): number {
+    const threshold = this.getMeasurementMarkerSize() * 2.5;
+    for (let i = 0; i < this.measurementMarkers.length; i++) {
+      if (this.measurementMarkers[i].position.distanceTo(point) < threshold) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private addMeasurementPoint(point: Vector3): void {
+    const existingIndex = this.findNearestMarkerIndex(point);
+    const usePoint = existingIndex >= 0
+      ? this.measurementMarkers[existingIndex].position.clone()
+      : point;
+
+    if (this.pendingPoint) {
+      if (usePoint.distanceTo(this.pendingPoint) < 0.0001) {
+        return;
+      }
+      if (existingIndex < 0) {
+        const size = this.getMeasurementMarkerSize();
+        const markerGeometry = new SphereGeometry(size, 16, 16);
+        const markerMaterial = new MeshBasicMaterial({ color: 0xff6b6b, depthTest: false });
+        const marker = new Mesh(markerGeometry, markerMaterial);
+        marker.position.copy(usePoint);
+        marker.renderOrder = 999;
+        this.scene.add(marker);
+        this.measurementMarkers.push(marker);
+      }
+      this.createMeasurementSegment(this.pendingPoint, usePoint);
+      // 恢复起点标记颜色
+      if (this.pendingMarker) {
+        this.pendingMarker.scale.setScalar(1);
+        (this.pendingMarker.material as MeshBasicMaterial).color.setHex(0xff6b6b);
+      }
+      this.pendingPoint = null;
+      this.pendingMarker = null;
+      this.removePreviewLine();
+    } else {
+      if (existingIndex < 0) {
+        const size = this.getMeasurementMarkerSize();
+        const markerGeometry = new SphereGeometry(size, 16, 16);
+        const markerMaterial = new MeshBasicMaterial({ color: 0xff6b6b, depthTest: false });
+        const marker = new Mesh(markerGeometry, markerMaterial);
+        marker.position.copy(usePoint);
+        marker.renderOrder = 999;
+        this.scene.add(marker);
+        this.measurementMarkers.push(marker);
+        this.pendingMarker = marker;
+      } else {
+        this.pendingMarker = this.measurementMarkers[existingIndex];
+      }
+      this.pendingMarker.scale.setScalar(1.6);
+      (this.pendingMarker.material as MeshBasicMaterial).color.setHex(0x51cf66);
+      this.pendingPoint = usePoint;
+      this.ensurePreviewLine();
+    }
+    this.markDirty();
+  }
+
+  private createMeasurementSegment(start: Vector3, end: Vector3): void {
+    const geometry = new BufferGeometry().setFromPoints([start, end]);
+    const line = new Line(geometry, new LineBasicMaterial({ color: 0xff6b6b, depthTest: false }));
+    line.renderOrder = 998;
+    this.scene.add(line);
+
+    const distance = start.distanceTo(end);
+    const labelText = distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : `${distance.toFixed(3)} m`;
+    const mid = new Vector3().addVectors(start, end).multiplyScalar(0.5);
+    const label = this.createMeasurementLabelSprite(labelText, mid, this.getMeasurementMarkerSize() * 4);
+    this.scene.add(label);
+
+    this.measurementSegments.push({ start, end, line, label });
+  }
+
+  private createMeasurementLabelSprite(text: string, position: Vector3, scale: number): Sprite {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    canvas.width = 512;
+    canvas.height = 128;
+    ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(0, 0, 512, 128, 16);
+    ctx.fill();
+    ctx.strokeStyle = "#ff6b6b";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 48px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 256, 64);
+
+    const texture = new CanvasTexture(canvas);
+    const material = new SpriteMaterial({ map: texture, depthTest: false });
+    const sprite = new Sprite(material);
+    sprite.position.copy(position);
+    sprite.scale.set(scale * 4, scale, 1);
+    sprite.renderOrder = 1000;
+    return sprite;
+  }
+
+  private ensurePreviewLine(): void {
+    if (this.previewLine) return;
+    const geometry = new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]);
+    this.previewLine = new Line(
+      geometry,
+      new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthTest: false }),
+    );
+    this.previewLine.renderOrder = 997;
+    this.scene.add(this.previewLine);
+  }
+
+  private updatePreviewLine(): void {
+    if (!this.pendingPoint || !this.previewLine || !this.rootObject) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((this.lastPointerClient.x - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((this.lastPointerClient.y - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hit = this.raycaster.intersectObjects(this.getRenderableMeshes(this.rootObject), false)[0];
+    let endPoint: Vector3;
+    if (hit?.point) {
+      endPoint = hit.point.clone();
+    } else {
+      endPoint = this.pendingPoint.clone().add(
+        this.raycaster.ray.direction.clone().multiplyScalar(5),
+      );
+    }
+    const oldGeo = this.previewLine.geometry;
+    this.previewLine.geometry = new BufferGeometry().setFromPoints([this.pendingPoint, endPoint]);
+    oldGeo.dispose();
+    this.markDirty();
+  }
+
+  private removePreviewLine(): void {
+    if (!this.previewLine) return;
+    this.previewLine.removeFromParent();
+    this.previewLine.geometry.dispose();
+    (this.previewLine.material as Material).dispose();
+    this.previewLine = null;
   }
 
   private computePartSummary(mesh: Mesh): ModelPartSummary {

@@ -5,7 +5,7 @@ import { AnnotationManager } from "../../render/preview/annotations";
 import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
-import { supportsAnnotationPreview } from "../../render/preview/types";
+import { supportsAnnotationPreview, supportsMeasurementPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
@@ -207,6 +207,7 @@ export function registerCodeBlockProcessor(
         else if (key === "g") { preview.toggleOrientationGizmo?.(); e.preventDefault(); }
         else if (key === "b") { preview.toggleBoundingBox?.(); e.preventDefault(); }
         else if (key === " ") { preview.toggleAnimation?.(); e.preventDefault(); }
+        else if (key === "m") { if (supportsMeasurementPreview(preview)) { preview.toggleMeasurement(); } e.preventDefault(); }
       });
       host.appendChild(canvas);
 
