@@ -101,6 +101,12 @@ export interface AnimationPreview {
   toggleAnimation(): boolean;
 }
 
+export interface MeasurementPreview {
+  toggleMeasurement(): boolean;
+  isMeasurementActive(): boolean;
+  clearMeasurements(): void;
+}
+
 export interface DisassemblyPreview {
   toggleDisassembly(): boolean;
   resetDisassembly(): void;
@@ -171,6 +177,12 @@ export function supportsAnnotationPreview(preview: unknown): preview is Annotati
 
 export function supportsAnimationPreview(preview: unknown): preview is AnimationPreview {
   return hasMethod(preview, "hasAnimations") && hasMethod(preview, "toggleAnimation");
+}
+
+export function supportsMeasurementPreview(preview: unknown): preview is MeasurementPreview {
+  return hasMethod(preview, "toggleMeasurement")
+    && hasMethod(preview, "isMeasurementActive")
+    && hasMethod(preview, "clearMeasurements");
 }
 
 export function supportsDisassemblyPreview(preview: unknown): preview is DisassemblyPreview {

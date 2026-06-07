@@ -274,6 +274,7 @@ class ThreeDisassemblyAdapter
     const offset = point.clone().sub(state.startPoint);
     state.mesh.position.copy(state.startPosition).add(offset);
     state.mesh.updateMatrixWorld(true);
+    this.selectionHelper?.update();
     this.requestRender();
   }
 
@@ -352,6 +353,7 @@ class ThreeDisassemblyAdapter
       result.rotationQuaternion.w,
     );
     state.mesh.updateMatrixWorld(true);
+    this.selectionHelper?.update();
     this.requestRender();
   }
 
