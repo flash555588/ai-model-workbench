@@ -101,10 +101,20 @@ export interface AnimationPreview {
   toggleAnimation(): boolean;
 }
 
+export interface MeasurementScale {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface MeasurementPreview {
   toggleMeasurement(): boolean;
   isMeasurementActive(): boolean;
   clearMeasurements(): void;
+  setMeasurementScale(scale: MeasurementScale): void;
+  getMeasurementScale(): MeasurementScale;
+  getMeasurementBounds(): { x: number; y: number; z: number } | null;
+  updateMeasurementLabels(): void;
 }
 
 export interface DisassemblyPreview {
@@ -182,7 +192,11 @@ export function supportsAnimationPreview(preview: unknown): preview is Animation
 export function supportsMeasurementPreview(preview: unknown): preview is MeasurementPreview {
   return hasMethod(preview, "toggleMeasurement")
     && hasMethod(preview, "isMeasurementActive")
-    && hasMethod(preview, "clearMeasurements");
+    && hasMethod(preview, "clearMeasurements")
+    && hasMethod(preview, "setMeasurementScale")
+    && hasMethod(preview, "getMeasurementScale")
+    && hasMethod(preview, "getMeasurementBounds")
+    && hasMethod(preview, "updateMeasurementLabels");
 }
 
 export function supportsDisassemblyPreview(preview: unknown): preview is DisassemblyPreview {

@@ -21,6 +21,7 @@ import type {
   OrientationGizmoPreview,
   RenderScalePreview,
   MeasurementPreview,
+  MeasurementScale,
   WireframePreview,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
@@ -228,6 +229,7 @@ export function createHelperButtons(
     toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview?.isDisassemblyEnabled());
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
     toggleCapabilityButton(clearMeasureBtn, !!preview && supportsMeasurementPreview(preview));
+    toggleCapabilityButton(calibrateBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
     syncGroupVisibility();
   };
@@ -448,6 +450,15 @@ export function createHelperButtons(
     showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
   });
 
+
+  // Calibration button (scale)
+  const calibrateBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn is-hidden",
+    attr: { "aria-label": t("helper.calibrateLabel") },
+  }));
+  setAction(calibrateBtn, "toggle-calibration");
+  calibrateBtn.appendChild(createSvgIcon(`<rect x="2" y="8" width="20" height="8" rx="1"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="14"/>`));
+
   // Remove button (trash)
   const removeBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.removePreviewLabel") } }));
   setAction(removeBtn, "remove-preview");
@@ -588,6 +599,122 @@ export function createHelperButtons(
 
   // Move toolbar to sit right after previewHost
   parentEl.insertBefore(toolbar, previewHost.nextSibling);
+
+  // Calibration panel
+  const calibratePanel = parentEl.createDiv({ cls: "ai3d-calibrate-panel is-hidden" });
+  const calibrateTitle = calibratePanel.createEl("div", { cls: "ai3d-calibrate-title", text: t("helper.calibrateTitle") });
+  const boundsRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
+  boundsRow.createEl("span", { cls: "ai3d-calibrate-label", text: t("helper.calibrateCurrent") });
+  const boundsX = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
+  const boundsY = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
+  const boundsZ = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
+
+  const realRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
+  realRow.createEl("span", { cls: "ai3d-calibrate-label", text: t("helper.calibrateReal") });
+  const inputX = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "X" } });
+  const inputY = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Y" } });
+  const inputZ = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Z" } });
+
+  const unitRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
+  const unitSelect = unitRow.createEl("select", { cls: "ai3d-calibrate-select" });
+  for (const u of [{ v: "um", l: "μm" }, { v: "mm", l: "mm" }, { v: "cm", l: "cm" }, { v: "m", l: "m" }]) {
+    unitSelect.createEl("option", { text: u.l, value: u.v });
+  }
+  unitSelect.value = "mm";
+
+  const lockLabel = unitRow.createEl("label", { cls: "ai3d-calibrate-lock" });
+  const lockCheck = lockLabel.createEl("input", { attr: { type: "checkbox", checked: "true" } });
+  lockLabel.appendText(" " + t("helper.calibrateLock"));
+
+  const btnRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row ai3d-calibrate-actions" });
+  const applyBtn = btnRow.createEl("button", { cls: "ai3d-inline-btn", text: t("helper.calibrateApply") });
+  const resetBtn2 = btnRow.createEl("button", { cls: "ai3d-inline-btn is-secondary", text: t("helper.calibrateReset") });
+
+  let originalBounds: { x: number; y: number; z: number } | null = null;
+
+  function updateBoundsDisplay(): void {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    const bounds = preview.getMeasurementBounds?.() ?? null;
+    originalBounds = bounds;
+    if (bounds) {
+      boundsX.textContent = `X: ${bounds.x.toFixed(3)}`;
+      boundsY.textContent = `Y: ${bounds.y.toFixed(3)}`;
+      boundsZ.textContent = `Z: ${bounds.z.toFixed(3)}`;
+    } else {
+      boundsX.textContent = "X: -";
+      boundsY.textContent = "Y: -";
+      boundsZ.textContent = "Z: -";
+    }
+  }
+
+  function applyScaleFromInputs(): void {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview) || !originalBounds) return;
+    const vx = parseFloat(inputX.value);
+    const vy = parseFloat(inputY.value);
+    const vz = parseFloat(inputZ.value);
+    if (!isFinite(vx) || !isFinite(vy) || !isFinite(vz)) return;
+    const scale: MeasurementScale = {
+      x: originalBounds.x > 0.0001 ? vx / originalBounds.x : 1,
+      y: originalBounds.y > 0.0001 ? vy / originalBounds.y : 1,
+      z: originalBounds.z > 0.0001 ? vz / originalBounds.z : 1,
+    };
+    preview.setMeasurementScale?.(scale);
+    showTooltip(applyBtn, t("helper.calibrated"));
+  }
+
+  function resetScale(): void {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    preview.setMeasurementScale?.({ x: 1, y: 1, z: 1 });
+    updateBoundsDisplay();
+    if (originalBounds) {
+      inputX.value = originalBounds.x.toFixed(3);
+      inputY.value = originalBounds.y.toFixed(3);
+      inputZ.value = originalBounds.z.toFixed(3);
+    } else {
+      inputX.value = "";
+      inputY.value = "";
+      inputZ.value = "";
+    }
+    showTooltip(resetBtn2, t("helper.calibrateResetDone"));
+  }
+
+  function onRealInputChanged(changedAxis: "x" | "y" | "z"): void {
+    if (!lockCheck.checked || !originalBounds) return;
+    const target = changedAxis === "x" ? inputX : changedAxis === "y" ? inputY : inputZ;
+    const val = parseFloat(target.value);
+    if (!isFinite(val) || val === 0) return;
+    const orig = originalBounds[changedAxis];
+    if (orig <= 0.0001) return;
+    const ratio = val / orig;
+    if (changedAxis !== "x") inputX.value = (originalBounds.x * ratio).toFixed(3);
+    if (changedAxis !== "y") inputY.value = (originalBounds.y * ratio).toFixed(3);
+    if (changedAxis !== "z") inputZ.value = (originalBounds.z * ratio).toFixed(3);
+  }
+
+  inputX.addEventListener("input", () => onRealInputChanged("x"));
+  inputY.addEventListener("input", () => onRealInputChanged("y"));
+  inputZ.addEventListener("input", () => onRealInputChanged("z"));
+  applyBtn.addEventListener("click", applyScaleFromInputs);
+  resetBtn2.addEventListener("click", resetScale);
+
+  calibrateBtn.addEventListener("click", () => {
+    const isHidden = calibratePanel.classList.contains("is-hidden");
+    if (isHidden) {
+      updateBoundsDisplay();
+      if (originalBounds) {
+        inputX.value = originalBounds.x.toFixed(3);
+        inputY.value = originalBounds.y.toFixed(3);
+        inputZ.value = originalBounds.z.toFixed(3);
+      }
+    }
+    calibratePanel.classList.toggle("is-hidden", !isHidden);
+    setTogglePressed(calibrateBtn, isHidden);
+    showTooltip(calibrateBtn, isHidden ? t("helper.calibrateOpen") : t("helper.calibrateClose"));
+  });
+
 
   renderToolbarButtons();
   syncCapabilities();
