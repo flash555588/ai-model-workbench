@@ -1800,3 +1800,74 @@ body {
 body .is-hidden.is-hidden.is-hidden {
   display: none;
 }
+
+/* Measurement calibration panel */
+.ai3d-calibrate-panel {
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-normal);
+}
+
+.ai3d-calibrate-panel.is-hidden {
+  display: none;
+}
+
+.ai3d-calibrate-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-normal);
+}
+
+.ai3d-calibrate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ai3d-calibrate-label {
+  min-width: 70px;
+  color: var(--text-muted);
+}
+
+.ai3d-calibrate-readonly {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ai3d-calibrate-input {
+  width: 60px;
+  padding: 2px 4px;
+  font-size: 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+}
+
+.ai3d-calibrate-select {
+  padding: 2px 4px;
+  font-size: 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  color: var(--text-normal);
+}
+
+.ai3d-calibrate-lock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ai3d-calibrate-actions {
+  margin-top: 6px;
+  gap: 6px;
+}

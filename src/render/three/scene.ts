@@ -16,6 +16,7 @@ import {
   Material,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   NoToneMapping,
   Object3D,
   OrthographicCamera,
@@ -79,6 +80,7 @@ import type {
   PreviewPickResult,
   PreviewProjectionResult,
   PreviewWorldPoint,
+  MeasurementScale,
 } from "../preview/types";
 import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
@@ -248,6 +250,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private gridHelper: GridHelper | null = null;
   private bboxEnabled = false;
   private wireframeEnabled = false;
+  private wireframeOriginalMaterials = new Map<number, Material | Material[]>();
   private sceneConfig: SceneConfig = {};
   private focusSelectionEnabled = false;
   private focusedMesh: Mesh | null = null;
@@ -261,6 +264,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private initialFov = 45;
   private lastPointerDown: { x: number; y: number } | null = null;
   private measurementActive = false;
+  private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
+  private measurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Line; label: Sprite }> = [];
   private measurementMarkers: Mesh[] = [];
   private pendingPoint: Vector3 | null = null;
@@ -450,11 +455,6 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     const summary = this.computeSummary(root);
     this.fitCameraToObject(root);
-    if (this.axesHelper) {
-      const size = Math.max(summary.boundingSize.x, summary.boundingSize.y, summary.boundingSize.z) || 1;
-      this.axesHelper.scale.setScalar(Math.max(0.5, size * 0.25));
-      this.axesHelper.position.copy(this.controls.target);
-    }
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
     }
@@ -643,11 +643,35 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.rootObject) return this.wireframeEnabled;
 
     for (const mesh of this.getRenderableMeshes(this.rootObject)) {
-      for (const material of materialList(mesh.material)) {
-        if ("wireframe" in material) {
-          material.wireframe = this.wireframeEnabled;
-          material.needsUpdate = true;
+      if (this.wireframeEnabled) {
+        this.wireframeOriginalMaterials.set(mesh.id, mesh.material);
+        const materials = materialList(mesh.material);
+        const cloned = materials.map((mat) => {
+          if (mat instanceof MeshStandardMaterial) {
+            const basic = new MeshBasicMaterial({
+              color: mat.color,
+              transparent: mat.transparent,
+              opacity: mat.opacity,
+              side: mat.side,
+              visible: mat.visible,
+            });
+            basic.wireframe = true;
+            return basic;
+          }
+          if ("wireframe" in mat) {
+            const c = mat.clone();
+            c.wireframe = true;
+            return c;
+          }
+          return mat;
+        });
+        mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
+      } else {
+        const original = this.wireframeOriginalMaterials.get(mesh.id);
+        if (original) {
+          mesh.material = original;
         }
+        this.wireframeOriginalMaterials.delete(mesh.id);
       }
     }
     this.markDirty();
@@ -742,6 +766,63 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
+
+  setMeasurementScale(scale: MeasurementScale): void {
+    this.measurementScale = { ...scale };
+    this.updateMeasurementLabels();
+  }
+
+  getMeasurementScale(): MeasurementScale {
+    return { ...this.measurementScale };
+  }
+
+  getMeasurementBounds(): { x: number; y: number; z: number } | null {
+    if (!this.rootObject) return null;
+    const bounds = getObjectPreviewBounds(this.rootObject);
+    const size = getPreviewBoundsSize(bounds);
+    return size;
+  }
+
+  private getRealDistance(start: Vector3, end: Vector3): number {
+    const dx = (end.x - start.x) * this.measurementScale.x;
+    const dy = (end.y - start.y) * this.measurementScale.y;
+    const dz = (end.z - start.z) * this.measurementScale.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  private formatMeasurementDistance(distance: number): string {
+    const unit = this.measurementUnit;
+    if (unit === "um" || unit === "μm") {
+      return distance < 1000 ? `${distance.toFixed(2)} μm` : `${(distance / 1000).toFixed(2)} mm`;
+    }
+    if (unit === "mm") {
+      return distance < 1 ? `${(distance * 1000).toFixed(2)} μm` : distance < 1000 ? `${distance.toFixed(2)} mm` : `${(distance / 1000).toFixed(3)} m`;
+    }
+    if (unit === "cm") {
+      return distance < 1 ? `${(distance * 10).toFixed(2)} mm` : distance < 100 ? `${distance.toFixed(2)} cm` : `${(distance / 100).toFixed(3)} m`;
+    }
+    if (unit === "m") {
+      return distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : distance < 1 ? `${distance.toFixed(3)} m` : `${distance.toFixed(2)} m`;
+    }
+    return `${distance.toFixed(3)} ${unit}`;
+  }
+
+  updateMeasurementLabels(): void {
+    if (this.measurementSegments.length === 0) return;
+    const markerSize = this.getMeasurementMarkerSize() * 4;
+    for (const segment of this.measurementSegments) {
+      const distance = this.getRealDistance(segment.start, segment.end);
+      const labelText = this.formatMeasurementDistance(distance);
+      segment.label.removeFromParent();
+      const mat = segment.label.material;
+      mat.map?.dispose();
+      mat.dispose();
+      const mid = new Vector3().addVectors(segment.start, segment.end).multiplyScalar(0.5);
+      segment.label = this.createMeasurementLabelSprite(labelText, mid, markerSize);
+      this.scene.add(segment.label);
+    }
+    this.markDirty();
+  }
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.quality = quality;
     this.renderScale = renderScale;
@@ -906,6 +987,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.bboxHelper?.update();
     this.selectionHelper?.update();
     this.focusHelper?.update();
+    if (this.axesHelper && this.axesHelper.visible) {
+      this.axesHelper.position.copy(this.controls.target);
+    }
     const renderStartedAt = performance.now();
     this.renderer.render(this.scene, this.camera);
     this.updateFrameBudget(performance.now() - renderStartedAt);
@@ -1439,6 +1523,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
     this.clearMeasurements();
+    this.wireframeEnabled = false;
+    this.wireframeOriginalMaterials.clear();
     this.bboxHelper?.removeFromParent();
     this.bboxHelper = null;
     this.bboxEnabled = false;
@@ -1537,6 +1623,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls.minDistance = Math.max(fit.near * 4, maxSpan * 0.02, 0.001);
     this.controls.maxDistance = Math.max(fitDistance * 8, this.controls.minDistance * 10);
     this.resetView();
+    if (this.axesHelper) {
+      this.axesHelper.position.copy(this.controls.target);
+      this.axesHelper.scale.setScalar(Math.max(0.5, maxSpan * 0.25));
+    }
     this.camera.near = fit.near;
     this.camera.far = fit.far;
     this.camera.updateProjectionMatrix();
@@ -1792,8 +1882,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     line.renderOrder = 998;
     this.scene.add(line);
 
-    const distance = start.distanceTo(end);
-    const labelText = distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : `${distance.toFixed(3)} m`;
+    const distance = this.getRealDistance(start, end);
+    const labelText = this.formatMeasurementDistance(distance);
     const mid = new Vector3().addVectors(start, end).multiplyScalar(0.5);
     const label = this.createMeasurementLabelSprite(labelText, mid, this.getMeasurementMarkerSize() * 4);
     this.scene.add(label);

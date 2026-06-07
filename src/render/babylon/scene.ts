@@ -74,6 +74,7 @@ import type {
   PreviewPickResult,
   PreviewProjectionResult,
   PreviewWorldPoint,
+  MeasurementScale,
   WorkbenchPreview,
 } from "../preview/types";
 
@@ -267,6 +268,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private _lastPickResult: PickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private measurementActive = false;
+  private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
+  private measurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Mesh; label: Mesh }> = [];
   private measurementMarkers: Mesh[] = [];
   private pendingPoint: Vector3 | null = null;
@@ -866,6 +869,63 @@ export class BabylonModelPreview implements WorkbenchPreview {
       marker.dispose();
     }
     this.measurementMarkers = [];
+  }
+
+
+  setMeasurementScale(scale: MeasurementScale): void {
+    this.measurementScale = { ...scale };
+    this.updateMeasurementLabels();
+  }
+
+  getMeasurementScale(): MeasurementScale {
+    return { ...this.measurementScale };
+  }
+
+  getMeasurementBounds(): { x: number; y: number; z: number } | null {
+    if (!this.rootMesh) return null;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    if (!bounds) return null;
+    return {
+      x: bounds.max.x - bounds.min.x,
+      y: bounds.max.y - bounds.min.y,
+      z: bounds.max.z - bounds.min.z,
+    };
+  }
+
+  private getRealDistance(start: Vector3, end: Vector3): number {
+    const dx = (end.x - start.x) * this.measurementScale.x;
+    const dy = (end.y - start.y) * this.measurementScale.y;
+    const dz = (end.z - start.z) * this.measurementScale.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  private formatMeasurementDistance(distance: number): string {
+    const unit = this.measurementUnit;
+    if (unit === "um" || unit === "μm") {
+      return distance < 1000 ? `${distance.toFixed(2)} μm` : `${(distance / 1000).toFixed(2)} mm`;
+    }
+    if (unit === "mm") {
+      return distance < 1 ? `${(distance * 1000).toFixed(2)} μm` : distance < 1000 ? `${distance.toFixed(2)} mm` : `${(distance / 1000).toFixed(3)} m`;
+    }
+    if (unit === "cm") {
+      return distance < 1 ? `${(distance * 10).toFixed(2)} mm` : distance < 100 ? `${distance.toFixed(2)} cm` : `${(distance / 100).toFixed(3)} m`;
+    }
+    if (unit === "m") {
+      return distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : distance < 1 ? `${distance.toFixed(3)} m` : `${distance.toFixed(2)} m`;
+    }
+    return `${distance.toFixed(3)} ${unit}`;
+  }
+
+  updateMeasurementLabels(): void {
+    if (this.measurementSegments.length === 0) return;
+    const markerSize = this.getMeasurementMarkerSize() * 4;
+    for (const segment of this.measurementSegments) {
+      const distance = this.getRealDistance(segment.start, segment.end);
+      const labelText = this.formatMeasurementDistance(distance);
+      segment.label.dispose(false, true);
+      const mid = Vector3.Center(segment.start, segment.end);
+      segment.label = this.createMeasurementLabelMesh(labelText, mid, markerSize);
+    }
   }
 
   setAnimationSpeed(speed: number): void {
@@ -1507,8 +1567,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     line.isPickable = false;
     line.renderingGroupId = 2;
 
-    const distance = Vector3.Distance(start, end);
-    const labelText = distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : `${distance.toFixed(3)} m`;
+    const distance = this.getRealDistance(start, end);
+    const labelText = this.formatMeasurementDistance(distance);
     const mid = Vector3.Center(start, end);
     const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 4);
 
