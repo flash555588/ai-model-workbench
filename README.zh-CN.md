@@ -730,7 +730,6 @@ ai-model-workbench/
 由于当前发布包同时包含 Babylon 和 Three 的预览路径，最终体积会随着路由覆盖面变化而波动。以上构建输出更适合作为当前参考值，而不是固定上限。
 
 ---
+## 致谢
 
-## 许可证
-
-MIT
+感谢 LinuxDo 社区（https://linux.do）的支持。
