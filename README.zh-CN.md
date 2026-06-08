@@ -2,6 +2,8 @@
 
 > 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）现在默认走 Three.js 渲染路径，可通过“预览兼容模式”回退到 Babylon.js；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
 
+[AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
+
 [English](README.md) | **简体中文**
 
 ![preview](docs/assets/preview.gif)
