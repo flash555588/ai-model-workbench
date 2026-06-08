@@ -720,6 +720,6 @@ Because the shipped preview mix now includes both Babylon and Three paths, the e
 
 ---
 
-## License
+## Acknowledgments
 
-MIT
+Thanks to the LinuxDo community (https://linux.do) for their support.
