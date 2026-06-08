@@ -2,12 +2,14 @@
 
 > A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use a configurable Three.js rendering path across reading surfaces and direct file view; the file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
 
+[AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
+
 **English** | [简体中文](README.zh-CN.md)
 
 ![preview](docs/assets/preview.gif)
 
 ---
-
+https://community.obsidian.md/plugins/ai-model-workbench
 ## Table of Contents
 
 - [Features](#features)
