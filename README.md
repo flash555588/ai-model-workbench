@@ -4,7 +4,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-<img width="2132" height="1502" alt="preview" src="https://github.com/user-attachments/assets/05c1bcaf-bef5-4e45-aeff-eb0076df3c67" />
+![preview](docs/assets/preview.gif)
 
 ---
 
