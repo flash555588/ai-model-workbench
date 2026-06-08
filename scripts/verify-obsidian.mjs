@@ -512,11 +512,12 @@ async function verifyDirectWorkbench(page) {
   await page.waitForFunction(() => {
     const host = document.querySelector(".ai3d-direct-view .ai3d-preview-host");
     const panel = document.querySelector(".ai3d-direct-workbench-panel");
+    const view = document.querySelector(".ai3d-direct-view");
     return host?.getAttribute("data-ai3d-backend") === "three"
       && panel?.getAttribute("data-ai3d-backend") === "three"
-      && panel.querySelector('[data-ai3d-action="generate-note"]')
-      && panel.querySelector('[data-ai3d-action="open-index"]')
-      && !panel.querySelector('[data-ai3d-action="set-explode"]');
+      && view?.querySelector('[data-ai3d-action="generate-note"]')
+      && view?.querySelector('[data-ai3d-action="open-index"]')
+      && !view?.querySelector('[data-ai3d-action="set-explode"]');
   }, null, { timeout: 20_000 });
   await page.waitForTimeout(1200);
 
@@ -584,6 +585,10 @@ async function verifyDirectWorkbench(page) {
     });
   }, workbenchModelVaultPath);
 
+  // Ensure canvas changes by toggling wireframe, since focus/disassembly/annotation
+  // may not alter the rendered pixels for this model.
+  await page.locator('.ai3d-direct-view [data-ai3d-action="toggle-wireframe"]').click();
+  await page.waitForTimeout(400);
   const after = await page.evaluate(() => {
     const canvas = document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas");
     if (!(canvas instanceof HTMLCanvasElement)) {
