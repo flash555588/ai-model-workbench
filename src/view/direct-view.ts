@@ -26,6 +26,8 @@ export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 const log = createLogger("direct-view");
 const THREE_WORKBENCH_DIRECT_EXTS = new Set(["glb", "gltf"]);
 
+// TODO(P2): migrate direct setState calls into typed PluginStore actions (debt: store-api).
+
 function createDefaultProfile(): ModelAssetProfile {
   return { tags: [], notes: "", annotations: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }

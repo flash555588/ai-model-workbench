@@ -129,6 +129,7 @@ export default class AI3DModelWorkbench extends Plugin {
     // Views are cleaned up by Obsidian calling onClose()
   }
 
+  // TODO(P2): extract into src/view/heading-pin-observer.ts and unit-test the selector/event wiring (debt: view-layer).
   private setupHeadingPinObserver(): void {
     const markdownContainerSelector = ".markdown-preview-view, .markdown-source-view";
     const headingSelector = [

@@ -229,6 +229,8 @@ function buildObjTextureCandidates(modelDir: string, rawPath: string, modelPath:
   return candidates;
 }
 
+// TODO(P2): split this class into loader/camera/light/annotation helpers.
+// Scene class is >1,700 lines and mixes rendering, interaction, and fallback logic (debt: renderer-babylon).
 export class BabylonModelPreview implements WorkbenchPreview {
   private static readonly annotationIdentity = Matrix.Identity();
   private static readonly annotationWorldPoint = Vector3.Zero();

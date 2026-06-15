@@ -200,6 +200,8 @@ function getObjectPreviewBounds(object: Object3D) {
   );
 }
 
+// TODO(P2): decompose this class into loader/camera/light/annotation modules.
+// Scene class is >2,000 lines and mixes rendering, interaction, and knowledge capture (debt: renderer-three).
 export class ThreeModelPreview implements WorkbenchPreview {
   private readonly renderer: WebGLRenderer;
   private readonly scene: Scene;

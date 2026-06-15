@@ -59,4 +59,7 @@ mapping and `README.md` for longer verification notes.
 - Do not reset or discard existing changes unless explicitly asked.
 - Keep edits focused and update `CHANGELOG.md` for release-facing behavior.
 - Never paste or preserve tokens. Follow `SECURITY.md`.
+- Mark known technical debt with `TODO(P<n>): <message>` or
+  `TODO: <message> (debt: <area>)`. Use priorities `P0/P1/P2` to match the
+  severity convention in `AGENTS.md`.
 

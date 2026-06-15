@@ -80,6 +80,10 @@ For a custom browser, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
 - Do not copy GPL code. See `docs/mit-upstream-guidelines.md`.
 - Never paste or preserve PATs/tokens. See `SECURITY.md`.
 - If you change generated docs or behavior, update `CHANGELOG.md`.
+- Mark intentional shortcuts and known debt with `TODO(P<n>): <message>` or
+  `TODO: <message> (debt: <area>)`. Use `P0` only for urgent safety/correctness
+  follow-ups, `P1` for reliability/performance debt, and `P2` for maintainability
+  debt. Prefer `// TODO` comments for code and `<!-- TODO -->` for Markdown.
 
 ## Important Specs
 

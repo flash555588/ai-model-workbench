@@ -13,6 +13,8 @@ import { getRuntimeProcess } from "./utils/node-shim";
 
 const proc = getRuntimeProcess();
 
+// TODO(P2): split display() into section-builder methods; currently >500 lines (debt: settings-ui).
+
 function getConverterCommandPlaceholders(): {
   python: string;
   freecad: string;
