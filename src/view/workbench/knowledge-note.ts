@@ -11,6 +11,7 @@ import type {
 import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
 import type { ModelPreview } from "../../render/preview/types";
+import { escapeHtml } from "../../utils/escape-html";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
 import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
@@ -94,7 +95,7 @@ function formatRegisteredMatch(match: RegisteredPartMatch): string {
 function formatAnnotationLink(pin: AnnotationPin): string[] {
   const extras: string[] = [];
   if (pin.headingRef) {
-    extras.push(`heading: ${pin.headingRef}`);
+    extras.push(`heading: ${escapeHtml(pin.headingRef)}`);
   }
   if (pin.notePath) {
     const label = getPortableBasename(pin.notePath) ?? pin.notePath;
@@ -263,13 +264,13 @@ function buildSuggestedPartNotesSection(analysis?: AnalysisResult): string[] {
     "",
   ];
   for (const part of linkedParts.slice(0, MAX_GENERATED_PART_NOTES)) {
-    const label = getPortableBasename(part.notePath ?? "") ?? part.name;
+    const label = escapeHtml(getPortableBasename(part.notePath ?? "") ?? part.name);
     const details = [
       part.category ?? "unclassified",
       formatMetricCount(part.triangleCount, "triangle"),
-      part.materialName ? `material ${part.materialName}` : "",
+      part.materialName ? `material ${escapeHtml(part.materialName)}` : "",
     ].filter(Boolean).join(", ");
-    lines.push(`- [[${part.notePath}|${label}]] - ${part.name} (${details})`);
+    lines.push(`- [[${part.notePath}|${label}]] - ${escapeHtml(part.name)} (${details})`);
   }
   lines.push("");
   return lines;
@@ -286,8 +287,8 @@ function summarizeTopParts(parts: readonly PartRecord[]): string {
   return parts
     .slice(0, 6)
     .map((part, index) => {
-      const material = part.materialName ? `, material ${part.materialName}` : "";
-      return `${index + 1}. ${part.name} (${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${material})`;
+      const material = part.materialName ? `, material ${escapeHtml(part.materialName)}` : "";
+      return `${index + 1}. ${escapeHtml(part.name)} (${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${material})`;
     })
     .join("\n");
 }
@@ -302,7 +303,7 @@ function summarizeRegisteredPartMatches(parts: readonly PartRecord[]): string {
     .map((part) => {
       const best = part.registeredMatches?.[0];
       return best
-        ? `- ${part.name}: possible reuse of ${best.sourcePartName} from ${best.sourceAssetId} (${Math.round(best.confidence * 100)}% confidence).`
+        ? `- ${escapeHtml(part.name)}: possible reuse of ${escapeHtml(best.sourcePartName)} from ${escapeHtml(best.sourceAssetId)} (${Math.round(best.confidence * 100)}% confidence).`
         : "";
     })
     .filter(Boolean)
@@ -322,7 +323,7 @@ function createLocalDraftResult(options: {
   const annotations = options.profile?.annotations ?? [];
   const links = options.analysis?.annotationLinks ?? [];
   const categories = uniqueStrings(parts.map((part) => part.category ?? "unclassified")).slice(0, 6);
-  const materials = uniqueStrings(parts.flatMap((part) => part.materialName ? [part.materialName] : [])).slice(0, 6);
+  const materials = uniqueStrings(parts.flatMap((part) => part.materialName ? [escapeHtml(part.materialName)] : [])).slice(0, 6);
   const topParts = summarizeTopParts(parts);
   const registeredMatches = summarizeRegisteredPartMatches(parts);
   const shapeLine = summary ? buildShapeObservation(summary) : "Geometry statistics are not available yet, so this draft should stay provisional.";
@@ -334,9 +335,9 @@ function createLocalDraftResult(options: {
   const focusBody = annotations.length > 0
     ? annotations.map((pin) => {
         const link = links.find((candidate) => candidate.annotationId === pin.id);
-        const nearest = link?.nearestPartName ? ` Nearest captured part: ${link.nearestPartName}.` : "";
-        const heading = pin.headingRef ? ` Linked heading: ${pin.headingRef}.` : "";
-        return `- ${pin.label || "Untitled pin"}.${nearest}${heading}`;
+        const nearest = link?.nearestPartName ? ` Nearest captured part: ${escapeHtml(link.nearestPartName)}.` : "";
+        const heading = pin.headingRef ? ` Linked heading: ${escapeHtml(pin.headingRef)}.` : "";
+        return `- ${escapeHtml(pin.label || "Untitled pin")}.${nearest}${heading}`;
       }).join("\n")
     : "- No pins are saved yet. Add pins for the regions that should become standalone notes, questions, or review checkpoints.";
 
@@ -744,7 +745,7 @@ function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null |
 let noteGenerationLock: Promise<void> | null = null;
 
 function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return escapeHtml(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
@@ -973,7 +974,7 @@ function buildPartNoteContent(options: {
   return [
     frontmatter,
     "",
-    `# ${options.part.name}`,
+    `# ${escapeHtml(options.part.name)}`,
     "",
     "## Evidence",
     "",
@@ -988,7 +989,7 @@ function buildPartNoteContent(options: {
     ...(options.part.source === "group" || options.part.source === "component" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
     `- Triangles: ${(options.part.triangleCount ?? 0).toLocaleString()}`,
     `- Vertices: ${(options.part.vertexCount ?? 0).toLocaleString()}`,
-    `- Material: ${options.part.materialName ?? "-"}`,
+    `- Material: ${options.part.materialName ? escapeHtml(options.part.materialName) : "-"}`,
     `- Bounding size: ${formatVectorTuple(options.part.bbox)}`,
     `- Center: ${formatVectorTuple(options.part.center)}`,
     ...(options.part.registeredMatches?.length
@@ -1102,8 +1103,8 @@ export function buildKnowledgeIndexManagedSection(options: {
     ...(partNotes.length > 0
       ? partNotes.map((part) => {
           const match = part.registeredMatches?.[0];
-          const matchText = match ? `, matches ${match.sourcePartName} (${Math.round(match.confidence * 100)}%)` : "";
-          return `- [[${part.notePath}|${part.name}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${matchText}`;
+          const matchText = match ? `, matches ${escapeHtml(match.sourcePartName)} (${Math.round(match.confidence * 100)}%)` : "";
+          return `- [[${part.notePath}|${escapeHtml(part.name)}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${matchText}`;
         })
       : ["- No part note drafts were created in this pass."]),
     "",

@@ -1,3 +1,4 @@
+import { escapeHtml } from "../../utils/escape-html";
 import type { ModelPartSummary, ModelPreviewSummary } from "../../domain/models";
 import { getPreviewSummaryCountLabel, getPreviewSummaryPrimaryCount } from "./summary";
 import type { PreviewWorldPoint } from "./types";
@@ -52,7 +53,7 @@ function buildPreviewSummaryRows(
 }
 
 export function escapePreviewMarkdownTableCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return escapeHtml(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 export function formatPreviewWorldPoint(
@@ -120,7 +121,7 @@ export function createPreviewModelInfoMarkdown(options: PreviewModelInfoMarkdown
     lines.push("### Materials");
     lines.push("");
     for (const name of uniqueNames) {
-      lines.push(`- ${name}`);
+      lines.push(`- ${escapeHtml(name)}`);
     }
     lines.push("");
   }
@@ -132,7 +133,7 @@ export function createPreviewPartInfoMarkdown(
   part: ModelPartSummary,
   options: PreviewPartInfoMarkdownOptions = {},
 ): string {
-  const title = getDisplayText(options.title ?? part.name, "Selected Part");
+  const title = escapeHtml(getDisplayText(options.title ?? part.name, "Selected Part"));
   const lines: string[] = [];
   lines.push(`## ${title} - Part Info`);
   lines.push("");
