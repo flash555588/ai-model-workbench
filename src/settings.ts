@@ -56,6 +56,7 @@ function getConverterCommandPlaceholders(): {
 export class AI3DSettingTab extends PluginSettingTab {
   private plugin: AI3DModelWorkbench;
   private diagnosticsRunId = 0;
+  private diagnosticsEl: HTMLDivElement | null = null;
 
   constructor(app: App, plugin: AI3DModelWorkbench) {
     super(app, plugin);
@@ -66,28 +67,38 @@ export class AI3DSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     setLocale(this.plugin.getSettings().locale);
-    const commandPlaceholders = getConverterCommandPlaceholders();
-    const mobile = isMobile();
-    let diagnosticsEl: HTMLDivElement | null = null;
+    this.diagnosticsEl = null;
 
-    const createSecondaryMenu = (parent: HTMLElement, title: string, description: string): HTMLElement => {
-      const detailsEl = parent.createEl("details", { cls: "ai3d-settings-secondary-menu" });
-      detailsEl.createEl("summary", { cls: "ai3d-settings-secondary-menu-summary", text: title });
-      const bodyEl = detailsEl.createDiv({ cls: "ai3d-settings-secondary-menu-body" });
-      bodyEl.createEl("p", { cls: "setting-item-description", text: description });
-      return bodyEl;
-    };
+    this.addTitle(containerEl);
+    this.buildLanguageSection(containerEl);
+    this.buildFoldersSection(containerEl);
+    this.buildBehaviorSection(containerEl);
+    this.buildKnowledgeGenerationSection(containerEl);
+    this.buildConvertersSection(containerEl);
+    this.buildPerformanceSection(containerEl);
+  }
 
-    const resetCommandDiagnostics = (): void => {
-      if (!diagnosticsEl) return;
-      this.diagnosticsRunId++;
-      diagnosticsEl.empty();
-      diagnosticsEl.createEl("p", { text: t("settings.diagnostics.idle") });
-    };
-
+  private addTitle(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.title")).setHeading();
+  }
 
-    // ── Language ─────────────────────────────────────────────────
+  private createSecondaryMenu(parent: HTMLElement, title: string, description: string): HTMLElement {
+    const detailsEl = parent.createEl("details", { cls: "ai3d-settings-secondary-menu" });
+    detailsEl.createEl("summary", { cls: "ai3d-settings-secondary-menu-summary", text: title });
+    const bodyEl = detailsEl.createDiv({ cls: "ai3d-settings-secondary-menu-body" });
+    bodyEl.createEl("p", { cls: "setting-item-description", text: description });
+    return bodyEl;
+  }
+
+  private resetCommandDiagnostics(): void {
+    if (!this.diagnosticsEl) return;
+    this.diagnosticsRunId++;
+    this.diagnosticsEl.empty();
+    this.diagnosticsEl.createEl("p", { text: t("settings.diagnostics.idle") });
+  }
+
+  private buildLanguageSection(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName(t("settings.language")).setHeading();
 
     new Setting(containerEl)
       .setName(t("settings.language"))
@@ -102,9 +113,9 @@ export class AI3DSettingTab extends PluginSettingTab {
             this.display();
           }),
       );
+  }
 
-    // ── Folders ──────────────────────────────────────────────────
-
+  private buildFoldersSection(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.folders")).setHeading();
 
     new Setting(containerEl)
@@ -154,9 +165,9 @@ export class AI3DSettingTab extends PluginSettingTab {
             this.plugin.updateSettings({ snapshotFolder: val });
           }),
       );
+  }
 
-    // ── Behavior ─────────────────────────────────────────────────
-
+  private buildBehaviorSection(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.behavior")).setHeading();
 
     new Setting(containerEl)
@@ -273,9 +284,9 @@ export class AI3DSettingTab extends PluginSettingTab {
             this.plugin.updateSettings({ logLevel: val as "debug" | "info" | "warn" | "error" });
           }),
       );
+  }
 
-    // ── Knowledge generation ─────────────────────────────────────
-
+  private buildKnowledgeGenerationSection(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.knowledgeGeneration")).setHeading();
 
     new Setting(containerEl)
@@ -336,21 +347,36 @@ export class AI3DSettingTab extends PluginSettingTab {
             this.plugin.updateSettings({ sendRawModelToRemote: val });
           }),
       );
+  }
 
-    // ── Converters ───────────────────────────────────────────────
-
+  private buildConvertersSection(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.converters")).setHeading();
 
-    if (mobile) {
+    if (isMobile()) {
       containerEl.createEl("p", { cls: "setting-item-description", text: t("settings.mobileSupport.desc") });
-    } else {
-    const converterMenuEl = createSecondaryMenu(
+      return;
+    }
+
+    const converterMenuEl = this.createSecondaryMenu(
       containerEl,
       t("settings.converterMenu"),
       t("settings.converterMenu.desc"),
     );
 
-    new Setting(converterMenuEl)
+    this.buildConverterToggles(converterMenuEl);
+
+    const diagnosticsMenuEl = this.createSecondaryMenu(
+      containerEl,
+      t("settings.environmentInspector"),
+      t("settings.environmentInspector.desc"),
+    );
+
+    this.buildConverterPaths(diagnosticsMenuEl);
+    this.buildDiagnostics(diagnosticsMenuEl);
+  }
+
+  private buildConverterToggles(containerEl: HTMLElement): void {
+    new Setting(containerEl)
       .setName(t("settings.enableCad"))
       .setDesc(t("settings.enableCad.desc"))
       .addToggle((toggle) => {
@@ -364,7 +390,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(converterMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.enableObj2gltf"))
       .setDesc(t("settings.enableObj2gltf.desc"))
       .addToggle((toggle) => {
@@ -378,7 +404,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(converterMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.preferObj2gltf"))
       .setDesc(t("settings.preferObj2gltf.desc"))
       .addToggle((toggle) =>
@@ -389,7 +415,7 @@ export class AI3DSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(converterMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.enableFbx2gltf"))
       .setDesc(t("settings.enableFbx2gltf.desc"))
       .addToggle((toggle) => {
@@ -403,7 +429,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(converterMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.enableMesh"))
       .setDesc(t("settings.enableMesh.desc"))
       .addToggle((toggle) => {
@@ -417,7 +443,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         });
       });
 
-    new Setting(converterMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.enableSldprt"))
       .setDesc(t("settings.enableSldprt.desc"))
       .addToggle((toggle) => {
@@ -430,18 +456,14 @@ export class AI3DSettingTab extends PluginSettingTab {
           this.plugin.updateSettings({ enabledConverterIds: next });
         });
       });
+  }
 
-    const diagnosticsMenuEl = createSecondaryMenu(
-      containerEl,
-      t("settings.environmentInspector"),
-      t("settings.environmentInspector.desc"),
-    );
+  private buildConverterPaths(containerEl: HTMLElement): void {
+    const commandPlaceholders = getConverterCommandPlaceholders();
 
-    // ── Converter Paths ──────────────────────────────────────────
+    new Setting(containerEl).setName(t("settings.paths")).setHeading();
 
-    new Setting(diagnosticsMenuEl).setName(t("settings.paths")).setHeading();
-
-    new Setting(diagnosticsMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.pythonCmd"))
       .setDesc(t("settings.pythonCmd.desc"))
       .addText((text) =>
@@ -450,11 +472,11 @@ export class AI3DSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getSettings().freecadCommand)
           .onChange((val) => {
             this.plugin.updateSettings({ freecadCommand: val.trim() });
-            resetCommandDiagnostics();
+            this.resetCommandDiagnostics();
           }),
       );
 
-    new Setting(diagnosticsMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.freecadCmd"))
       .setDesc(t("settings.freecadCmd.desc"))
       .addText((text) =>
@@ -463,11 +485,11 @@ export class AI3DSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getSettings().freecadcmdCommand)
           .onChange((val) => {
             this.plugin.updateSettings({ freecadcmdCommand: val.trim() });
-            resetCommandDiagnostics();
+            this.resetCommandDiagnostics();
           }),
       );
 
-    new Setting(diagnosticsMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.obj2gltfCmd"))
       .setDesc(t("settings.obj2gltfCmd.desc"))
       .addText((text) =>
@@ -476,11 +498,11 @@ export class AI3DSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getSettings().obj2gltfCommand)
           .onChange((val) => {
             this.plugin.updateSettings({ obj2gltfCommand: val.trim() });
-            resetCommandDiagnostics();
+            this.resetCommandDiagnostics();
           }),
       );
 
-    new Setting(diagnosticsMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.fbx2gltfCmd"))
       .setDesc(t("settings.fbx2gltfCmd.desc"))
       .addText((text) =>
@@ -489,11 +511,11 @@ export class AI3DSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getSettings().fbx2gltfCommand)
           .onChange((val) => {
             this.plugin.updateSettings({ fbx2gltfCommand: val.trim() });
-            resetCommandDiagnostics();
+            this.resetCommandDiagnostics();
           }),
       );
 
-    new Setting(diagnosticsMenuEl)
+    new Setting(containerEl)
       .setName(t("settings.assimpCmd"))
       .setDesc(t("settings.assimpCmd.desc"))
       .addText((text) =>
@@ -502,13 +524,13 @@ export class AI3DSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getSettings().assimpCommand)
           .onChange((val) => {
             this.plugin.updateSettings({ assimpCommand: val.trim() });
-            resetCommandDiagnostics();
+            this.resetCommandDiagnostics();
           }),
       );
+  }
 
-    // ── Diagnostics ──────────────────────────────────────────────
-
-    const diagnosticsSetting = new Setting(diagnosticsMenuEl)
+  private buildDiagnostics(containerEl: HTMLElement): void {
+    const diagnosticsSetting = new Setting(containerEl)
       .setName(t("settings.diagnostics"))
       .setDesc(t("settings.diagnostics.desc"));
 
@@ -518,8 +540,8 @@ export class AI3DSettingTab extends PluginSettingTab {
         .onClick(async () => {
           button.setDisabled(true);
           button.setButtonText(t("settings.diagnostics.checking"));
-          if (diagnosticsEl) {
-            await this.renderCommandDiagnostics(diagnosticsEl);
+          if (this.diagnosticsEl) {
+            await this.renderCommandDiagnostics(this.diagnosticsEl);
           }
           button.setButtonText(t("settings.diagnostics.checkNow"));
           button.setDisabled(false);
@@ -527,13 +549,11 @@ export class AI3DSettingTab extends PluginSettingTab {
         }),
     );
 
-    diagnosticsEl = diagnosticsMenuEl.createDiv({ cls: "ai3d-settings-diagnostics" });
-    resetCommandDiagnostics();
+    this.diagnosticsEl = containerEl.createDiv({ cls: "ai3d-settings-diagnostics" });
+    this.resetCommandDiagnostics();
+  }
 
-    }
-
-    // ── Performance ──────────────────────────────────────────────
-
+  private buildPerformanceSection(containerEl: HTMLElement): void {
     new Setting(containerEl).setName(t("settings.performance")).setHeading();
 
     new Setting(containerEl)
