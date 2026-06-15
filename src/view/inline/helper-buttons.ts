@@ -2,6 +2,9 @@ import type { App } from "obsidian";
 import type { PluginSettings } from "../../domain/models";
 import { formatT, t } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
+import { createLogger } from "../../utils/log";
+
+const log = createLogger("helper-buttons");
 import {
   supportsAnimationPreview,
   supportsBoundingBoxPreview,
@@ -80,6 +83,7 @@ interface AnnotationToggleCopy {
 
 function setAction(button: HTMLButtonElement, action: string): HTMLButtonElement {
   button.dataset.ai3dAction = action;
+  button.dataset.testid = `ai3d-action-${action}`;
   return button;
 }
 
@@ -514,7 +518,9 @@ export function createHelperButtons(
       reader.onload = () => {
         const buffer = reader.result as ArrayBuffer;
         void app.vault.adapter.exists(folder).then((exists) => {
-          const create = exists ? Promise.resolve() : app.vault.createFolder(folder).catch(() => {});
+          const create = exists ? Promise.resolve() : app.vault.createFolder(folder).catch((err: unknown) => {
+            log.warn("Failed to create vault folder", { path: folder, error: String(err) });
+          });
           return create;
         }).then(() => {
           return app.vault.createBinary(`${folder}/${fileName}`, buffer);

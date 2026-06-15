@@ -7,8 +7,20 @@ import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
 import { AI3DSettingTab } from "./settings";
 import { inspectAllConverterCommands } from "./io/conversion/command-discovery";
-import { setLogLevel } from "./utils/log";
+import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
+
+const log = createLogger("main");
+
+function withErrorNotice<T>(fn: () => Promise<T>, context: string): () => void {
+  return () => {
+    fn().catch((err: unknown) => {
+      log.error(`Command ${context} failed`, { error: String(err) });
+      new Notice(`AI3D: ${context} failed — ${String(err)}`, 5000);
+    });
+  };
+}
+
 import { normalizeHeadingText } from "./utils/note-reader";
 import { isMobile } from "./utils/device";
 import { getPortableStem } from "./utils/resolve-path";
@@ -56,31 +68,31 @@ export default class AI3DModelWorkbench extends Plugin {
     this.addCommand({
       id: "generate-note",
       name: t("main.commandGenerateNote"),
-      callback: () => this.generateNote(),
+      callback: withErrorNotice(() => this.generateNote(), "generate note"),
     });
 
     this.addCommand({
       id: "open-knowledge-index",
       name: t("main.commandOpenKnowledgeIndex"),
-      callback: () => void this.openKnowledgeIndex(),
+      callback: withErrorNotice(() => this.openKnowledgeIndex(), "open knowledge index"),
     });
 
     this.addCommand({
       id: "clear-conversion-cache",
       name: t("main.commandClearConversionCache"),
-      callback: () => this.clearConversionCache(),
+      callback: withErrorNotice(() => Promise.resolve(this.clearConversionCache()), "clear conversion cache"),
     });
 
     this.addCommand({
       id: "check-converters",
       name: t("main.commandCheckConverters"),
-      callback: () => void this.checkConverterCommands(),
+      callback: withErrorNotice(() => this.checkConverterCommands(), "check converters"),
     });
 
     this.addCommand({
       id: "copy-diagnostics-report",
       name: t("main.commandCopyDiagnostics"),
-      callback: () => void this.copyDiagnosticsReport(),
+      callback: withErrorNotice(() => this.copyDiagnosticsReport(), "copy diagnostics"),
     });
 
     this.addSettingTab(new AI3DSettingTab(this.app, this));
@@ -481,7 +493,9 @@ export default class AI3DModelWorkbench extends Plugin {
     for (const part of folder.split("/").filter(Boolean)) {
       current = current ? `${current}/${part}` : part;
       if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current).catch(() => {});
+        await this.app.vault.createFolder(current).catch((err: unknown) => {
+          log.warn("Failed to create vault folder", { path: current, error: String(err) });
+        });
       }
     }
   }

@@ -4,6 +4,25 @@ import { createLogger } from "../../utils/log";
 
 const log = createLogger("conversion-manager");
 
+const DEFAULT_CONVERSION_TIMEOUT_MS = 120_000;
+
+export class ConversionTimeoutError extends Error {
+  constructor(message = "Conversion timed out") {
+    super(message);
+    this.name = "ConversionTimeoutError";
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, context: Record<string, unknown>): Promise<T> {
+  const timeout = new Promise<never>((_, reject) => {
+    const id = setTimeout(() => {
+      reject(new ConversionTimeoutError(`Conversion did not complete within ${ms}ms`));
+    }, ms);
+    promise.then(() => clearTimeout(id)).catch(() => clearTimeout(id));
+  });
+  return Promise.race([promise, timeout]);
+}
+
 export class ConversionManager {
   private readonly converters = new Map<string, ModelConverter>();
   private readonly pending = new Map<string, Promise<ConversionResult>>();
@@ -55,7 +74,11 @@ export class ConversionManager {
     }
 
     log.info("dispatch conversion", { converterId: converter.id, ext, targetExt: req.targetExt });
-    const promise = converter.convert({ ...req, sourceExt: ext });
+    const promise = withTimeout(
+      converter.convert({ ...req, sourceExt: ext }),
+      req.timeoutMs ?? DEFAULT_CONVERSION_TIMEOUT_MS,
+      { converterId: converter.id, ext, targetExt: req.targetExt },
+    );
     this.pending.set(key, promise);
     try {
       return await promise;

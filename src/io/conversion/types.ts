@@ -2,6 +2,7 @@ export interface ConversionRequest {
   sourcePath: string;
   sourceExt: string;
   targetExt: "glb";
+  timeoutMs?: number;
 }
 
 export interface ConversionResult {

@@ -12,7 +12,10 @@ import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
 import type { ModelPreview } from "../../render/preview/types";
 import { escapeHtml } from "../../utils/escape-html";
+import { createLogger } from "../../utils/log";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
+
+const log = createLogger("knowledge-note");
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
 import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
 
@@ -767,7 +770,9 @@ async function ensureFolder(app: App, folder: string): Promise<void> {
   for (const part of normalized.split("/")) {
     current = current ? `${current}/${part}` : part;
     if (!app.vault.getAbstractFileByPath(current)) {
-      await app.vault.createFolder(current).catch(() => {});
+      await app.vault.createFolder(current).catch((err: unknown) => {
+        log.warn("Failed to create vault folder", { path: current, error: String(err) });
+      });
     }
   }
 }
