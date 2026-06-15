@@ -221,6 +221,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private loadedExt = "";
   private resourceWarnings: string[] = [];
   private renderHandle = 0;
+  private contextLost = false;
   private quality: "low" | "medium" | "high" = "high";
   private renderScale = 1;
   private interactivePixelRatioActive = false;
@@ -402,6 +403,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.addEventListener("pointerdown", this.handlePointerDown);
     canvas.addEventListener("pointerup", this.handlePointerUp);
     canvas.addEventListener("pointermove", this.handlePointerMove);
+    canvas.addEventListener("webglcontextlost", this.handleContextLost);
+    canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
 
     this.resizeRenderer();
     this.startRenderLoop();
@@ -497,6 +500,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.removeEventListener("pointerdown", this.handlePointerDown);
     canvas.removeEventListener("pointerup", this.handlePointerUp);
     canvas.removeEventListener("pointermove", this.handlePointerMove);
+    canvas.removeEventListener("webglcontextlost", this.handleContextLost);
+    canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
     this.resizeObs.disconnect();
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
@@ -947,9 +952,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private startRenderLoop(): void {
-    if (this.renderHandle || !this.viewportVisible) return;
+    if (this.renderHandle || !this.viewportVisible || this.contextLost) return;
     const tick = () => {
-      if (!this.viewportVisible) {
+      if (!this.viewportVisible || this.contextLost) {
         this.renderHandle = 0;
         return;
       }
@@ -958,6 +963,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
     };
     this.renderHandle = window.requestAnimationFrame(tick);
   }
+
+  private readonly handleContextLost = (event: Event) => {
+    event.preventDefault();
+    this.contextLost = true;
+    if (this.renderHandle) {
+      cancelAnimationFrame(this.renderHandle);
+      this.renderHandle = 0;
+    }
+  };
+
+  private readonly handleContextRestored = () => {
+    this.contextLost = false;
+    this.markDirty();
+    this.startRenderLoop();
+  };
 
   private renderNow(now: number): void {
     const canvas = this.renderer.domElement;

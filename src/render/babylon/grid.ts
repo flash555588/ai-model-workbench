@@ -57,6 +57,8 @@ class BabylonGridRenderer implements PreviewGridRenderer {
   private initialCameras: { alpha: number; beta: number; radius: number; target: Vector3 }[] = [];
   private wireframeEnabled = false;
   private rendering = false;
+  private dirty = true;
+  private contextLost = false;
   private resizeObs: ResizeObserver;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
@@ -66,6 +68,10 @@ class BabylonGridRenderer implements PreviewGridRenderer {
   private canRender(): boolean {
     const canvas = this.engine.getRenderingCanvas();
     return !!canvas?.isConnected && canvas.clientWidth > 0 && canvas.clientHeight > 0;
+  }
+
+  private markDirty(): void {
+    this.dirty = true;
   }
 
   private getCellBounds(meshes: readonly AbstractMesh[]) {
@@ -80,12 +86,14 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     canvas.className = "ai3d-canvas-full";
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: true });
+    canvas.addEventListener("webglcontextlost", this.handleContextLost);
+    canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.12, 0.12, 0.14, 1);
     this.scene.autoClear = false;
     new HemisphericLight("default-light", new Vector3(0, 1, 0.5), this.scene);
 
-    this.resizeObs = new ResizeObserver(() => this.engine.resize());
+    this.resizeObs = new ResizeObserver(() => { this.engine.resize(); this.markDirty(); });
     this.resizeObs.observe(canvas);
     window.requestAnimationFrame(() => this.engine.resize());
   }
@@ -123,6 +131,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     }
 
     this.startRenderLoop();
+    this.markDirty();
     this.engine.resize();
   }
 
@@ -307,7 +316,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     );
     camera.layerMask = 1 << globalIndex;
     const canvas = this.engine.getRenderingCanvas();
-    if (canvas) camera.attachControl(canvas, true);
+    if (canvas) { camera.attachControl(canvas, true); camera.onViewMatrixChangedObservable.add(() => this.markDirty()); }
     this.initialCameras.push({
       alpha: camera.alpha, beta: camera.beta,
       radius: camera.radius, target: camera.target.clone(),
@@ -378,7 +387,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     camera.viewport = new Viewport(vx, vy, vw, vh);
     camera.layerMask = 1 << index;
     const canvas = this.engine.getRenderingCanvas();
-    if (canvas) camera.attachControl(canvas, true);
+    if (canvas) { camera.attachControl(canvas, true); camera.onViewMatrixChangedObservable.add(() => this.markDirty()); }
     this.initialCameras.push({
       alpha: camera.alpha, beta: camera.beta,
       radius: camera.radius, target: camera.target.clone(),
@@ -388,8 +397,25 @@ class BabylonGridRenderer implements PreviewGridRenderer {
 
   // ── Render ─────────────────────────────────────────────────────────
 
+  private readonly handleContextLost = (event: Event) => {
+    event.preventDefault();
+    this.contextLost = true;
+    if (this.rendering) {
+      this.engine.stopRenderLoop();
+      this.rendering = false;
+    }
+  };
+
+  private readonly handleContextRestored = () => {
+    this.contextLost = false;
+    this.engine.resize();
+    this.startRenderLoop();
+    this.markDirty();
+  };
+
   private renderFrame(): void {
-    if (!this.canRender()) return;
+    if (!this.canRender() || !this.dirty || this.contextLost) return;
+    this.dirty = false;
     const engine = this.engine;
     const scene = this.scene;
     engine.clear(scene.clearColor, true, true);

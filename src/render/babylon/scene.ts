@@ -242,6 +242,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private loadedTransformNodes: TransformNode[] = [];
   private loadedExt: string = "";
   private rendering = false;
+  private contextLost = false;
+  private viewportVisible = true;
+  private viewportObserver: IntersectionObserver | null = null;
   private cleanupPicking: (() => void) | null = null;
   private resizeObs: ResizeObserver;
   private configLights: Light[] = [];
@@ -355,6 +358,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.wheelPrecision = 30;
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     canvas.addEventListener("pointermove", this.handlePointerMove);
+    canvas.addEventListener("webglcontextlost", this.handleContextLost);
+    canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
 
     this.scene.ambientColor = new Color3(0.3, 0.3, 0.3);
     const hemi = new HemisphericLight("default-light", new Vector3(0, 1, 0.5), this.scene);
@@ -362,6 +367,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
     this.resizeObs = new ResizeObserver(() => this.engine.resize());
     this.resizeObs.observe(canvas);
+    if (typeof IntersectionObserver !== "undefined") {
+      this.viewportObserver = new IntersectionObserver(this.handleViewportIntersection, {
+        root: null,
+        threshold: [0, 0.01],
+      });
+      this.viewportObserver.observe(canvas);
+    }
     // Force a resize after the canvas is mounted and has layout dimensions
     window.requestAnimationFrame(() => this.engine.resize());
   }
@@ -1296,6 +1308,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const canvas = this.engine.getRenderingCanvas();
     canvas?.removeEventListener("wheel", this.preventCanvasWheelScroll);
     canvas?.removeEventListener("pointermove", this.handlePointerMove);
+    canvas?.removeEventListener("webglcontextlost", this.handleContextLost);
+    canvas?.removeEventListener("webglcontextrestored", this.handleContextRestored);
+    this.viewportObserver?.disconnect();
+    this.viewportObserver = null;
     this.resizeObs.disconnect();
     if (this.autoRotateBehavior) {
       this.camera.removeBehavior(this.autoRotateBehavior);
@@ -1316,10 +1332,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private startRenderLoop() {
-    if (this.rendering) return;
+    if (this.rendering || !this.viewportVisible || this.contextLost) return;
     this.rendering = true;
     this.engine.runRenderLoop(() => {
-      if (!this.canRender()) return;
+      if (!this.canRender() || !this.viewportVisible || this.contextLost) {
+        this.engine.stopRenderLoop();
+        this.rendering = false;
+        return;
+      }
       this.scene.render();
       if (this.gizmo && this.gizmoEnabled) {
         this.gizmo.syncWith(this.camera);
@@ -1327,6 +1347,33 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
     });
   }
+
+  private readonly handleViewportIntersection = (entries: IntersectionObserverEntry[]) => {
+    const visible = entries.some((entry) => entry.isIntersecting);
+    if (visible === this.viewportVisible) return;
+    this.viewportVisible = visible;
+    if (visible) {
+      this.startRenderLoop();
+    } else if (this.rendering) {
+      this.engine.stopRenderLoop();
+      this.rendering = false;
+    }
+  };
+
+  private readonly handleContextLost = (event: Event) => {
+    event.preventDefault();
+    this.contextLost = true;
+    if (this.rendering) {
+      this.engine.stopRenderLoop();
+      this.rendering = false;
+    }
+  };
+
+  private readonly handleContextRestored = () => {
+    this.contextLost = false;
+    this.engine.resize();
+    this.startRenderLoop();
+  };
 
   private getRenderableMeshes(root: Mesh): AbstractMesh[] {
     return getBabylonRenderableMeshes(root, this.loadedMeshes);
