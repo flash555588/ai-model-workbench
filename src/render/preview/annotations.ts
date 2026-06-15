@@ -25,6 +25,7 @@ const IDLE_OCCLUSION_STRIDE = 6;
 const LABEL_AVOIDANCE_PADDING = 6;
 const LABEL_AVOIDANCE_MAX_SHIFT = 72;
 const LABEL_AVOIDANCE_MAX_PINS = 80;
+const MAX_PINS = 200;
 
 function generateId(): string {
   return `pin-${Date.now()}-${globalNextId++}`;
@@ -139,6 +140,10 @@ export class AnnotationManager {
   }
 
   addPin(worldPos: PreviewWorldPoint, label: string, color?: string): AnnotationPin {
+    if (this.annotations.length >= MAX_PINS) {
+      console.warn(`[AI3D] Pin limit (${MAX_PINS}) reached; ignoring new pin.`);
+      return this.annotations[this.annotations.length - 1];
+    }
     const pin: AnnotationPin = {
       id: generateId(),
       position: [worldPos.x, worldPos.y, worldPos.z],
@@ -881,15 +886,22 @@ export class AnnotationManager {
       return;
     }
 
-    const placed: DOMRect[] = [];
     const ordered = projectedPins
       .filter((pin) => !pin.el.classList.contains("ai3d-pin-hidden") && !pin.el.classList.contains("ai3d-pin-occluded"))
       .sort((a, b) => a.depth - b.depth);
 
-    for (const pin of ordered) {
+    // Batch read all rects first to avoid interleaving DOM reads/writes.
+    const rects = ordered.map((pin) => ({
+      pin,
+      rect: pin.el.getBoundingClientRect(),
+    }));
+
+    const placed: DOMRect[] = [];
+    const updates: Array<{ el: HTMLDivElement; offset: number }> = [];
+
+    for (const { pin, rect: initialRect } of rects) {
       let offset = 0;
-      pin.el.setCssProps({ "--pin-offset-y": "0px" });
-      let rect = pin.el.getBoundingClientRect();
+      let rect = initialRect;
       for (const placedRect of placed) {
         if (!rectsOverlap(rect, placedRect, LABEL_AVOIDANCE_PADDING)) continue;
         const direction = pin.screenY >= placedRect.top + placedRect.height / 2 ? 1 : -1;
@@ -897,10 +909,18 @@ export class AnnotationManager {
           -LABEL_AVOIDANCE_MAX_SHIFT,
           Math.min(LABEL_AVOIDANCE_MAX_SHIFT, offset + direction * (placedRect.height + LABEL_AVOIDANCE_PADDING)),
         );
-        pin.el.setCssProps({ "--pin-offset-y": `${offset}px` });
-        rect = pin.el.getBoundingClientRect();
+        // Re-measure after deciding offset, but do not write to DOM yet.
+        const width = rect.width;
+        const height = rect.height;
+        rect = new DOMRect(rect.x, rect.y + offset, width, height);
       }
       placed.push(rect);
+      updates.push({ el: pin.el, offset });
+    }
+
+    // Apply all style updates in one batch.
+    for (const { el, offset } of updates) {
+      el.setCssProps({ "--pin-offset-y": offset === 0 ? "0px" : `${offset}px` });
     }
   }
 
