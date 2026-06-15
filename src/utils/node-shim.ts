@@ -83,6 +83,10 @@ export function rm(path: string, opts: { force: boolean }): Promise<void> {
   return throwIfNull(fsPromises, "node:fs/promises").rm(path, opts);
 }
 
+export function stat(path: string): Promise<import("node:fs").Stats> {
+  return throwIfNull(fsPromises, "node:fs/promises").stat(path);
+}
+
 // ── fs constants ─────────────────────────────────────────────────
 
 export const F_OK: number = fsMod?.constants.F_OK ?? 0;

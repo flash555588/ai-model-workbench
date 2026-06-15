@@ -1,4 +1,4 @@
-import { F_OK, X_OK, access, execFile } from "../../utils/node-shim";
+import { F_OK, X_OK, access, execFile, stat } from "../../utils/node-shim";
 import { getRuntimeProcess } from "../../utils/node-shim";
 import { pathDelimiter as delimiter, pathExtname as extname, pathIsAbsolute as isAbsolute, pathJoin as join } from "../../utils/node-shim";
 import type { PluginSettings } from "../../domain/models";
@@ -220,6 +220,24 @@ function normalizeCommandValue(value?: string): string | undefined {
   return trimmed;
 }
 
+const COMMAND_REJECTED_CHARS = /[;|&<>$`\r\n\t{}()[\]\\]/;
+
+function validateCommandExecutable(command: string): { ok: true } | { ok: false; reason: string } {
+  if (COMMAND_REJECTED_CHARS.test(command)) {
+    return { ok: false, reason: "Command contains unsafe shell metacharacters." };
+  }
+  return { ok: true };
+}
+
+async function isRegularFile(path: string): Promise<boolean> {
+  try {
+    const info = await stat(path);
+    return info.isFile();
+  } catch {
+    return false;
+  }
+}
+
 function splitCommandLine(command: string): string[] {
   const parts: string[] = [];
   let current = "";
@@ -344,6 +362,10 @@ async function resolveCommandOnPath(command: string): Promise<string | undefined
 }
 
 function execFileAsync(command: string, args: string[], timeoutMs = 15_000): Promise<{ stdout: string; stderr: string }> {
+  const validation = validateCommandExecutable(command);
+  if (!validation.ok) {
+    return Promise.reject(new Error(`Refusing to execute converter command: ${validation.reason}`));
+  }
   return new Promise((resolve, reject) => {
     execFile(
       command,
@@ -536,8 +558,31 @@ async function inspectCommandReference(
 ): Promise<ConverterCommandStatus> {
   const parsed = parseCommandValue(command);
 
+  const validation = validateCommandExecutable(parsed.executable);
+  if (!validation.ok) {
+    return {
+      id: spec.id,
+      label: spec.label,
+      envVar: spec.envVar,
+      settingsKey: spec.settingsKey,
+      configuredCommand,
+      command,
+      executable: parsed.executable,
+      args: parsed.args,
+      resolvedPath: undefined,
+      available: false,
+      source,
+      detail: validation.reason,
+      checkedCandidates: [parsed.executable],
+    };
+  }
+
   if (hasPathHint(parsed.executable)) {
-    const available = await isExecutable(parsed.executable);
+    const [executableOk, isFile] = await Promise.all([
+      isExecutable(parsed.executable),
+      isRegularFile(parsed.executable),
+    ]);
+    const available = executableOk && isFile;
     return {
       id: spec.id,
       label: spec.label,
