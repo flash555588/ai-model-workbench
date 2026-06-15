@@ -8,6 +8,7 @@ import { SpotLight } from "@babylonjs/core/Lights/spotLight.js";
 import { Vector3, Matrix } from "@babylonjs/core/Maths/math.vector.js";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
+import { LinesMesh } from "@babylonjs/core/Meshes/linesMesh.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
@@ -560,7 +561,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.cleanupPicking = setupPicking(this.scene, (result) => {
       if (this.isDisassemblyActive()) return;
       if (this.measurementActive && result.pickedPoint) {
-        this.addMeasurementPoint(toBabylonVector3(result.pickedPoint as { x: number; y: number; z: number }));
+        this.addMeasurementPoint(toBabylonVector3(result.pickedPoint));
         return;
       }
       this._lastPickResult = result;
@@ -1610,7 +1611,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private createMeasurementSegment(start: Vector3, end: Vector3): void {
     const line = MeshBuilder.CreateLines("measure-line", { points: [start, end] }, this.scene);
-    (line as any).color = new Color3(1, 0.42, 0.42);
+    line.color = new Color3(1, 0.42, 0.42);
     line.isPickable = false;
     line.renderingGroupId = 2;
 
@@ -1655,8 +1656,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private ensurePreviewLine(): void {
     if (this.previewLine) return;
     this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [Vector3.Zero(), Vector3.Zero()] }, this.scene);
-    (this.previewLine as any).color = new Color3(1, 1, 1);
-    (this.previewLine as any).alpha = 0.5;
+    (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
+    (this.previewLine as LinesMesh).alpha = 0.5;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }
@@ -1678,8 +1679,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     this.previewLine.dispose();
     this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [this.pendingPoint, endPoint] }, this.scene);
-    (this.previewLine as any).color = new Color3(1, 1, 1);
-    (this.previewLine as any).alpha = 0.5;
+    (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
+    (this.previewLine as LinesMesh).alpha = 0.5;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish, for example 0.4.0"
+        description: "Release tag to publish, for example 0.5.5"
         required: false
 
 permissions:
@@ -35,6 +35,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
 
       - name: Verify knowledge index
         run: npm run verify:knowledge-index

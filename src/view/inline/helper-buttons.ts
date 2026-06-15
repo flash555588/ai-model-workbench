@@ -608,15 +608,15 @@ export function createHelperButtons(
 
   // Calibration panel
   const calibratePanel = parentEl.createDiv({ cls: "ai3d-calibrate-panel is-hidden" });
-  const calibrateTitle = calibratePanel.createEl("div", { cls: "ai3d-calibrate-title", text: t("helper.calibrateTitle") });
+  calibratePanel.createDiv({ cls: "ai3d-calibrate-title", text: t("helper.calibrateTitle") });
   const boundsRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
-  boundsRow.createEl("span", { cls: "ai3d-calibrate-label", text: t("helper.calibrateCurrent") });
-  const boundsX = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
-  const boundsY = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
-  const boundsZ = boundsRow.createEl("span", { cls: "ai3d-calibrate-readonly" });
+  boundsRow.createSpan({ cls: "ai3d-calibrate-label", text: t("helper.calibrateCurrent") });
+  const boundsX = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
+  const boundsY = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
+  const boundsZ = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
 
   const realRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
-  realRow.createEl("span", { cls: "ai3d-calibrate-label", text: t("helper.calibrateReal") });
+  realRow.createSpan({ cls: "ai3d-calibrate-label", text: t("helper.calibrateReal") });
   const inputX = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "X" } });
   const inputY = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Y" } });
   const inputZ = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Z" } });

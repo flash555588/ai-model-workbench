@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Security: sanitize remote draft output and model-derived metadata before writing generated notes.
+- Security: validate converter command paths and reject shell metacharacters.
+- Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
+- Stability: handle WebGL context loss/restoration in Three.js, Babylon.js, and 3dgrid previews.
+- Stability: add outer timeout to conversion manager to prevent hung converters from blocking previews.
+- Performance: pause Babylon.js preview render loops when the canvas leaves the viewport.
+- Performance: skip unchanged cells in Babylon.js 3dgrid rendering.
+- Performance: cap annotation pins and batch DOM reads/writes in label avoidance.
+- Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
+- Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
+
+## 0.5.5
+
+- Align release version metadata.
+
+## 0.5.3
+
+- Address Obsidian review warnings.
+
 ## 0.5.1
 
 - Add annotation bookmark display modes for full snippets, compact surfaces, and dots; keep bookmark popovers open while hovered and hide occluded bookmarks fully.

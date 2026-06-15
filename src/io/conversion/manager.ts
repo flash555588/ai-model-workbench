@@ -13,12 +13,14 @@ export class ConversionTimeoutError extends Error {
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, context: Record<string, unknown>): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, _context: Record<string, unknown>): Promise<T> {
+  const setTimer = typeof activeWindow !== "undefined" ? activeWindow.setTimeout.bind(activeWindow) : setTimeout;
+  const clearTimer = typeof activeWindow !== "undefined" ? activeWindow.clearTimeout.bind(activeWindow) : clearTimeout;
   const timeout = new Promise<never>((_, reject) => {
-    const id = setTimeout(() => {
+    const id = setTimer(() => {
       reject(new ConversionTimeoutError(`Conversion did not complete within ${ms}ms`));
     }, ms);
-    promise.then(() => clearTimeout(id)).catch(() => clearTimeout(id));
+    promise.then(() => clearTimer(id)).catch(() => clearTimer(id));
   });
   return Promise.race([promise, timeout]);
 }

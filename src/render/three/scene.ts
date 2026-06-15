@@ -7,7 +7,6 @@ import {
   CanvasTexture,
   Color,
   DirectionalLight,
-  Float32BufferAttribute,
   GridHelper,
   HemisphereLight,
   Light,
@@ -1912,7 +1911,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementLabelSprite(text: string, position: Vector3, scale: number): Sprite {
-    const canvas = document.createElement("canvas");
+    const canvas = activeDocument.createEl("canvas");
     const ctx = canvas.getContext("2d")!;
     canvas.width = 512;
     canvas.height = 128;

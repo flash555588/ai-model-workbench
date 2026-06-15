@@ -25,6 +25,18 @@ export default defineConfig([
     },
   },
   {
+    files: ["src/**/*.test.ts"],
+    languageOptions: {
+      globals: {
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+    rules: {
+      "obsidianmd/prefer-active-window-timers": "off",
+    },
+  },
+  {
     files: ["scripts/**/*.{js,mjs,ts}", "*.config.mjs"],
     languageOptions: {
       globals: {
