@@ -5,6 +5,7 @@ import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/fo
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
 import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
+import { setupHeadingPinObserver } from "./view/heading-pin-observer";
 import { AI3DSettingTab } from "./settings";
 import { inspectAllConverterCommands } from "./io/conversion/command-discovery";
 import { createLogger, setLogLevel } from "./utils/log";
@@ -21,9 +22,7 @@ function withErrorNotice<T>(fn: () => Promise<T>, context: string): () => void {
   };
 }
 
-import { normalizeHeadingText } from "./utils/note-reader";
 import { isMobile } from "./utils/device";
-import { getPortableStem } from "./utils/resolve-path";
 
 export default class AI3DModelWorkbench extends Plugin {
   private ps!: PluginStore;
@@ -119,7 +118,12 @@ export default class AI3DModelWorkbench extends Plugin {
     }
 
     // Watch note headings for hover → highlight pin
-    this.setupHeadingPinObserver();
+    setupHeadingPinObserver({
+      subscribeStore: (cb) => this.ps.store.subscribe(cb),
+      getModelAssetProfiles: () => this.ps.store.getState().modelAssetProfiles,
+      registerCleanup: (cleanup) => this.register(cleanup),
+      onLayoutChange: (cb) => { this.registerEvent(this.app.workspace.on("layout-change", cb)); },
+    });
   }
 
   onunload(): void {
@@ -129,265 +133,7 @@ export default class AI3DModelWorkbench extends Plugin {
     // Views are cleaned up by Obsidian calling onClose()
   }
 
-  // TODO(P2): extract into src/view/heading-pin-observer.ts and unit-test the selector/event wiring (debt: view-layer).
-  private setupHeadingPinObserver(): void {
-    const markdownContainerSelector = ".markdown-preview-view, .markdown-source-view";
-    const headingSelector = [
-      ".markdown-preview-view h1", ".markdown-preview-view h2", ".markdown-preview-view h3",
-      ".markdown-preview-view h4", ".markdown-preview-view h5", ".markdown-preview-view h6",
-      ".cm-heading-1", ".cm-heading-2", ".cm-heading-3",
-      ".cm-heading-4", ".cm-heading-5", ".cm-heading-6",
-      ".cm-header-1", ".cm-header-2", ".cm-header-3",
-      ".cm-header-4", ".cm-header-5", ".cm-header-6",
-    ].join(", ");
 
-    type BoundHeadingEntry = {
-      badge: HTMLSpanElement;
-      handler: () => void;
-      signature: string;
-    };
-    const boundEntries = new Map<Element, BoundHeadingEntry>();
-
-    // Build headingRef → [{ pinId, modelPath, color }] map from stored annotations.
-    // Supports multiple pins/models per heading.
-    type PinEntry = { pinId: string; modelPath: string; color: string };
-    const buildBadgeSwatchBackground = (colors: string[]): string => {
-      if (colors.length === 0) return "var(--interactive-accent)";
-      if (colors.length === 1) return colors[0];
-      const step = 100 / colors.length;
-      return `linear-gradient(135deg, ${colors.map((color, index) => {
-        const start = Math.round(index * step);
-        const end = Math.round((index + 1) * step);
-        return `${color} ${start}% ${end}%`;
-      }).join(", ")})`;
-    };
-
-    const buildHeadingMap = (): Map<string, PinEntry[]> => {
-      const map = new Map<string, PinEntry[]>();
-      const profiles = this.ps.store.getState().modelAssetProfiles;
-      for (const [modelPath, profile] of Object.entries(profiles)) {
-        for (const pin of profile.annotations) {
-          if (pin.headingRef && pin.id) {
-            const headingKey = normalizeHeadingText(pin.headingRef);
-            if (!headingKey) continue;
-            let arr = map.get(headingKey);
-            if (!arr) { arr = []; map.set(headingKey, arr); }
-            arr.push({ pinId: pin.id, modelPath, color: pin.color });
-          }
-        }
-      }
-      return map;
-    };
-
-    const buildEntriesSignature = (entries: PinEntry[]): string => entries
-      .map((entry) => `${entry.pinId}:${entry.modelPath}:${entry.color}`)
-      .sort()
-      .join("|");
-
-    const buildHeadingMapSignature = (headingMap: Map<string, PinEntry[]>): string => Array
-      .from(headingMap.entries())
-      .map(([key, entries]) => `${key}=>${buildEntriesSignature(entries)}`)
-      .sort()
-      .join("||");
-
-    const getHeadingText = (el: Element): string => normalizeHeadingText(
-      Array.from(el.childNodes)
-        .map((node) => {
-          if (node.instanceOf(Element) && node.classList.contains("ai3d-heading-pin-badge")) {
-            return "";
-          }
-          return node.textContent ?? "";
-        })
-        .join(" "),
-    );
-
-    const unbindHeading = (el: Element): void => {
-      const existing = boundEntries.get(el);
-      if (!existing) return;
-      el.removeEventListener("mouseover", existing.handler);
-      existing.badge.remove();
-      delete (el as HTMLElement).dataset.pinBound;
-      boundEntries.delete(el);
-    };
-
-    const bindHeading = (el: Element, entries: PinEntry[]): void => {
-      if (entries.length === 0) {
-        unbindHeading(el);
-        return;
-      }
-
-      const signature = buildEntriesSignature(entries);
-      const existing = boundEntries.get(el);
-      if (existing?.signature === signature) return;
-      if (existing) {
-        unbindHeading(el);
-      }
-
-      (el as HTMLElement).dataset.pinBound = signature;
-
-      // Add pin badge: shows count if multiple, tooltip lists model sources
-      // Create on heading element (in DOM) to inherit Obsidian CSS variables
-      const badge = (el as HTMLElement).createSpan({ cls: "ai3d-heading-pin-badge" });
-      const distinctColors = [...new Set(entries.map((entry) => entry.color).filter(Boolean))];
-      const swatch = badge.createSpan({ cls: "ai3d-heading-pin-badge-swatch" });
-      swatch.style.background = buildBadgeSwatchBackground(distinctColors);
-      swatch.title = entries.length > 1 ? t("headingPin.showMultiple") : t("headingPin.showSingle");
-      swatch.setAttribute("role", "button");
-      swatch.setAttribute("tabindex", "0");
-      if (entries.length > 1) {
-        const count = badge.createSpan({ cls: "ai3d-heading-pin-badge-count" });
-        count.textContent = `\u00d7${entries.length}`;
-      }
-      const uniqueModels = [...new Set(entries.map((e) => getPortableStem(e.modelPath)))];
-      badge.title = formatT("headingPin.linkedTo", { models: uniqueModels.join(", ") });
-      const highlightLinkedPins = (e?: Event) => {
-        e?.stopPropagation();
-        e?.preventDefault();
-        for (const entry of entries) {
-          activeDocument.dispatchEvent(new CustomEvent("ai3d-pin-highlight", { detail: { pinId: entry.pinId } }));
-        }
-      };
-      swatch.addEventListener("click", (e) => {
-        highlightLinkedPins(e);
-      });
-      swatch.addEventListener("keydown", (e) => {
-        if (!e.instanceOf(KeyboardEvent)) return;
-        if (e.key !== "Enter" && e.key !== " ") return;
-        highlightLinkedPins(e);
-      });
-      badge.addEventListener("click", (e) => {
-        e.stopPropagation();
-      });
-      el.appendChild(badge);
-
-      // Hover on heading → pulse all linked pins
-      const handler = () => {
-        for (const entry of entries) {
-          activeDocument.dispatchEvent(new CustomEvent("ai3d-pin-highlight", { detail: { pinId: entry.pinId } }));
-        }
-      };
-      el.addEventListener("mouseover", handler);
-      boundEntries.set(el, { badge, handler, signature });
-    };
-
-    const syncHeadingElement = (el: Element, headingMap: Map<string, PinEntry[]>): void => {
-      const headingText = getHeadingText(el);
-      bindHeading(el, headingMap.get(headingText) ?? []);
-    };
-
-    const reconcileBoundHeadings = (headingMap: Map<string, PinEntry[]>): void => {
-      for (const [el, entry] of Array.from(boundEntries.entries())) {
-        if (!el.isConnected) {
-          unbindHeading(el);
-          continue;
-        }
-        const nextEntries = headingMap.get(getHeadingText(el)) ?? [];
-        const nextSignature = buildEntriesSignature(nextEntries);
-        if (nextEntries.length === 0 || entry.signature !== nextSignature) {
-          bindHeading(el, nextEntries);
-        }
-      }
-    };
-
-    const processHeadings = (container: Element, headingMap: Map<string, PinEntry[]>): void => {
-      container.querySelectorAll(headingSelector).forEach((el) => syncHeadingElement(el, headingMap));
-    };
-
-    const scanAll = (): void => {
-      const headingMap = buildHeadingMap();
-      reconcileBoundHeadings(headingMap);
-      const containers = activeDocument.querySelectorAll(markdownContainerSelector);
-      containers.forEach((container) => processHeadings(container, headingMap));
-    };
-
-    let lastHeadingMapSignature = buildHeadingMapSignature(buildHeadingMap());
-    let scanTimer = 0;
-    const scheduleScan = (delay = 0): void => {
-      if (scanTimer) {
-        window.clearTimeout(scanTimer);
-      }
-      scanTimer = window.setTimeout(() => {
-        scanTimer = 0;
-        scanAll();
-      }, delay);
-    };
-
-    const unsubscribeStore = this.ps.store.subscribe(() => {
-      const nextHeadingMap = buildHeadingMap();
-      const nextSignature = buildHeadingMapSignature(nextHeadingMap);
-      if (nextSignature === lastHeadingMapSignature) return;
-      lastHeadingMapSignature = nextSignature;
-      scheduleScan();
-    });
-
-    this.registerEvent(this.app.workspace.on("layout-change", () => {
-      scheduleScan(200);
-    }));
-
-    // Debounced MutationObserver: coalesce rapid DOM changes into a single scan
-    const matchesRelevantNode = (node: HTMLElement): boolean => {
-      if (node.matches(markdownContainerSelector) || node.matches(headingSelector)) return true;
-      return !!node.querySelector(markdownContainerSelector) || !!node.querySelector(headingSelector);
-    };
-
-    const isRelevantAddedNode = (node: HTMLElement): boolean => node.isConnected && matchesRelevantNode(node);
-    const isRelevantRemovedNode = (node: HTMLElement): boolean => matchesRelevantNode(node);
-
-    let pendingNodes = new Set<HTMLElement>();
-    let debounceTimer = 0;
-    const flushPending = () => {
-      const nodes = Array.from(pendingNodes);
-      pendingNodes.clear();
-      debounceTimer = 0;
-      const headingMap = buildHeadingMap();
-      reconcileBoundHeadings(headingMap);
-      for (const node of nodes) {
-        if (!node.isConnected) continue;
-        if (node.matches?.(headingSelector)) syncHeadingElement(node, headingMap);
-        node.querySelectorAll?.(headingSelector)?.forEach((el: Element) => syncHeadingElement(el, headingMap));
-        if (node.matches?.(markdownContainerSelector)) {
-          processHeadings(node, headingMap);
-        }
-        node.querySelectorAll?.(markdownContainerSelector)?.forEach((el: Element) => processHeadings(el, headingMap));
-      }
-      lastHeadingMapSignature = buildHeadingMapSignature(headingMap);
-    };
-
-    const observer = new MutationObserver((mutations) => {
-      let shouldFlush = false;
-      for (const m of mutations) {
-        for (const node of Array.from(m.addedNodes)) {
-          if (!node.instanceOf(HTMLElement)) continue;
-          if (!isRelevantAddedNode(node)) continue;
-          pendingNodes.add(node);
-          shouldFlush = true;
-        }
-        for (const node of Array.from(m.removedNodes)) {
-          if (!node.instanceOf(HTMLElement)) continue;
-          if (!isRelevantRemovedNode(node)) continue;
-          shouldFlush = true;
-        }
-      }
-      if (shouldFlush && !debounceTimer) {
-        debounceTimer = window.setTimeout(flushPending, 100);
-      }
-    });
-    observer.observe(activeDocument.body, { childList: true, subtree: true });
-
-    // Cleanup: disconnect observer, remove all heading listeners
-    this.register(() => {
-      unsubscribeStore();
-      observer.disconnect();
-      if (debounceTimer) { window.clearTimeout(debounceTimer); debounceTimer = 0; }
-      if (scanTimer) { window.clearTimeout(scanTimer); scanTimer = 0; }
-      for (const el of Array.from(boundEntries.keys())) {
-        unbindHeading(el);
-      }
-    });
-
-    // Initial scan
-    scheduleScan(500);
-  }
 
   private importModel() {
     new ModelFileSuggestModal(this.app, (file: TFile) => {
