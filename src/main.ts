@@ -111,7 +111,9 @@ export default class AI3DModelWorkbench extends Plugin {
   }
 
   onunload(): void {
-    this.ps.dispose();
+    // Flush any pending state before the plugin is torn down so annotations,
+    // registered parts, and last-generation metadata are not lost.
+    this.ps.save().catch(err => console.error("[AI3D] unload save failed:", err));
     // Views are cleaned up by Obsidian calling onClose()
   }
 

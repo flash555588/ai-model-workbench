@@ -86,6 +86,8 @@ export function createPluginStore(plugin: Plugin): PluginStore {
         window.clearTimeout(saveTimer);
         saveTimer = null;
       }
+      // Fire-and-forget final flush so pending state changes are not lost on unload.
+      persist().catch(err => console.error("[AI3D] Final save on dispose failed:", err));
     },
   };
 }
