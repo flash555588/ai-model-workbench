@@ -1,5 +1,5 @@
 import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
-import type { PluginSettings, ModelAssetProfile, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
+import type { PluginSettings, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
@@ -26,11 +26,7 @@ export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 const log = createLogger("direct-view");
 const THREE_WORKBENCH_DIRECT_EXTS = new Set(["glb", "gltf"]);
 
-// TODO(P2): migrate direct setState calls into typed PluginStore actions (debt: store-api).
-
-function createDefaultProfile(): ModelAssetProfile {
-  return { tags: [], notes: "", annotations: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-}
+import { createDefaultProfile } from "../store/plugin-store";
 
 function canUseExperimentalThreeWorkbench(settings: PluginSettings, source: ReturnType<typeof toPreviewSource>): boolean {
   return settings.experimentalThreeWorkbench
@@ -161,11 +157,7 @@ export class DirectModelView extends FileView {
     this.sidebarContent = null;
     this.preview?.destroy();
     this.preview = null;
-    this.ps.store.setState({
-      currentModelPath: file.path,
-      modelPreview: null,
-      selectedPart: null,
-    });
+    this.ps.setCurrentModel(file.path, null);
     // === Workspace layout with draggable resize ===
     const workspace = this.contentEl.createDiv({ cls: "ai3d-workspace" });
     // Top track: main preview + sidebar
@@ -287,11 +279,7 @@ export class DirectModelView extends FileView {
       this.workbenchModelPath = file.path;
       this.renderWorkbenchPanel(workbenchPanel, summary, created.route, file.path);
       this.renderSidebarContent(file.path, summary);
-      this.ps.store.setState({
-        currentModelPath: file.path,
-        modelPreview: summary,
-        selectedPart: null,
-      });
+      this.ps.setCurrentModel(file.path, summary);
       log.info("direct view model loaded", {
         path: file.path,
         effectivePath: source.path,
@@ -317,11 +305,7 @@ export class DirectModelView extends FileView {
           "edit",
           initialPins,
           (pins) => {
-            const current = this.ps.store.getState().modelAssetProfiles;
-            const existing = current[file.path] ?? createDefaultProfile();
-            this.ps.store.setState({
-              modelAssetProfiles: { ...current, [file.path]: { ...existing, annotations: pins, updatedAt: new Date().toISOString() } },
-            });
+            this.ps.updateModelProfile(file.path, (_existing) => ({ annotations: pins }));
             // Update badge count
             toolbar.updateAnnotationBadge(pins.length);
           },
@@ -365,7 +349,7 @@ export class DirectModelView extends FileView {
         console.error("[AI3D] Direct view failed:", err);
       }
       if (this.ps.store.getState().currentModelPath === file.path) {
-        this.ps.store.setState({ modelPreview: null, selectedPart: null });
+        this.ps.clearModelPreview();
       }
       renderModelLoadFailure(host, failure);
     }
@@ -388,16 +372,7 @@ export class DirectModelView extends FileView {
     );
     const registeredParts = nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part));
 
-    this.ps.store.setState({
-      modelAssetProfiles: {
-        ...currentProfiles,
-        [modelPath]: {
-          ...existingProfile,
-          registeredParts,
-          updatedAt: new Date().toISOString(),
-        },
-      },
-    });
+    this.ps.updateModelProfile(modelPath, (_existing) => ({ registeredParts }));
   }
   private renderWorkbenchPanel(
     panel: HTMLElement,

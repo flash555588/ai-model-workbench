@@ -33,11 +33,9 @@ export default class AI3DModelWorkbench extends Plugin {
   }
 
   updateSettings(partial: Partial<PluginSettings>): void {
-    const current = this.ps.store.getState().settings;
-    const next = { ...current, ...partial };
-    this.ps.store.setState({ settings: next });
-    setLogLevel(next.logLevel);
-    setLocale(next.locale);
+    this.ps.updateSettings(partial);
+    setLogLevel(this.getSettings().logLevel);
+    setLocale(this.getSettings().locale);
   }
 
   async onload() {
@@ -45,7 +43,7 @@ export default class AI3DModelWorkbench extends Plugin {
     await this.ps.load();
     this.convertedAssetCache = createConvertedAssetCache(
       this.ps.store.getState().convertedAssetRecords,
-      (records) => this.ps.store.setState({ convertedAssetRecords: records }),
+      (records) => this.ps.setConvertedAssetRecords(records),
     );
     setLogLevel(this.getSettings().logLevel);
     // Auto-detect locale on first run (old data has no locale field)
@@ -147,11 +145,7 @@ export default class AI3DModelWorkbench extends Plugin {
   }
 
   private async openModelFile(file: TFile): Promise<void> {
-    this.ps.store.setState({
-      currentModelPath: file.path,
-      modelPreview: null,
-      selectedPart: null,
-    });
+    this.ps.setCurrentModel(file.path, null);
     await this.app.workspace.getLeaf(true).openFile(file, { active: true });
   }
 

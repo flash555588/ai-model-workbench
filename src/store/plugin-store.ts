@@ -10,6 +10,16 @@ export interface PluginStore {
   dispose: () => void;
   /** True if the loaded data had an explicit locale field (not from DEFAULT_SETTINGS). */
   localeLoadedFromSaved: boolean;
+  /** Typed action: set current model path and preview, clearing selected part. */
+  setCurrentModel(path: string | null, preview: import("../domain/models").ModelPreviewSummary | null): void;
+  /** Typed action: clear model preview and selected part. */
+  clearModelPreview(): void;
+  /** Typed action: update a single model profile by path with an updater function. */
+  updateModelProfile(path: string, updater: (existing: ModelAssetProfile) => Partial<ModelAssetProfile>): void;
+  /** Typed action: replace converted asset records. */
+  setConvertedAssetRecords(records: import("../domain/models").ConvertedAssetRecord[]): void;
+  /** Typed action: update settings partially. */
+  updateSettings(partial: Partial<import("../domain/models").PluginSettings>): void;
 }
 
 const INITIAL_STATE: PluginState = {
@@ -58,6 +68,31 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   return {
     store,
     get localeLoadedFromSaved() { return localeLoadedFromSaved; },
+
+    setCurrentModel(path, preview) {
+      store.setState({ currentModelPath: path, modelPreview: preview, selectedPart: null });
+    },
+
+    clearModelPreview() {
+      store.setState({ modelPreview: null, selectedPart: null });
+    },
+
+    updateModelProfile(path, updater) {
+      const current = store.getState().modelAssetProfiles;
+      const existing = current[path] ?? createDefaultProfile();
+      store.setState({
+        modelAssetProfiles: { ...current, [path]: { ...existing, ...updater(existing), updatedAt: new Date().toISOString() } },
+      });
+    },
+
+    setConvertedAssetRecords(records) {
+      store.setState({ convertedAssetRecords: records });
+    },
+
+    updateSettings(partial) {
+      const current = store.getState().settings;
+      store.setState({ settings: { ...current, ...partial } });
+    },
 
     async load() {
       const saved = (await plugin.loadData()) as PersistedPluginState | null;
@@ -203,5 +238,17 @@ function normalizeKnowledgeGenerationRecord(
     generatedAt: typeof saved.generatedAt === "string" ? saved.generatedAt : new Date().toISOString(),
     status: saved.status === "failed" ? "failed" : "success",
     warningCount: Number.isFinite(saved.warningCount) ? Math.max(0, Math.floor(saved.warningCount)) : 0,
+  };
+}
+
+export function createDefaultProfile(): ModelAssetProfile {
+  const now = new Date().toISOString();
+  return {
+    tags: [],
+    notes: "",
+    annotations: [],
+    registeredParts: undefined,
+    createdAt: now,
+    updatedAt: now,
   };
 }
