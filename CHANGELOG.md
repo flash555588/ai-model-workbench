@@ -13,6 +13,13 @@
 - Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
+## 0.5.7
+
+- UI: promote the measurement tool to a primary toolbar button.
+- UI: reorganize the inline preview toolbar into primary (always visible) and secondary (expandable) action groups.
+- UI: remove text labels from toolbar buttons to keep the toolbar compact.
+- UI: highlight active toggle buttons with a filled accent background so enabled features are obvious.
+
 ## 0.5.5
 
 - Align release version metadata.
