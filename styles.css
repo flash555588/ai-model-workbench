@@ -30,7 +30,14 @@ body {
 }
 
 .ai3d-btn-active {
-  color: var(--interactive-accent, #7f6df2);
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.ai3d-inline-btn.ai3d-btn-active:hover {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  filter: brightness(1.1);
 }
 
 .ai3d-res-btn {
