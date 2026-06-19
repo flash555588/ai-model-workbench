@@ -175,6 +175,7 @@ export const zhCN: Record<TranslationKey, string> = {
   "helper.playing": "播放中",
   "helper.paused": "已暂停",
   "helper.toggleMeasurementLabel": "切换距离测量",
+  "helper.measurementShortLabel": "测距",
   "helper.measurementOn": "测量已开启",
   "helper.measurementOff": "测量已关闭",
   "helper.clearMeasurementsLabel": "清除测量",

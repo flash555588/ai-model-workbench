@@ -344,6 +344,20 @@ body {
   padding: 0;
 }
 
+.ai3d-inline-btn--labeled {
+  width: auto;
+  min-width: 56px;
+  padding: 0 8px 0 6px;
+  gap: 4px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ai3d-inline-btn--labeled .ai3d-inline-btn-text {
+  line-height: 1;
+}
+
 .ai3d-helper-toolbar.is-mobile .ai3d-inline-btn {
   width: 36px;
   height: 36px;

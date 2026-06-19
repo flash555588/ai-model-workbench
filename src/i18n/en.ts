@@ -173,6 +173,7 @@ export const en = {
   "helper.playing": "Playing",
   "helper.paused": "Paused",
   "helper.toggleMeasurementLabel": "Toggle distance measurement",
+  "helper.measurementShortLabel": "Measure",
   "helper.measurementOn": "Measurement on",
   "helper.measurementOff": "Measurement off",
   "helper.clearMeasurementsLabel": "Clear measurements",
