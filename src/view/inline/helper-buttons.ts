@@ -92,6 +92,42 @@ function setMobileInteractionMode(previewHost: HTMLElement, active: boolean): vo
   previewHost.classList.toggle("is-mobile-scroll-mode", !active);
 }
 
+let globalMenuListenersInstalled = false;
+
+function updateMenuToggle(toggle: Element | null | undefined, open: boolean): void {
+  if (!toggle) return;
+  toggle.classList.toggle("ai3d-btn-active", open);
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-pressed", String(open));
+}
+
+function closeAllHelperMenus(): void {
+  for (const menu of Array.from(activeDocument.querySelectorAll(".ai3d-helper-menu.is-open"))) {
+    menu.classList.remove("is-open");
+    const toggle = menu.closest(".ai3d-helper-toolbar")?.querySelector(".ai3d-mobile-more-toggle");
+    updateMenuToggle(toggle, false);
+  }
+}
+
+function installGlobalMenuListeners(): void {
+  if (globalMenuListenersInstalled) return;
+  globalMenuListenersInstalled = true;
+  activeDocument.addEventListener("click", (event) => {
+    const target = event.target as Node | null;
+    if (!target) return;
+    const element = target.instanceOf(Element) ? target : target.parentElement;
+    if (element && (element.closest(".ai3d-helper-menu") || element.closest(".ai3d-mobile-more-toggle"))) {
+      return;
+    }
+    closeAllHelperMenus();
+  }, true);
+  activeDocument.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeAllHelperMenus();
+    }
+  });
+}
+
 /**
  * Create helper buttons BELOW the preview host (as a sibling).
  * @param parentEl  Parent element already in the live DOM — Obsidian's createEl
@@ -151,7 +187,6 @@ export function createHelperButtons(
   };
 
   let mobileInteractive = false;
-  let toolbarExpanded = false;
 
   const interactBtn = mobile
     ? viewGroup.createEl("button", {
@@ -163,8 +198,9 @@ export function createHelperButtons(
   const interactLabel = interactBtn?.createSpan({ cls: "ai3d-mobile-mode-btn-label" }) ?? null;
 
   const closeMenu = (): void => {
-    toolbarExpanded = false;
-    renderToolbarButtons();
+    moreMenu.classList.remove("is-open");
+    updateMenuToggle(showMoreBtn, false);
+    showMoreBtn.setAttribute("aria-label", t("helper.showMoreActionsLabel"));
   };
 
   const renderToolbarButtons = (): void => {
@@ -177,9 +213,6 @@ export function createHelperButtons(
         mobileInteractive ? t("helper.disableInteractionLabel") : t("helper.enableInteractionLabel"),
       );
     }
-    setTogglePressed(showMoreBtn, toolbarExpanded);
-    showMoreBtn.setAttribute("aria-expanded", String(toolbarExpanded));
-    moreMenu.classList.toggle("is-open", toolbarExpanded);
     syncGroupVisibility();
   };
 
@@ -657,25 +690,16 @@ export function createHelperButtons(
   });
   showMoreBtn.appendChild(createSvgIcon(`<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>`));
   showMoreBtn.addEventListener("click", () => {
-    toolbarExpanded = !toolbarExpanded;
-    showMoreBtn.setAttribute("aria-label", toolbarExpanded ? t("helper.hideMoreActionsLabel") : t("helper.showMoreActionsLabel"));
-    renderToolbarButtons();
+    const isOpen = moreMenu.classList.contains("is-open");
+    if (!isOpen) {
+      closeAllHelperMenus();
+    }
+    moreMenu.classList.toggle("is-open", !isOpen);
+    updateMenuToggle(showMoreBtn, !isOpen);
+    showMoreBtn.setAttribute("aria-label", !isOpen ? t("helper.hideMoreActionsLabel") : t("helper.showMoreActionsLabel"));
   });
 
-  // Close the dropdown when clicking outside or pressing Escape.
-  const onDocumentClick = (event: MouseEvent): void => {
-    const target = event.target as Node;
-    if (toolbarExpanded && target && !moreMenu.contains(target) && !showMoreBtn.contains(target)) {
-      closeMenu();
-    }
-  };
-  const onDocumentKey = (event: KeyboardEvent): void => {
-    if (toolbarExpanded && event.key === "Escape") {
-      closeMenu();
-    }
-  };
-  activeDocument.addEventListener("click", onDocumentClick, true);
-  activeDocument.addEventListener("keydown", onDocumentKey);
+  installGlobalMenuListeners();
 
   // Move toolbar to sit right after previewHost
   parentEl.insertBefore(toolbar, previewHost.nextSibling);

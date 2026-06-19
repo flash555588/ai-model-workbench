@@ -540,6 +540,8 @@ async function verifyDirectWorkbench(page) {
     const button = document.querySelector('.ai3d-direct-view [data-ai3d-action="toggle-disassembly"]');
     return button?.getAttribute("aria-pressed") === "true";
   }, null, { timeout: 5_000 });
+  // reset-parts is now a secondary action inside the dropdown menu.
+  await page.locator('.ai3d-direct-view .ai3d-mobile-more-toggle').first().click();
   await page.locator('.ai3d-direct-view [data-ai3d-action="reset-parts"]').click();
 
   await page.locator('.ai3d-direct-view [data-ai3d-action="toggle-annotation"]').click();
