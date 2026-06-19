@@ -87,14 +87,6 @@ function setAction(button: HTMLButtonElement, action: string): HTMLButtonElement
   return button;
 }
 
-/** Promote a button to a primary, icon+text action. */
-function addButtonLabel(button: HTMLButtonElement, labelKey: TranslationKey): void {
-  button.classList.add("ai3d-inline-btn--labeled");
-  button.classList.remove("is-secondary");
-  const label = button.createSpan({ cls: "ai3d-inline-btn-text" });
-  label.textContent = t(labelKey);
-}
-
 function setMobileInteractionMode(previewHost: HTMLElement, active: boolean): void {
   previewHost.classList.toggle("is-mobile-interactive", active);
   previewHost.classList.toggle("is-mobile-scroll-mode", !active);
@@ -246,11 +238,10 @@ export function createHelperButtons(
     syncGroupVisibility();
   };
 
-  // Reset view button (refresh arrow) — primary labeled action
+  // Reset view button (refresh arrow)
   const resetBtn = viewGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetViewLabel") } });
   setAction(resetBtn, "reset-view");
   resetBtn.appendChild(createSvgIcon(`<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>`));
-  addButtonLabel(resetBtn, "helper.resetViewShortLabel");
   resetBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (preview?.resetView) {
@@ -305,14 +296,13 @@ export function createHelperButtons(
     }
   });
 
-  // Wireframe toggle button (grid/square icon) — primary labeled action
+  // Wireframe toggle button (grid/square icon)
   const wireBtn = viewGroup.createEl("button", {
     cls: "ai3d-inline-btn",
     attr: { "aria-label": t("helper.toggleWireframeLabel"), "aria-pressed": "false" },
   });
   setAction(wireBtn, "toggle-wireframe");
   wireBtn.appendChild(createSvgIcon(`<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/>`));
-  addButtonLabel(wireBtn, "helper.wireframeShortLabel");
   wireBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleWireframe) return;
@@ -321,14 +311,13 @@ export function createHelperButtons(
     showTooltip(wireBtn, on ? t("helper.wireframeOn") : t("helper.wireframeOff"));
   });
 
-  // Orientation gizmo toggle button (compass/axis icon) — primary labeled action
+  // Orientation gizmo toggle button (compass/axis icon)
   const gizmoBtn = viewGroup.createEl("button", {
     cls: "ai3d-inline-btn",
     attr: { "aria-label": t("helper.toggleAxesLabel"), "aria-pressed": "false" },
   });
   setAction(gizmoBtn, "toggle-axes");
   gizmoBtn.appendChild(createSvgIcon(`<path d="M12 2v20"/><path d="M2 12h20"/><path d="M12 2l4 4"/><path d="M12 2l-4 4"/><path d="M22 12l-4-4"/><path d="M22 12l-4 4"/>`));
-  addButtonLabel(gizmoBtn, "helper.axesShortLabel");
   gizmoBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleOrientationGizmo) return;
@@ -337,14 +326,13 @@ export function createHelperButtons(
     showTooltip(gizmoBtn, on ? t("helper.axesOn") : t("helper.axesOff"));
   });
 
-  // Bounding box toggle button (cube outline icon) — primary labeled action
+  // Bounding box toggle button (cube outline icon)
   const bboxBtn = viewGroup.createEl("button", {
     cls: "ai3d-inline-btn",
     attr: { "aria-label": t("helper.toggleBoundingBoxLabel"), "aria-pressed": "false" },
   });
   setAction(bboxBtn, "toggle-bounding-box");
   bboxBtn.appendChild(createSvgIcon(`<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>`));
-  addButtonLabel(bboxBtn, "helper.boundingBoxShortLabel");
   bboxBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleBoundingBox) return;
@@ -353,14 +341,13 @@ export function createHelperButtons(
     showTooltip(bboxBtn, on ? t("helper.boundingBoxOn") : t("helper.boundingBoxOff"));
   });
 
-  // Focus selected mesh button (click a part to isolate it visually) — primary labeled action
+  // Focus selected mesh button (click a part to isolate it visually)
   const focusBtn = inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn",
     attr: { "aria-label": t("helper.toggleFocusSelectionLabel"), "aria-pressed": "false" },
   });
   setAction(focusBtn, "toggle-focus");
   focusBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.93 4.93l2.12 2.12"/><path d="M16.95 16.95l2.12 2.12"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/>`));
-  addButtonLabel(focusBtn, "helper.focusShortLabel");
   focusBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsFocusSelectionPreview(preview)) return;
@@ -369,14 +356,13 @@ export function createHelperButtons(
     showTooltip(focusBtn, on ? t("helper.focusSelectionOn") : t("helper.focusSelectionOff"));
   });
 
-  // Disassembly mode toggle button (separate parts by dragging) — primary labeled action
+  // Disassembly mode toggle button (separate parts by dragging)
   const disassembleBtn = inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn",
     attr: { "aria-label": t("helper.toggleDisassemblyLabel"), "aria-pressed": "false" },
   });
   setAction(disassembleBtn, "toggle-disassembly");
   disassembleBtn.appendChild(createSvgIcon(`<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 17h6"/><path d="M17 14v6"/>`));
-  addButtonLabel(disassembleBtn, "helper.disassembleShortLabel");
   disassembleBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsDisassemblyPreview(preview)) return;
@@ -435,16 +421,14 @@ export function createHelperButtons(
     showTooltip(animBtn, playing ? t("helper.playing") : t("helper.paused"));
   });
 
-  // Measurement toggle button (ruler) — primary and labeled so users can
-  // discover it without expanding the "more" menu.
+  // Measurement toggle button (ruler) — primary so users can discover it
+  // without expanding the "more" menu.
   const measureBtn = inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn ai3d-inline-btn--labeled is-hidden",
+    cls: "ai3d-inline-btn is-hidden",
     attr: { "aria-label": t("helper.toggleMeasurementLabel"), "aria-pressed": "false", title: t("helper.toggleMeasurementLabel") },
   });
   setAction(measureBtn, "toggle-measurement");
   measureBtn.appendChild(createSvgIcon(`<line x1="2" y1="21" x2="22" y2="21"/><line x1="2" y1="3" x2="22" y2="3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="6" y1="3" x2="6" y2="12"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="18" y1="3" x2="18" y2="12"/>`));
-  const measureLabel = measureBtn.createSpan({ cls: "ai3d-inline-btn-text" });
-  measureLabel.textContent = t("helper.measurementShortLabel");
   measureBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
@@ -480,11 +464,10 @@ export function createHelperButtons(
   setAction(calibrateBtn, "toggle-calibration");
   calibrateBtn.appendChild(createSvgIcon(`<rect x="2" y="8" width="20" height="8" rx="1"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="14"/>`));
 
-  // Copy snapshot button (clipboard) — primary labeled action
+  // Copy snapshot button (clipboard)
   const copyBtn = outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySnapshotLabel") } });
   setAction(copyBtn, "copy-snapshot");
   copyBtn.appendChild(createSvgIcon(`<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>`));
-  addButtonLabel(copyBtn, "helper.copyShortLabel");
   copyBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview) return;
@@ -591,14 +574,13 @@ export function createHelperButtons(
   removeBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>`));
   removeBtn.addEventListener("click", onRemove);
 
-  // Annotation toggle button (tag/label icon — hidden until explicitly shown) — primary labeled action
+  // Annotation toggle button (tag/label icon — hidden until explicitly shown)
   const annotBtn = inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn is-hidden ai3d-annot-btn",
     attr: { "aria-label": t(resolvedAnnotationCopy.labelKey), "aria-pressed": "false" },
   });
   setAction(annotBtn, "toggle-annotation");
   annotBtn.appendChild(createSvgIcon(`<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>`));
-  addButtonLabel(annotBtn, "helper.annotationShortLabel");
   const annotBadge = annotBtn.createSpan({ cls: "ai3d-pin-badge is-hidden" });
   annotBtn.addEventListener("click", () => {
     if (!onToggleAnnotate) return;

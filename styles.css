@@ -345,36 +345,9 @@ body {
   padding: 0;
 }
 
-.ai3d-inline-btn--labeled {
-  width: auto;
-  min-width: auto;
-  height: 28px;
-  padding: 0 6px 0 4px;
-  gap: 3px;
-  font-size: var(--font-ui-smaller);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.ai3d-inline-btn--labeled .ai3d-inline-btn-text {
-  line-height: 1;
-}
-
-.ai3d-inline-btn--labeled .ai3d-pin-badge {
-  top: 2px;
-  right: 2px;
-}
-
 .ai3d-helper-toolbar.is-mobile .ai3d-inline-btn {
   width: 36px;
   height: 36px;
-}
-
-.ai3d-helper-toolbar.is-mobile .ai3d-inline-btn--labeled {
-  width: auto;
-  min-width: 52px;
-  height: 34px;
-  padding: 0 8px 0 6px;
 }
 
 .ai3d-helper-toolbar.is-mobile .ai3d-mobile-mode-btn {
