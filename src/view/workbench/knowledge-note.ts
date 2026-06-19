@@ -219,7 +219,7 @@ function buildAnnotationSection(profile?: ModelAssetProfile): string[] {
   for (const pin of annotations) {
     const extras = formatAnnotationLink(pin);
     const extraText = extras.length > 0 ? ` (${extras.join("; ")})` : "";
-    lines.push(`- **${pin.label || "Untitled pin"}**${extraText}`);
+    lines.push(`- **${escapeHtml(pin.label || "Untitled pin")}**${extraText}`);
   }
 
   lines.push("");
@@ -407,11 +407,11 @@ function buildLocalDraftSection(options: KnowledgeNoteBuildOptions): string[] {
   ];
 
   if (draft.suggestedTags.length > 0) {
-    lines.push("Suggested tags:", "", ...draft.suggestedTags.map((tag) => `- ${tag}`), "");
+    lines.push("Suggested tags:", "", ...draft.suggestedTags.map((tag) => `- ${escapeHtml(tag)}`), "");
   }
 
   if (draft.nextActions.length > 0) {
-    lines.push("Next actions:", "", ...draft.nextActions.map((action) => `- ${action}`), "");
+    lines.push("Next actions:", "", ...draft.nextActions.map((action) => `- ${escapeHtml(action)}`), "");
   }
 
   return lines;
@@ -601,7 +601,7 @@ function buildKnowledgeNodeSection(analysis?: AnalysisResult): string[] {
     "",
   ];
   for (const node of nodes) {
-    lines.push(`- **${node.title}** (${node.domain}, ${Math.round(node.confidence * 100)}%, ${node.source}): ${node.summary}`);
+    lines.push(`- **${escapeHtml(node.title)}** (${node.domain}, ${Math.round(node.confidence * 100)}%, ${node.source}): ${escapeHtml(node.summary)}`);
   }
   lines.push("");
   return lines;
@@ -647,7 +647,7 @@ function buildKnowledgeDraftSection(summary: ModelPreviewSummary | null, profile
     for (const pin of annotations.slice(0, 8)) {
       const extras = formatAnnotationLink(pin);
       const extraText = extras.length > 0 ? ` (${extras.join("; ")})` : "";
-      lines.push(`- **${pin.label || "Untitled pin"}**${extraText}: describe what this region does, why it matters, and whether it deserves its own linked part note.`);
+      lines.push(`- **${escapeHtml(pin.label || "Untitled pin")}**${extraText}: describe what this region does, why it matters, and whether it deserves its own linked part note.`);
     }
   } else {
     lines.push("- Focus mapping: add pins for the regions that should become standalone part notes or review checkpoints.");
@@ -687,7 +687,7 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
   return [
     frontmatter,
     "",
-    `# ${options.baseName}`,
+    `# ${escapeHtml(options.baseName)}`,
     "",
     "## Summary",
     "",
@@ -719,30 +719,9 @@ export function buildKnowledgeNoteContent(options: KnowledgeNoteBuildOptions): s
     ...buildKnowledgeDraftSection(summary, profile),
     "## Review Notes",
     "",
-    profile?.notes?.trim() ? profile.notes.trim() : "-",
+    profile?.notes?.trim() ? escapeHtml(profile.notes.trim()) : "-",
     "",
   ].join("\n");
-}
-
-function normalizeModelAssetProfile(profile: Partial<ModelAssetProfile> | null | undefined, modelPath: string): ModelAssetProfile {
-  const now = new Date().toISOString();
-  return {
-    tags: Array.isArray(profile?.tags) ? profile.tags : [],
-    notes: typeof profile?.notes === "string" ? profile.notes : "",
-    annotations: Array.isArray(profile?.annotations) ? profile.annotations : [],
-    registeredParts: Array.isArray(profile?.registeredParts)
-      ? profile.registeredParts
-          .map((part) => normalizeRegisteredPartRecord(part, modelPath))
-          .filter((part): part is PartRecord => !!part)
-      : undefined,
-    analysisVersion: typeof profile?.analysisVersion === "string" ? profile.analysisVersion : undefined,
-    reportNotePath: typeof profile?.reportNotePath === "string" ? profile.reportNotePath : undefined,
-    analysisSidecarPath: typeof profile?.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
-    knowledgeIndexPath: typeof profile?.knowledgeIndexPath === "string" ? profile.knowledgeIndexPath : undefined,
-    previewImagePaths: Array.isArray(profile?.previewImagePaths) ? profile.previewImagePaths.filter((path): path is string => typeof path === "string") : undefined,
-    createdAt: typeof profile?.createdAt === "string" ? profile.createdAt : now,
-    updatedAt: typeof profile?.updatedAt === "string" ? profile.updatedAt : now,
-  };
 }
 
 let noteGenerationLock: Promise<void> | null = null;
@@ -876,6 +855,15 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     inferredFunctions: normalizeStringArray(value.inferredFunctions),
     knowledgeTags: normalizeStringArray(value.knowledgeTags),
     notePath: typeof value.notePath === "string" ? value.notePath : undefined,
+    registeredMatches: Array.isArray(value.registeredMatches)
+      ? (value.registeredMatches as unknown[]).filter(
+          (m): m is RegisteredPartMatch =>
+            !!(m && typeof m === "object" &&
+            typeof (m as Record<string, unknown>).sourceAssetId === "string" &&
+            typeof (m as Record<string, unknown>).sourcePartId === "string" &&
+            typeof (m as Record<string, unknown>).sourcePartName === "string")
+        )
+      : undefined,
     reviewed: value.reviewed === true,
   };
 }
@@ -1334,33 +1322,24 @@ export async function generateKnowledgeNote(
 
     if (!outputFile) return;
 
-    const currentProfiles = ps.store.getState().modelAssetProfiles;
-    const existingProfile = normalizeModelAssetProfile(currentProfiles[path], path);
-    ps.store.setState({
-      modelAssetProfiles: {
-        ...currentProfiles,
-        [path]: {
-          ...existingProfile,
-          analysisVersion: LOCAL_ANALYSIS_VERSION,
-          registeredParts: analysis.parts,
-          reportNotePath: outputFile.path,
-          analysisSidecarPath,
-          knowledgeIndexPath: analysis.knowledgeIndexPath,
-          previewImagePaths: snapshot.paths,
-          updatedAt: new Date().toISOString(),
-        },
-      },
-      lastKnowledgeGeneration: {
-        modelPath: path,
-        reportNotePath: outputFile.path,
-        analysisSidecarPath,
-        knowledgeIndexPath: analysis.knowledgeIndexPath,
-        partNoteCount: analysis.partNotePaths?.length ?? 0,
-        previewImageCount: analysis.previewImages.length,
-        generatedAt: new Date().toISOString(),
-        status: "success",
-        warningCount: analysis.warnings.length,
-      },
+    ps.updateModelProfile(path, (_existing) => ({
+      analysisVersion: LOCAL_ANALYSIS_VERSION,
+      registeredParts: analysis.parts,
+      reportNotePath: outputFile.path,
+      analysisSidecarPath,
+      knowledgeIndexPath: analysis.knowledgeIndexPath,
+      previewImagePaths: snapshot.paths,
+    }));
+    ps.setLastKnowledgeGeneration({
+      modelPath: path,
+      reportNotePath: outputFile.path,
+      analysisSidecarPath,
+      knowledgeIndexPath: analysis.knowledgeIndexPath,
+      partNoteCount: analysis.partNotePaths?.length ?? 0,
+      previewImageCount: analysis.previewImages.length,
+      generatedAt: new Date().toISOString(),
+      status: "success",
+      warningCount: analysis.warnings.length,
     });
     await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
     new Notice(`Knowledge note updated: ${outputFile.path}`);

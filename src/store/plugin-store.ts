@@ -20,6 +20,8 @@ export interface PluginStore {
   setConvertedAssetRecords(records: import("../domain/models").ConvertedAssetRecord[]): void;
   /** Typed action: update settings partially. */
   updateSettings(partial: Partial<import("../domain/models").PluginSettings>): void;
+  /** Typed action: set the last knowledge generation record. */
+  setLastKnowledgeGeneration(record: import("../domain/models").KnowledgeGenerationRecord | null): void;
 }
 
 const INITIAL_STATE: PluginState = {
@@ -92,6 +94,10 @@ export function createPluginStore(plugin: Plugin): PluginStore {
     updateSettings(partial) {
       const current = store.getState().settings;
       store.setState({ settings: { ...current, ...partial } });
+    },
+
+    setLastKnowledgeGeneration(record) {
+      store.setState({ lastKnowledgeGeneration: record });
     },
 
     async load() {
