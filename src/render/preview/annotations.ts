@@ -867,7 +867,16 @@ export class AnnotationManager {
     if (shouldCheckOcclusion && !checkAllOcclusion && entries.length > 0) {
       this.movingOcclusionCursor = (movingOcclusionStart + MOVING_OCCLUSION_BATCH_SIZE) % entries.length;
     }
-    this.applyLabelAvoidance(projectedPins);
+
+    if (this.cameraIdle) {
+      this.applyLabelAvoidance(projectedPins);
+    } else {
+      // During camera motion, disable label avoidance to prevent labels from
+      // squeezing and jittering as their screen positions change frame-to-frame.
+      for (const pin of projectedPins) {
+        pin.el.style.removeProperty("--pin-offset-y");
+      }
+    }
   }
 
   private updatePinPriority(el: HTMLDivElement, depth: number): void {
