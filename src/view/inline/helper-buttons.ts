@@ -122,6 +122,7 @@ export function createHelperButtons(
   const viewGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-view" });
   const inspectGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-inspect" });
   const outputGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-output" });
+  const moreMenu = toolbar.createDiv({ cls: "ai3d-helper-menu", attr: { role: "menu" } });
   const stopToolbarEvent = (event: Event): void => {
     event.stopPropagation();
   };
@@ -133,10 +134,6 @@ export function createHelperButtons(
     setMobileInteractionMode(previewHost, false);
   }
 
-  const markSecondary = <T extends HTMLButtonElement>(button: T): T => {
-    button.classList.add("is-secondary");
-    return button;
-  };
   const setTogglePressed = (button: HTMLButtonElement, active: boolean): void => {
     button.classList.toggle("ai3d-btn-active", active);
     button.setAttribute("aria-pressed", String(active));
@@ -165,6 +162,11 @@ export function createHelperButtons(
   interactBtn?.appendChild(createSvgIcon(`<path d="M12 2v8"/><path d="M8 6l4-4 4 4"/><path d="M6 14a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z"/>`));
   const interactLabel = interactBtn?.createSpan({ cls: "ai3d-mobile-mode-btn-label" }) ?? null;
 
+  const closeMenu = (): void => {
+    toolbarExpanded = false;
+    renderToolbarButtons();
+  };
+
   const renderToolbarButtons = (): void => {
     if (mobile && interactBtn) {
       setMobileInteractionMode(previewHost, mobileInteractive);
@@ -176,9 +178,28 @@ export function createHelperButtons(
       );
     }
     setTogglePressed(showMoreBtn, toolbarExpanded);
-    toolbar.classList.toggle("show-secondary", toolbarExpanded);
+    showMoreBtn.setAttribute("aria-expanded", String(toolbarExpanded));
+    moreMenu.classList.toggle("is-open", toolbarExpanded);
     syncGroupVisibility();
   };
+
+  function createMenuItem(
+    icon: string,
+    label: string,
+    action: string,
+    onClick: () => void,
+    options: { danger?: boolean } = {},
+  ): HTMLButtonElement {
+    const item = moreMenu.createEl("button", {
+      cls: `ai3d-helper-menu-item${options.danger ? " is-danger" : ""}`,
+      attr: { role: "menuitem", type: "button", "aria-label": label },
+    });
+    setAction(item, action);
+    item.appendChild(createSvgIcon(icon));
+    item.createSpan({ cls: "ai3d-helper-menu-label", text: label });
+    item.addEventListener("click", () => { onClick(); closeMenu(); });
+    return item;
+  }
 
   const applyMobileInteractionMode = (active: boolean): void => {
     mobileInteractive = active;
@@ -218,7 +239,7 @@ export function createHelperButtons(
       setTogglePressed(wireBtn, false);
       setTogglePressed(bboxBtn, false);
       setTogglePressed(animBtn, false);
-      animBtn.replaceChildren(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
+      animBtn.querySelector("svg")?.replaceWith(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
       toggleCapabilityButton(resetBtn, !!preview?.resetView);
       toggleCapabilityButton(infoBtn, !!preview?.exportModelInfo);
       toggleCapabilityButton(partInfoBtn, !!preview?.exportSelectedPartInfo);
@@ -251,50 +272,54 @@ export function createHelperButtons(
     }
   });
 
-  // Export model info button (info circle)
-  const infoBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copyModelInfoLabel") } }));
-  setAction(infoBtn, "copy-model-info");
-  infoBtn.appendChild(createSvgIcon(`<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>`));
-  infoBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview?.exportModelInfo) return;
-    try {
-      const md = preview.exportModelInfo(getModelPath());
-      if (!md) return;
-      void navigator.clipboard.writeText(md).then(() => {
-        showTooltip(infoBtn, t("helper.copied"));
-      }).catch(() => {
+  // Export model info menu item
+  const infoBtn = createMenuItem(
+    `<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>`,
+    t("helper.copyModelInfoLabel"),
+    "copy-model-info",
+    () => {
+      const preview = getPreview();
+      if (!preview?.exportModelInfo) return;
+      try {
+        const md = preview.exportModelInfo(getModelPath());
+        if (!md) return;
+        void navigator.clipboard.writeText(md).then(() => {
+          showTooltip(infoBtn, t("helper.copied"));
+        }).catch(() => {
+          showTooltip(infoBtn, t("helper.failed"));
+        });
+      } catch (err) {
+        console.error("[AI3D] Export model info failed:", err);
         showTooltip(infoBtn, t("helper.failed"));
-      });
-    } catch (err) {
-      console.error("[AI3D] Export model info failed:", err);
-      showTooltip(infoBtn, t("helper.failed"));
-    }
-  });
-
-  // Export currently selected part info button (target/list icon)
-  const partInfoBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySelectedPartInfoLabel") } }));
-  setAction(partInfoBtn, "copy-selected-part-info");
-  partInfoBtn.appendChild(createSvgIcon(`<path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/><path d="M17 19h5"/><path d="M17 16h5"/><path d="M17 22h5"/>`));
-  partInfoBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview?.exportSelectedPartInfo) return;
-    try {
-      const md = preview.exportSelectedPartInfo();
-      if (!md) {
-        showTooltip(partInfoBtn, t("helper.noSelectedPart"));
-        return;
       }
-      void navigator.clipboard.writeText(md).then(() => {
-        showTooltip(partInfoBtn, t("helper.copied"));
-      }).catch(() => {
+    },
+  );
+
+  // Export currently selected part info menu item
+  const partInfoBtn = createMenuItem(
+    `<path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/><path d="M17 19h5"/><path d="M17 16h5"/><path d="M17 22h5"/>`,
+    t("helper.copySelectedPartInfoLabel"),
+    "copy-selected-part-info",
+    () => {
+      const preview = getPreview();
+      if (!preview?.exportSelectedPartInfo) return;
+      try {
+        const md = preview.exportSelectedPartInfo();
+        if (!md) {
+          showTooltip(partInfoBtn, t("helper.noSelectedPart"));
+          return;
+        }
+        void navigator.clipboard.writeText(md).then(() => {
+          showTooltip(partInfoBtn, t("helper.copied"));
+        }).catch(() => {
+          showTooltip(partInfoBtn, t("helper.failed"));
+        });
+      } catch (err) {
+        console.error("[AI3D] Export selected part info failed:", err);
         showTooltip(partInfoBtn, t("helper.failed"));
-      });
-    } catch (err) {
-      console.error("[AI3D] Export selected part info failed:", err);
-      showTooltip(partInfoBtn, t("helper.failed"));
-    }
-  });
+      }
+    },
+  );
 
   // Wireframe toggle button (grid/square icon)
   const wireBtn = viewGroup.createEl("button", {
@@ -371,19 +396,24 @@ export function createHelperButtons(
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
   });
 
-  // Reset disassembled parts button
-  const resetPartsBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetPartsLabel") } }));
-  setAction(resetPartsBtn, "reset-parts");
-  resetPartsBtn.appendChild(createSvgIcon(`<path d="M3 12a9 9 0 109-9"/><path d="M3 4v8h8"/><rect x="14" y="14" width="5" height="5" rx="1"/>`));
-  resetPartsBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview?.resetDisassembly) return;
-    preview.resetDisassembly();
-    syncCapabilities();
-    showTooltip(resetPartsBtn, t("helper.partsReset"));
-  });
+  // Reset disassembled parts menu item
+  const resetPartsBtn = createMenuItem(
+    `<path d="M3 12a9 9 0 109-9"/><path d="M3 4v8h8"/><rect x="14" y="14" width="5" height="5" rx="1"/>`,
+    t("helper.resetPartsLabel"),
+    "reset-parts",
+    () => {
+      const preview = getPreview();
+      if (!preview?.resetDisassembly) return;
+      preview.resetDisassembly();
+      syncCapabilities();
+      showTooltip(resetPartsBtn, t("helper.partsReset"));
+    },
+  );
 
-  // Resolution scale cycle button (percentage display)
+  // --- View options (in dropdown) ---
+  moreMenu.createDiv({ cls: "ai3d-helper-menu-separator" });
+
+  // Resolution scale cycle menu item
   const RES_PRESETS = [0.5, 0.75, 1.0, 1.5, 2.0];
   const configuredScale = getSettings?.().renderScale ?? 1.0;
   let resIndex = RES_PRESETS.reduce((bestIndex, value, index) => {
@@ -391,34 +421,37 @@ export function createHelperButtons(
     const bestDelta = Math.abs(RES_PRESETS[bestIndex] - configuredScale);
     return currentDelta < bestDelta ? index : bestIndex;
   }, 2);
-  const resBtn = markSecondary(viewGroup.createEl("button", { cls: "ai3d-inline-btn ai3d-res-btn", attr: { "aria-label": t("helper.changeResolutionLabel") } }));
+  const resBtn = moreMenu.createEl("button", { cls: "ai3d-helper-menu-item", attr: { role: "menuitem", type: "button", "aria-label": t("helper.changeResolutionLabel") } });
   setAction(resBtn, "change-resolution");
-  resBtn.textContent = `${RES_PRESETS[resIndex].toFixed(1)}x`;
+  resBtn.appendChild(createSvgIcon(`<path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/>`));
+  const resLabel = resBtn.createSpan({ cls: "ai3d-helper-menu-label" });
+  resLabel.textContent = `${RES_PRESETS[resIndex].toFixed(1)}x`;
   resBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.setRenderScale) return;
     resIndex = (resIndex + 1) % RES_PRESETS.length;
     const applied = preview.setRenderScale(RES_PRESETS[resIndex]);
-    resBtn.textContent = `${applied.toFixed(1)}x`;
+    resLabel.textContent = `${applied.toFixed(1)}x`;
     showTooltip(resBtn, formatT("helper.resolutionValue", { value: `${applied}x` }));
+    closeMenu();
   });
 
-  // Animation play/pause button (play triangle — hidden until animations detected)
-  const animBtn = markSecondary(viewGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.toggleAnimationLabel"), "aria-pressed": "false" },
-  }));
+  // Animation play/pause menu item (hidden until animations detected)
+  const animBtn = moreMenu.createEl("button", { cls: "ai3d-helper-menu-item is-hidden", attr: { role: "menuitem", type: "button", "aria-pressed": "false" } });
   setAction(animBtn, "toggle-animation");
   animBtn.appendChild(createSvgIcon(`<polygon points="5 3 19 12 5 21 5 3"/>`));
+  animBtn.createSpan({ cls: "ai3d-helper-menu-label", text: t("helper.toggleAnimationLabel") });
   animBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview?.toggleAnimation) return;
     const playing = preview.toggleAnimation();
-    animBtn.replaceChildren(createSvgIcon(playing
+    const newIcon = createSvgIcon(playing
       ? `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`
-      : `<polygon points="5 3 19 12 5 21 5 3"/>`));
+      : `<polygon points="5 3 19 12 5 21 5 3"/>`);
+    animBtn.querySelector("svg")?.replaceWith(newIcon);
     setTogglePressed(animBtn, playing);
     showTooltip(animBtn, playing ? t("helper.playing") : t("helper.paused"));
+    closeMenu();
   });
 
   // Measurement toggle button (ruler) — primary so users can discover it
@@ -440,29 +473,45 @@ export function createHelperButtons(
     }
   });
 
-  // Clear measurements button
-  const clearMeasureBtn = markSecondary(inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.clearMeasurementsLabel") },
-  }));
-  setAction(clearMeasureBtn, "clear-measurements");
-  clearMeasureBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>`));
-  clearMeasureBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview || !supportsMeasurementPreview(preview)) return;
-    preview.clearMeasurements();
-    setTogglePressed(measureBtn, false);
-    showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
-  });
+  // --- Measurement options (in dropdown) ---
+  moreMenu.createDiv({ cls: "ai3d-helper-menu-separator" });
 
+  // Clear measurements menu item
+  const clearMeasureBtn = createMenuItem(
+    `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>`,
+    t("helper.clearMeasurementsLabel"),
+    "clear-measurements",
+    () => {
+      const preview = getPreview();
+      if (!preview || !supportsMeasurementPreview(preview)) return;
+      preview.clearMeasurements();
+      setTogglePressed(measureBtn, false);
+      showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
+    },
+  );
+  clearMeasureBtn.classList.add("is-hidden");
 
-  // Calibration button (scale)
-  const calibrateBtn = markSecondary(inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.calibrateLabel") },
-  }));
-  setAction(calibrateBtn, "toggle-calibration");
-  calibrateBtn.appendChild(createSvgIcon(`<rect x="2" y="8" width="20" height="8" rx="1"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="14"/>`));
+  // Calibration menu item (scale)
+  const calibrateBtn = createMenuItem(
+    `<rect x="2" y="8" width="20" height="8" rx="1"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="14"/>`,
+    t("helper.calibrateLabel"),
+    "toggle-calibration",
+    () => {
+      const isHidden = calibratePanel.classList.contains("is-hidden");
+      if (isHidden) {
+        updateBoundsDisplay();
+        if (originalBounds) {
+          inputX.value = originalBounds.x.toFixed(3);
+          inputY.value = originalBounds.y.toFixed(3);
+          inputZ.value = originalBounds.z.toFixed(3);
+        }
+      }
+      calibratePanel.classList.toggle("is-hidden", !isHidden);
+      setTogglePressed(calibrateBtn, isHidden);
+      showTooltip(calibrateBtn, isHidden ? t("helper.calibrateOpen") : t("helper.calibrateClose"));
+    },
+  );
+  calibrateBtn.classList.add("is-hidden");
 
   // Copy snapshot button (clipboard)
   const copyBtn = outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySnapshotLabel") } });
@@ -488,91 +537,101 @@ export function createHelperButtons(
     }
   });
 
-  // Save to vault button (disk)
-  const saveBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.saveSnapshotLabel") } }));
-  setAction(saveBtn, "save-snapshot");
-  saveBtn.appendChild(createSvgIcon(`<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>`));
-  saveBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview) return;
-    try {
-      const dataUrl = preview.captureSnapshot();
-      if (!dataUrl) return;
-      const modelPath = getModelPath();
-      const baseName = getPortableStem(modelPath) || "model";
-      const settings = getSettings?.();
-      const folder = settings?.snapshotFolder ?? "Media/3D Previews";
-      const naming = settings?.snapshotNaming ?? "model-name";
-      const ts = Date.now();
-      const fileName = naming === "timestamp"
-        ? `snapshot_${ts}.png`
-        : `${baseName}_snapshot_${ts}.png`;
+  // --- Output options (in dropdown) ---
+  moreMenu.createDiv({ cls: "ai3d-helper-menu-separator" });
 
-      const blob = dataUrlToBlob(dataUrl);
-      const reader = new FileReader();
-      reader.onload = () => {
-        const buffer = reader.result as ArrayBuffer;
-        void app.vault.adapter.exists(folder).then((exists) => {
-          const create = exists ? Promise.resolve() : app.vault.createFolder(folder).catch((err: unknown) => {
-            log.warn("Failed to create vault folder", { path: folder, error: String(err) });
+  // Save to vault menu item (disk)
+  const saveBtn = createMenuItem(
+    `<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>`,
+    t("helper.saveSnapshotLabel"),
+    "save-snapshot",
+    () => {
+      const preview = getPreview();
+      if (!preview) return;
+      try {
+        const dataUrl = preview.captureSnapshot();
+        if (!dataUrl) return;
+        const modelPath = getModelPath();
+        const baseName = getPortableStem(modelPath) || "model";
+        const settings = getSettings?.();
+        const folder = settings?.snapshotFolder ?? "Media/3D Previews";
+        const naming = settings?.snapshotNaming ?? "model-name";
+        const ts = Date.now();
+        const fileName = naming === "timestamp"
+          ? `snapshot_${ts}.png`
+          : `${baseName}_snapshot_${ts}.png`;
+
+        const blob = dataUrlToBlob(dataUrl);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const buffer = reader.result as ArrayBuffer;
+          void app.vault.adapter.exists(folder).then((exists) => {
+            const create = exists ? Promise.resolve() : app.vault.createFolder(folder).catch((err: unknown) => {
+              log.warn("Failed to create vault folder", { path: folder, error: String(err) });
+            });
+            return create;
+          }).then(() => {
+            return app.vault.createBinary(`${folder}/${fileName}`, buffer);
+          }).then(() => {
+            showTooltip(saveBtn, t("helper.saved"));
+          }).catch((err: unknown) => {
+            console.error("[AI3D] Save snapshot failed:", err);
+            showTooltip(saveBtn, t("helper.failed"));
           });
-          return create;
-        }).then(() => {
-          return app.vault.createBinary(`${folder}/${fileName}`, buffer);
-        }).then(() => {
-          showTooltip(saveBtn, t("helper.saved"));
-        }).catch((err: unknown) => {
-          console.error("[AI3D] Save snapshot failed:", err);
+        };
+        reader.onerror = () => {
+          console.error("[AI3D] FileReader error");
           showTooltip(saveBtn, t("helper.failed"));
-        });
-      };
-      reader.onerror = () => {
-        console.error("[AI3D] FileReader error");
+        };
+        reader.onabort = () => {
+          console.error("[AI3D] FileReader aborted");
+          showTooltip(saveBtn, t("helper.failed"));
+        };
+        reader.readAsArrayBuffer(blob);
+      } catch (err) {
+        console.error("[AI3D] Save snapshot failed:", err);
         showTooltip(saveBtn, t("helper.failed"));
-      };
-      reader.onabort = () => {
-        console.error("[AI3D] FileReader aborted");
-        showTooltip(saveBtn, t("helper.failed"));
-      };
-      reader.readAsArrayBuffer(blob);
-    } catch (err) {
-      console.error("[AI3D] Save snapshot failed:", err);
-      showTooltip(saveBtn, t("helper.failed"));
-    }
-  });
+      }
+    },
+  );
 
-  // Download snapshot button (download arrow)
-  const downloadBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.downloadSnapshotLabel") } }));
-  setAction(downloadBtn, "download-snapshot");
-  downloadBtn.appendChild(createSvgIcon(`<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>`));
-  downloadBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview) return;
-    try {
-      const dataUrl = preview.captureSnapshot();
-      if (!dataUrl) return;
-      const modelPath = getModelPath();
-      const baseName = getPortableStem(modelPath) || "model";
-      const fileName = `${baseName}_snapshot_${Date.now()}.png`;
+  // Download snapshot menu item (download arrow)
+  const downloadBtn = createMenuItem(
+    `<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>`,
+    t("helper.downloadSnapshotLabel"),
+    "download-snapshot",
+    () => {
+      const preview = getPreview();
+      if (!preview) return;
+      try {
+        const dataUrl = preview.captureSnapshot();
+        if (!dataUrl) return;
+        const modelPath = getModelPath();
+        const baseName = getPortableStem(modelPath) || "model";
+        const fileName = `${baseName}_snapshot_${Date.now()}.png`;
 
-      const a = createEl("a");
-      a.href = dataUrl;
-      a.download = fileName;
-      activeDocument.body.appendChild(a);
-      a.click();
-      a.remove();
-      showTooltip(downloadBtn, t("helper.downloaded"));
-    } catch (err) {
-      console.error("[AI3D] Download snapshot failed:", err);
-      showTooltip(downloadBtn, t("helper.failed"));
-    }
-  });
+        const a = createEl("a");
+        a.href = dataUrl;
+        a.download = fileName;
+        activeDocument.body.appendChild(a);
+        a.click();
+        a.remove();
+        showTooltip(downloadBtn, t("helper.downloaded"));
+      } catch (err) {
+        console.error("[AI3D] Download snapshot failed:", err);
+        showTooltip(downloadBtn, t("helper.failed"));
+      }
+    },
+  );
 
-  // Remove button (trash) — kept at the far right as a destructive secondary action
-  const removeBtn = markSecondary(outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.removePreviewLabel") } }));
-  setAction(removeBtn, "remove-preview");
-  removeBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>`));
-  removeBtn.addEventListener("click", onRemove);
+  // Remove menu item (trash) — destructive action
+  const _removeBtn = createMenuItem(
+    `<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>`,
+    t("helper.removePreviewLabel"),
+    "remove-preview",
+    onRemove,
+    { danger: true },
+  );
 
   // Annotation toggle button (tag/label icon — hidden until explicitly shown)
   const annotBtn = inspectGroup.createEl("button", {
@@ -594,15 +653,29 @@ export function createHelperButtons(
 
   const showMoreBtn = toolbar.createEl("button", {
     cls: "ai3d-inline-btn ai3d-mobile-more-toggle",
-    attr: { "aria-label": t("helper.showMoreActionsLabel"), "aria-pressed": "false" },
+    attr: { "aria-label": t("helper.showMoreActionsLabel"), "aria-pressed": "false", "aria-expanded": "false" },
   });
   showMoreBtn.appendChild(createSvgIcon(`<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>`));
   showMoreBtn.addEventListener("click", () => {
     toolbarExpanded = !toolbarExpanded;
     showMoreBtn.setAttribute("aria-label", toolbarExpanded ? t("helper.hideMoreActionsLabel") : t("helper.showMoreActionsLabel"));
     renderToolbarButtons();
-    showTooltip(showMoreBtn, toolbarExpanded ? t("helper.moreActionsShown") : t("helper.moreActionsHidden"));
   });
+
+  // Close the dropdown when clicking outside or pressing Escape.
+  const onDocumentClick = (event: MouseEvent): void => {
+    const target = event.target as Node;
+    if (toolbarExpanded && target && !moreMenu.contains(target) && !showMoreBtn.contains(target)) {
+      closeMenu();
+    }
+  };
+  const onDocumentKey = (event: KeyboardEvent): void => {
+    if (toolbarExpanded && event.key === "Escape") {
+      closeMenu();
+    }
+  };
+  activeDocument.addEventListener("click", onDocumentClick, true);
+  activeDocument.addEventListener("keydown", onDocumentKey);
 
   // Move toolbar to sit right after previewHost
   parentEl.insertBefore(toolbar, previewHost.nextSibling);
@@ -706,22 +779,6 @@ export function createHelperButtons(
   inputZ.addEventListener("input", () => onRealInputChanged("z"));
   applyBtn.addEventListener("click", applyScaleFromInputs);
   resetBtn2.addEventListener("click", resetScale);
-
-  calibrateBtn.addEventListener("click", () => {
-    const isHidden = calibratePanel.classList.contains("is-hidden");
-    if (isHidden) {
-      updateBoundsDisplay();
-      if (originalBounds) {
-        inputX.value = originalBounds.x.toFixed(3);
-        inputY.value = originalBounds.y.toFixed(3);
-        inputZ.value = originalBounds.z.toFixed(3);
-      }
-    }
-    calibratePanel.classList.toggle("is-hidden", !isHidden);
-    setTogglePressed(calibrateBtn, isHidden);
-    showTooltip(calibrateBtn, isHidden ? t("helper.calibrateOpen") : t("helper.calibrateClose"));
-  });
-
 
   renderToolbarButtons();
   syncCapabilities();
