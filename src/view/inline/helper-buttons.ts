@@ -630,7 +630,7 @@ export function createHelperButtons(
 
   const lockLabel = unitRow.createEl("label", { cls: "ai3d-calibrate-lock" });
   const lockCheck = lockLabel.createEl("input", { attr: { type: "checkbox", checked: "true" } });
-  lockLabel.appendText(" " + t("helper.calibrateLock"));
+  lockLabel.appendChild(activeDocument.createTextNode(" " + t("helper.calibrateLock")));
 
   const btnRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row ai3d-calibrate-actions" });
   const applyBtn = btnRow.createEl("button", { cls: "ai3d-inline-btn", text: t("helper.calibrateApply") });
