@@ -421,11 +421,12 @@ export function createHelperButtons(
     showTooltip(animBtn, playing ? t("helper.playing") : t("helper.paused"));
   });
 
-  // Measurement toggle button (ruler)
-  const measureBtn = markSecondary(inspectGroup.createEl("button", {
+  // Measurement toggle button (ruler) — primary so users can discover it without
+  // expanding the "more" menu.
+  const measureBtn = inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn is-hidden",
     attr: { "aria-label": t("helper.toggleMeasurementLabel"), "aria-pressed": "false" },
-  }));
+  });
   setAction(measureBtn, "toggle-measurement");
   measureBtn.appendChild(createSvgIcon(`<line x1="2" y1="21" x2="22" y2="21"/><line x1="2" y1="3" x2="22" y2="3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="6" y1="3" x2="6" y2="12"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="18" y1="3" x2="18" y2="12"/>`));
   measureBtn.addEventListener("click", () => {
