@@ -312,20 +312,21 @@ body {
   border-left: none;
 }
 
-.ai3d-helper-toolbar.is-mobile .ai3d-inline-btn.is-secondary {
+.ai3d-helper-toolbar .ai3d-inline-btn.is-secondary {
   display: none;
 }
 
-.ai3d-helper-toolbar.is-mobile.show-secondary .ai3d-inline-btn.is-secondary {
+.ai3d-helper-toolbar.show-secondary .ai3d-inline-btn.is-secondary {
   display: flex;
 }
 
-.ai3d-helper-toolbar.is-mobile:not(.show-secondary) .ai3d-helper-group-inspect:not(.has-primary-visible) {
+.ai3d-helper-toolbar:not(.show-secondary) .ai3d-helper-group-inspect:not(.has-primary-visible) {
   display: none;
 }
 
 .ai3d-helper-toolbar .ai3d-mobile-more-toggle {
-  display: none;
+  display: flex;
+  margin-left: auto;
 }
 
 .ai3d-inline-btn {
@@ -346,9 +347,10 @@ body {
 
 .ai3d-inline-btn--labeled {
   width: auto;
-  min-width: 56px;
-  padding: 0 8px 0 6px;
-  gap: 4px;
+  min-width: auto;
+  height: 28px;
+  padding: 0 6px 0 4px;
+  gap: 3px;
   font-size: var(--font-ui-smaller);
   font-weight: 500;
   white-space: nowrap;
@@ -358,9 +360,21 @@ body {
   line-height: 1;
 }
 
+.ai3d-inline-btn--labeled .ai3d-pin-badge {
+  top: 2px;
+  right: 2px;
+}
+
 .ai3d-helper-toolbar.is-mobile .ai3d-inline-btn {
   width: 36px;
   height: 36px;
+}
+
+.ai3d-helper-toolbar.is-mobile .ai3d-inline-btn--labeled {
+  width: auto;
+  min-width: 52px;
+  height: 34px;
+  padding: 0 8px 0 6px;
 }
 
 .ai3d-helper-toolbar.is-mobile .ai3d-mobile-mode-btn {

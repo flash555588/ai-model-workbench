@@ -332,7 +332,14 @@ const toolbarLabels = {
 
 async function getToolbarButton(page, label) {
   const button = page.locator(`.ai3d-helper-toolbar button[aria-label="${label}"]`).first();
-  await button.waitFor({ state: "visible", timeout: 5000 });
+  try {
+    await button.waitFor({ state: "visible", timeout: 1000 });
+  } catch {
+    // Secondary actions are collapsed by default; expand the "more" menu.
+    const more = page.locator(".ai3d-helper-toolbar .ai3d-mobile-more-toggle").first();
+    await more.click();
+    await button.waitFor({ state: "visible", timeout: 5000 });
+  }
   return button;
 }
 
