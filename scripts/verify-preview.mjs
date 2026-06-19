@@ -500,8 +500,8 @@ async function verifyOcclusionUpdatesWhileRotating(page) {
       skipped: false,
       projected,
       occluded: provider.isWorldPointOccluded({ x: 0, y: 0, z: 0 }),
-      left: `${projection.screenX}px`,
-      top: `${projection.screenY}px`,
+      left: `${Math.round(projection.screenX)}px`,
+      top: `${Math.round(projection.screenY)}px`,
     };
   });
   assert(!moved.skipped, "Occlusion rotation verification could not access annotation provider");

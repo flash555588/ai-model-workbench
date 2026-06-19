@@ -837,13 +837,16 @@ export class AnnotationManager {
       if (projected.depth > 1 || projected.depth < 0) {
         this.hidePin(entry.el);
       } else {
-        entry.el.style.setProperty("--pin-left", `${projected.screenX}px`);
-        entry.el.style.setProperty("--pin-top", `${projected.screenY}px`);
+        // Round to integer pixels to avoid sub-pixel text rasterization jitter.
+        const px = Math.round(projected.screenX);
+        const py = Math.round(projected.screenY);
+        entry.el.style.setProperty("--pin-left", `${px}px`);
+        entry.el.style.setProperty("--pin-top", `${py}px`);
         this.updatePinPriority(entry.el, projected.depth);
         projectedPins.push({
           el: entry.el,
-          screenX: projected.screenX,
-          screenY: projected.screenY,
+          screenX: px,
+          screenY: py,
           depth: projected.depth,
         });
 
