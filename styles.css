@@ -29,14 +29,12 @@ body {
   position: relative;
 }
 
-.ai3d-btn-active {
+.ai3d-inline-btn.ai3d-btn-active {
   color: var(--text-on-accent);
   background: var(--interactive-accent);
 }
 
 .ai3d-inline-btn.ai3d-btn-active:hover {
-  color: var(--text-on-accent);
-  background: var(--interactive-accent);
   filter: brightness(1.1);
 }
 
