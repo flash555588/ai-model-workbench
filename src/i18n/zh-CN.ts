@@ -167,8 +167,6 @@ export const zhCN: Record<TranslationKey, string> = {
   "helper.toggleDisassemblyLabel": "切换分解模式",
   "helper.disassemblyOn": "分解模式已开启",
   "helper.disassemblyOff": "分解模式已关闭",
-  "helper.resetPartsLabel": "重置分解部件",
-  "helper.partsReset": "部件已重置",
   "helper.changeResolutionLabel": "切换分辨率",
   "helper.resolutionValue": "分辨率：{value}",
   "helper.toggleAnimationLabel": "播放或暂停动画",

@@ -165,8 +165,6 @@ export const en = {
   "helper.toggleDisassemblyLabel": "Toggle disassembly mode",
   "helper.disassemblyOn": "Disassembly on",
   "helper.disassemblyOff": "Disassembly off",
-  "helper.resetPartsLabel": "Reset disassembled parts",
-  "helper.partsReset": "Parts reset",
   "helper.changeResolutionLabel": "Change resolution",
   "helper.resolutionValue": "Resolution: {value}",
   "helper.toggleAnimationLabel": "Play or pause animation",

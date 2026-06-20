@@ -230,7 +230,6 @@ export function createHelperButtons(
       toggleCapabilityButton(resBtn, !!preview && supportsRenderScalePreview(preview));
       toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
-    toggleCapabilityButton(resetPartsBtn, !!disassemblyPreview?.isDisassemblyEnabled());
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
     toggleCapabilityButton(clearMeasureBtn, !!preview && supportsMeasurementPreview(preview));
     toggleCapabilityButton(calibrateBtn, !!preview && supportsMeasurementPreview(preview));
@@ -369,18 +368,6 @@ export function createHelperButtons(
     const on = preview.toggleDisassembly();
     syncCapabilities();
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
-  });
-
-  // Reset disassembled parts button
-  const resetPartsBtn = markSecondary(inspectGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.resetPartsLabel") } }));
-  setAction(resetPartsBtn, "reset-parts");
-  resetPartsBtn.appendChild(createSvgIcon(`<path d="M3 12a9 9 0 109-9"/><path d="M3 4v8h8"/><rect x="14" y="14" width="5" height="5" rx="1"/>`));
-  resetPartsBtn.addEventListener("click", () => {
-    const preview = getPreview();
-    if (!preview?.resetDisassembly) return;
-    preview.resetDisassembly();
-    syncCapabilities();
-    showTooltip(resetPartsBtn, t("helper.partsReset"));
   });
 
   // Resolution scale cycle button (percentage display)
