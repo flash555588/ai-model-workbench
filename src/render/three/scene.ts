@@ -1187,44 +1187,26 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
-  private updateOrthographicFrustum(aspect: number): void {
-    if (!(this.camera instanceof OrthographicCamera)) return;
-    const camera = this.camera;
-    let span = 2;
-    if (this.rootObject) {
-      const bounds = getObjectPreviewBounds(this.rootObject);
-      const size = getPreviewBoundsSize(bounds);
-      span = Math.max(size.x, size.y, size.z, 1);
-    }
-    const distance = camera.position.distanceTo(this.controls.target) || 1;
-    const viewSpan = Math.max(span, distance * 0.5);
-    const halfHeight = viewSpan / 2;
-    const halfWidth = halfHeight * aspect;
-    camera.left = -halfWidth;
-    camera.right = halfWidth;
-    camera.top = halfHeight;
-    camera.bottom = -halfHeight;
+  private computeOrthographicViewSpan(): number {
+    if (!this.rootObject) return 2;
+    const bounds = getObjectPreviewBounds(this.rootObject);
+    const size = getPreviewBoundsSize(bounds);
+    return Math.max(size.x, size.y, size.z, 1) * 1.2;
   }
 
-  private createOrthographicCamera(aspect: number): OrthographicCamera {
-    const camera = new OrthographicCamera(-1, 1, 1, -1, 0.01, 2000);
-    camera.position.copy(this.camera.position);
-    camera.zoom = this.camera.zoom || 1;
-    camera.near = this.camera.near;
-    camera.far = this.camera.far;
-    this.updateOrthographicFrustumForCamera(camera, aspect);
-    return camera;
+  private updateOrthographicFrustum(aspect: number): void {
+    if (!(this.camera instanceof OrthographicCamera)) return;
+    const viewSpan = this.computeOrthographicViewSpan();
+    const halfHeight = viewSpan / 2;
+    const halfWidth = halfHeight * aspect;
+    this.camera.left = -halfWidth;
+    this.camera.right = halfWidth;
+    this.camera.top = halfHeight;
+    this.camera.bottom = -halfHeight;
   }
 
   private updateOrthographicFrustumForCamera(camera: OrthographicCamera, aspect: number): void {
-    let span = 2;
-    if (this.rootObject) {
-      const bounds = getObjectPreviewBounds(this.rootObject);
-      const size = getPreviewBoundsSize(bounds);
-      span = Math.max(size.x, size.y, size.z, 1);
-    }
-    const distance = camera.position.distanceTo(this.controls.target) || 1;
-    const viewSpan = Math.max(span, distance * 0.5);
+    const viewSpan = this.computeOrthographicViewSpan();
     const halfHeight = viewSpan / 2;
     const halfWidth = halfHeight * aspect;
     camera.left = -halfWidth;
