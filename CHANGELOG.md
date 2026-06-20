@@ -13,6 +13,11 @@
 - Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
+## 0.5.8
+
+- Re-release of 0.5.7 with signed release artifacts (GitHub artifact attestations).
+- CI: switch release workflow to `npm install` to avoid cross-platform lockfile mismatches.
+
 ## 0.5.7
 
 - UI: promote the measurement tool to a primary toolbar button.
