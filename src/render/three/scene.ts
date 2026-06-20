@@ -54,6 +54,7 @@ import type {
   ModelPartSummary,
   ModelPreviewSummary,
   SceneConfig,
+  STLConfig,
   ThreeDBlockConfig,
 } from "../../domain/models";
 import { isMobile } from "../../utils/device";
@@ -205,7 +206,7 @@ function getObjectPreviewBounds(object: Object3D) {
 export class ThreeModelPreview implements WorkbenchPreview {
   private readonly renderer: WebGLRenderer;
   private readonly scene: Scene;
-  private readonly camera: PerspectiveCamera;
+  private camera: PerspectiveCamera | OrthographicCamera;
   private readonly controls: OrbitControls;
   private readonly resizeObs: ResizeObserver;
   private readonly raycaster = new Raycaster();
@@ -264,6 +265,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private initialTarget = new Vector3();
   private initialPosition = new Vector3(3, 2, 3);
   private initialFov = 45;
+  private initialZoom = 1;
+  private initialCameraMode: "perspective" | "orthographic" = "perspective";
+  private cameraMode: "perspective" | "orthographic" = "perspective";
   private lastPointerDown: { x: number; y: number } | null = null;
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
@@ -282,6 +286,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private disassembly: PreviewDisassemblyController | null = null;
   private disassemblySetup = false;
   private renderDirty = true;
+  private stlMaterial: MeshStandardMaterial | null = null;
   private cachedMeshes: Mesh[] | null = null;
   private cachedMeshRoot: Object3D | null = null;
   private cameraAnimHandle = 0;
@@ -431,6 +436,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.resourceWarnings = gltfResult.warnings;
     } else if (this.loadedExt === "stl") {
       root = await loadThreeSTL(data);
+      this.stlMaterial = isMesh(root) ? (root.material as MeshStandardMaterial) : null;
     } else if (this.loadedExt === "ply") {
       root = await loadThreePLY(data);
     } else if (this.loadedExt === "obj") {
@@ -472,6 +478,20 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (config.camera) this.applyCameraConfig(config.camera);
     if (config.lights) this.applyLightConfig(config.lights);
     if (config.scene) this.applySceneConfig(config.scene);
+    if (config.stl) this.applySTLConfig(config.stl);
+  }
+
+  private applySTLConfig(config: STLConfig): void {
+    const material = this.stlMaterial;
+    if (!material) return;
+    if (config.color !== undefined) {
+      material.color.set(config.color);
+    }
+    if (config.wireframe !== undefined) {
+      material.wireframe = config.wireframe;
+      material.needsUpdate = true;
+    }
+    this.markDirty();
   }
 
   destroy(): void {
@@ -613,10 +633,16 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.resetDisassembly();
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
-    this.camera.fov = this.initialFov;
+
+    this.switchCameraMode(this.initialCameraMode);
     this.camera.position.copy(this.initialPosition);
-    this.camera.updateProjectionMatrix();
     this.controls.target.copy(this.initialTarget);
+    this.camera.lookAt(this.controls.target);
+    if (this.camera instanceof PerspectiveCamera) {
+      this.camera.fov = this.initialFov;
+    }
+    this.camera.zoom = this.initialZoom;
+    this.camera.updateProjectionMatrix();
     this.controls.update();
     this.markDirty();
     this.renderNow(performance.now());
@@ -644,12 +670,23 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return this.focusSelectionEnabled;
   }
 
+  setWireframe(enabled: boolean): void {
+    if (enabled === this.wireframeEnabled) return;
+    this.wireframeEnabled = enabled;
+    this.applyWireframe(enabled);
+    this.markDirty();
+  }
+
   toggleWireframe(): boolean {
-    this.wireframeEnabled = !this.wireframeEnabled;
-    if (!this.rootObject) return this.wireframeEnabled;
+    this.setWireframe(!this.wireframeEnabled);
+    return this.wireframeEnabled;
+  }
+
+  private applyWireframe(enabled: boolean): void {
+    if (!this.rootObject) return;
 
     for (const mesh of this.getRenderableMeshes(this.rootObject)) {
-      if (this.wireframeEnabled) {
+      if (enabled) {
         this.wireframeOriginalMaterials.set(mesh.id, mesh.material);
         const materials = materialList(mesh.material);
         const cloned = materials.map((mat) => {
@@ -680,8 +717,6 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.wireframeOriginalMaterials.delete(mesh.id);
       }
     }
-    this.markDirty();
-    return this.wireframeEnabled;
   }
 
   toggleOrientationGizmo(): boolean {
@@ -1143,22 +1178,123 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
     this.renderer.setPixelRatio(this.computePixelRatio());
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height;
+    if (this.camera instanceof OrthographicCamera) {
+      this.updateOrthographicFrustum(width / height);
+    } else {
+      this.camera.aspect = width / height;
+    }
     this.camera.updateProjectionMatrix();
     this.markDirty();
   }
 
+  private updateOrthographicFrustum(aspect: number): void {
+    if (!(this.camera instanceof OrthographicCamera)) return;
+    const camera = this.camera;
+    let span = 2;
+    if (this.rootObject) {
+      const bounds = getObjectPreviewBounds(this.rootObject);
+      const size = getPreviewBoundsSize(bounds);
+      span = Math.max(size.x, size.y, size.z, 1);
+    }
+    const distance = camera.position.distanceTo(this.controls.target) || 1;
+    const viewSpan = Math.max(span, distance * 0.5);
+    const halfHeight = viewSpan / 2;
+    const halfWidth = halfHeight * aspect;
+    camera.left = -halfWidth;
+    camera.right = halfWidth;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
+  }
+
+  private createOrthographicCamera(aspect: number): OrthographicCamera {
+    const camera = new OrthographicCamera(-1, 1, 1, -1, 0.01, 2000);
+    camera.position.copy(this.camera.position);
+    camera.zoom = this.camera.zoom || 1;
+    camera.near = this.camera.near;
+    camera.far = this.camera.far;
+    this.updateOrthographicFrustumForCamera(camera, aspect);
+    return camera;
+  }
+
+  private updateOrthographicFrustumForCamera(camera: OrthographicCamera, aspect: number): void {
+    let span = 2;
+    if (this.rootObject) {
+      const bounds = getObjectPreviewBounds(this.rootObject);
+      const size = getPreviewBoundsSize(bounds);
+      span = Math.max(size.x, size.y, size.z, 1);
+    }
+    const distance = camera.position.distanceTo(this.controls.target) || 1;
+    const viewSpan = Math.max(span, distance * 0.5);
+    const halfHeight = viewSpan / 2;
+    const halfWidth = halfHeight * aspect;
+    camera.left = -halfWidth;
+    camera.right = halfWidth;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
+    camera.updateProjectionMatrix();
+  }
+
+  private switchCameraMode(mode: "perspective" | "orthographic"): void {
+    if (this.cameraMode === mode && (
+      (mode === "perspective" && this.camera instanceof PerspectiveCamera) ||
+      (mode === "orthographic" && this.camera instanceof OrthographicCamera)
+    )) return;
+
+    const canvas = this.renderer.domElement;
+    const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1));
+    const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
+    const aspect = width / height;
+
+    const oldCamera = this.camera;
+    const position = oldCamera.position.clone();
+    const target = this.controls.target.clone();
+    const zoom = oldCamera.zoom || 1;
+    const near = oldCamera.near;
+    const far = oldCamera.far;
+
+    this.scene.remove(oldCamera);
+
+    if (mode === "orthographic") {
+      const camera = new OrthographicCamera(-1, 1, 1, -1, near, far);
+      camera.position.copy(position);
+      camera.zoom = zoom;
+      camera.lookAt(target);
+      this.updateOrthographicFrustumForCamera(camera, aspect);
+      this.camera = camera;
+    } else {
+      const camera = new PerspectiveCamera(this.initialFov, aspect, near, far);
+      camera.position.copy(position);
+      camera.zoom = zoom;
+      camera.lookAt(target);
+      this.camera = camera;
+    }
+
+    this.scene.add(this.camera);
+    this.controls.object = this.camera;
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.cameraMode = mode;
+  }
+
   private applyCameraConfig(config: CameraConfig): void {
-    if (typeof config.fov === "number" && Number.isFinite(config.fov)) {
+    const requestedMode = config.mode ?? this.cameraMode;
+    if (config.mode) {
+      this.initialCameraMode = config.mode;
+    }
+    this.switchCameraMode(requestedMode);
+
+    if (this.camera instanceof PerspectiveCamera && typeof config.fov === "number" && Number.isFinite(config.fov)) {
       this.camera.fov = config.fov;
-      this.camera.updateProjectionMatrix();
+      this.initialFov = config.fov;
     }
     if (config.position) {
       this.camera.position.set(...config.position);
+      this.initialPosition.set(...config.position);
     }
     if (config.lookAt) {
       this.controls.target.set(...config.lookAt);
       this.camera.lookAt(this.controls.target);
+      this.initialTarget.set(...config.lookAt);
     }
     if (typeof config.near === "number" && Number.isFinite(config.near)) {
       this.camera.near = config.near;
@@ -1168,6 +1304,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     if (typeof config.zoom === "number" && Number.isFinite(config.zoom)) {
       this.camera.zoom = config.zoom;
+      this.initialZoom = config.zoom;
     }
     this.camera.updateProjectionMatrix();
     this.controls.update();
@@ -1546,6 +1683,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.clearMeasurements();
     this.wireframeEnabled = false;
     this.wireframeOriginalMaterials.clear();
+    this.stlMaterial = null;
     this.bboxHelper?.removeFromParent();
     this.bboxHelper = null;
     this.bboxEnabled = false;
@@ -1662,7 +1800,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.controls.target.x.toFixed(2),
       this.controls.target.y.toFixed(2),
       this.controls.target.z.toFixed(2),
-      this.camera.fov.toFixed(2),
+      this.camera instanceof PerspectiveCamera ? this.camera.fov.toFixed(2) : this.camera.zoom.toFixed(3),
     ].join("_");
   }
 
