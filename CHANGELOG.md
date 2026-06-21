@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Performance: preserve original STEP/OCCT material colors while reducing GLB size by trying the OCCT glTF writer before the existing XDE component fallback.
+- Performance: reuse existing `.ai3d-converted.*` files only when they are newer than the source model, avoiding stale geometry while skipping unnecessary conversions.
+- Routing: align production direct file view with the default Three.js edit-preview path while keeping converted workbench inputs on the conservative Babylon.js route.
+- UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
+- Stability: increase default conversion timeout from 120s to 300s so large STEP models can complete without timing out.
 - Security: sanitize remote draft output and model-derived metadata before writing generated notes.
 - Security: validate converter command paths and reject shell metacharacters.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.

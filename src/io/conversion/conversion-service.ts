@@ -2,10 +2,19 @@ import type { FormatCapability } from "../formats/types";
 import type { ConversionManager } from "./manager";
 import { CONVERTED_ASSET_CACHE_VERSION, type ConvertedAssetCache } from "../cache/converted-asset-cache";
 import { createLogger } from "../../utils/log";
-import { F_OK, access } from "../../utils/node-shim";
+import { F_OK, access, stat } from "../../utils/node-shim";
 import { MissingConverterError } from "./errors";
 
 const log = createLogger("conversion-service");
+
+function getConvertedOutputPath(sourcePath: string, targetExt: string): string {
+  const lastDot = sourcePath.lastIndexOf(".");
+  const base = lastDot > 0 ? sourcePath.slice(0, lastDot) : sourcePath;
+  const lastSep = Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\"));
+  const dir = base.slice(0, lastSep + 1);
+  const name = base.slice(lastSep + 1);
+  return `${dir}${name}.ai3d-converted.${targetExt}`;
+}
 
 export interface ConversionRouteInput {
   sourcePath: string;
@@ -45,6 +54,16 @@ async function isCachedOutputAvailable(outputPath: string): Promise<boolean> {
   try {
     await access(outputPath, F_OK);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isConvertedOutputReusable(sourcePath: string, outputPath: string): Promise<boolean> {
+  if (!outputPath) return false;
+  try {
+    const [sourceStats, outputStats] = await Promise.all([stat(sourcePath), stat(outputPath)]);
+    return outputStats.size > 0 && outputStats.mtimeMs >= sourceStats.mtimeMs;
   } catch {
     return false;
   }
@@ -94,6 +113,14 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
         currentConverterCacheKey: currentCacheIdentity?.cacheKey,
       });
       input.convertedAssetCache?.delete(input.sourcePath, input.sourceExt, targetExt);
+    } else if (!(await isConvertedOutputReusable(input.sourcePath, cached.outputPath))) {
+      log.warn("conversion cache output older than source", {
+        sourcePath: input.sourcePath,
+        sourceExt: input.sourceExt,
+        targetExt,
+        outputPath: cached.outputPath,
+      });
+      input.convertedAssetCache?.delete(input.sourcePath, input.sourceExt, targetExt);
     } else {
       log.info("conversion cache hit", {
         sourcePath: input.sourcePath,
@@ -107,6 +134,31 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
         warnings: [...cached.warnings, "Using cached conversion output."],
       };
     }
+  }
+
+  const expectedOutputPath = getConvertedOutputPath(input.sourcePath, targetExt);
+  if (await isConvertedOutputReusable(input.sourcePath, expectedOutputPath)) {
+    log.info("conversion output already exists", {
+      sourcePath: input.sourcePath,
+      outputPath: expectedOutputPath,
+    });
+    input.convertedAssetCache?.set({
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId,
+      converterCacheKey: currentCacheIdentity?.cacheKey ?? converterId,
+      sourcePath: input.sourcePath,
+      sourceExt: input.sourceExt,
+      targetExt,
+      outputPath: expectedOutputPath,
+      outputExt: targetExt,
+      warnings: ["Using existing conversion output."],
+      createdAt: Date.now(),
+    });
+    return {
+      effectivePath: expectedOutputPath,
+      effectiveExt: targetExt,
+      warnings: ["Using existing conversion output."],
+    };
   }
 
   if (!input.conversionManager.canConvert(input.sourceExt)) {

@@ -4,7 +4,7 @@ import { createLogger } from "../../utils/log";
 
 const log = createLogger("conversion-manager");
 
-const DEFAULT_CONVERSION_TIMEOUT_MS = 120_000;
+const DEFAULT_CONVERSION_TIMEOUT_MS = 300_000;
 
 export class ConversionTimeoutError extends Error {
   constructor(message = "Conversion timed out") {

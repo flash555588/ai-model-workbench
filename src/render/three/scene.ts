@@ -81,9 +81,19 @@ import type {
   PreviewProjectionResult,
   PreviewWorldPoint,
   MeasurementScale,
+  MeasurementUnit,
 } from "../preview/types";
 import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
+import {
+  createMeasurementLabel,
+  createMeasurementMarkdown,
+  createMeasurementReading as buildMeasurementReading,
+  normalizeMeasurementUnit,
+  sanitizeMeasurementScale,
+  type MeasurementReading,
+  type MeasurementRecord,
+} from "../preview/measurement";
 import { createThreeDisassemblyController } from "./disassembly";
 import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
@@ -271,7 +281,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private lastPointerDown: { x: number; y: number } | null = null;
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
-  private measurementUnit = "mm";
+  private measurementUnit: MeasurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Line; label: Sprite }> = [];
   private measurementMarkers: Mesh[] = [];
   private pendingPoint: Vector3 | null = null;
@@ -809,12 +819,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
 
   setMeasurementScale(scale: MeasurementScale): void {
-    this.measurementScale = { ...scale };
+    this.measurementScale = sanitizeMeasurementScale(scale);
     this.updateMeasurementLabels();
   }
 
   getMeasurementScale(): MeasurementScale {
     return { ...this.measurementScale };
+  }
+
+  setMeasurementUnit(unit: MeasurementUnit): void {
+    this.measurementUnit = normalizeMeasurementUnit(unit);
+    this.updateMeasurementLabels();
+  }
+
+  getMeasurementUnit(): MeasurementUnit {
+    return this.measurementUnit;
   }
 
   getMeasurementBounds(): { x: number; y: number; z: number } | null {
@@ -824,36 +843,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return size;
   }
 
-  private getRealDistance(start: Vector3, end: Vector3): number {
-    const dx = (end.x - start.x) * this.measurementScale.x;
-    const dy = (end.y - start.y) * this.measurementScale.y;
-    const dz = (end.z - start.z) * this.measurementScale.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
-  }
-
-  private formatMeasurementDistance(distance: number): string {
-    const unit = this.measurementUnit;
-    if (unit === "um" || unit === "μm") {
-      return distance < 1000 ? `${distance.toFixed(2)} μm` : `${(distance / 1000).toFixed(2)} mm`;
-    }
-    if (unit === "mm") {
-      return distance < 1 ? `${(distance * 1000).toFixed(2)} μm` : distance < 1000 ? `${distance.toFixed(2)} mm` : `${(distance / 1000).toFixed(3)} m`;
-    }
-    if (unit === "cm") {
-      return distance < 1 ? `${(distance * 10).toFixed(2)} mm` : distance < 100 ? `${distance.toFixed(2)} cm` : `${(distance / 100).toFixed(3)} m`;
-    }
-    if (unit === "m") {
-      return distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : distance < 1 ? `${distance.toFixed(3)} m` : `${distance.toFixed(2)} m`;
-    }
-    return `${distance.toFixed(3)} ${unit}`;
+  exportMeasurements(): string {
+    return createMeasurementMarkdown(this.createMeasurementRecords());
   }
 
   updateMeasurementLabels(): void {
     if (this.measurementSegments.length === 0) return;
     const markerSize = this.getMeasurementMarkerSize() * 4;
     for (const segment of this.measurementSegments) {
-      const distance = this.getRealDistance(segment.start, segment.end);
-      const labelText = this.formatMeasurementDistance(distance);
+      const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
       segment.label.removeFromParent();
       const mat = segment.label.material;
       mat.map?.dispose();
@@ -2023,8 +2021,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     line.renderOrder = 998;
     this.scene.add(line);
 
-    const distance = this.getRealDistance(start, end);
-    const labelText = this.formatMeasurementDistance(distance);
+    const labelText = createMeasurementLabel(this.createMeasurementReading(start, end));
     const mid = new Vector3().addVectors(start, end).multiplyScalar(0.5);
     const label = this.createMeasurementLabelSprite(labelText, mid, this.getMeasurementMarkerSize() * 4);
     this.scene.add(label);
@@ -2032,29 +2029,32 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.measurementSegments.push({ start, end, line, label });
   }
 
-  private createMeasurementLabelSprite(text: string, position: Vector3, scale: number): Sprite {
+  private createMeasurementLabelSprite(text: { primary: string; secondary: string }, position: Vector3, scale: number): Sprite {
     const canvas = activeDocument.createEl("canvas");
     const ctx = canvas.getContext("2d")!;
-    canvas.width = 512;
-    canvas.height = 128;
+    canvas.width = 640;
+    canvas.height = 160;
     ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
     ctx.beginPath();
-    ctx.roundRect(0, 0, 512, 128, 16);
+    ctx.roundRect(0, 0, 640, 160, 18);
     ctx.fill();
     ctx.strokeStyle = "#ff6b6b";
     ctx.lineWidth = 4;
     ctx.stroke();
     ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 48px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, 256, 64);
+    ctx.font = "bold 46px sans-serif";
+    ctx.fillText(text.primary, 320, 58);
+    ctx.font = "28px sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+    ctx.fillText(text.secondary, 320, 112);
 
     const texture = new CanvasTexture(canvas);
     const material = new SpriteMaterial({ map: texture, depthTest: false });
     const sprite = new Sprite(material);
     sprite.position.copy(position);
-    sprite.scale.set(scale * 4, scale, 1);
+    sprite.scale.set(scale * 5, scale * 1.25, 1);
     sprite.renderOrder = 1000;
     return sprite;
   }
@@ -2085,9 +2085,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.raycaster.ray.direction.clone().multiplyScalar(5),
       );
     }
-    const oldGeo = this.previewLine.geometry;
-    this.previewLine.geometry = new BufferGeometry().setFromPoints([this.pendingPoint, endPoint]);
-    oldGeo.dispose();
+    const position = this.previewLine.geometry.getAttribute("position");
+    position.setXYZ(0, this.pendingPoint.x, this.pendingPoint.y, this.pendingPoint.z);
+    position.setXYZ(1, endPoint.x, endPoint.y, endPoint.z);
+    position.needsUpdate = true;
+    this.previewLine.geometry.computeBoundingSphere();
     this.markDirty();
   }
 
@@ -2097,6 +2099,28 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.previewLine.geometry.dispose();
     (this.previewLine.material as Material).dispose();
     this.previewLine = null;
+  }
+
+  private createMeasurementReading(start: Vector3, end: Vector3): MeasurementReading {
+    return buildMeasurementReading(
+      this.toMeasurementPoint(start),
+      this.toMeasurementPoint(end),
+      this.measurementScale,
+      this.measurementUnit,
+    );
+  }
+
+  private createMeasurementRecords(): MeasurementRecord[] {
+    return this.measurementSegments.map((segment, index) => ({
+      index: index + 1,
+      start: this.toMeasurementPoint(segment.start),
+      end: this.toMeasurementPoint(segment.end),
+      reading: this.createMeasurementReading(segment.start, segment.end),
+    }));
+  }
+
+  private toMeasurementPoint(point: Vector3): PreviewWorldPoint {
+    return { x: point.x, y: point.y, z: point.z };
   }
 
   private computePartSummary(mesh: Mesh): ModelPartSummary {

@@ -25,6 +25,7 @@ import type {
   RenderScalePreview,
   MeasurementPreview,
   MeasurementScale,
+  MeasurementUnit,
   WireframePreview,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
@@ -232,6 +233,7 @@ export function createHelperButtons(
     }
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
     toggleCapabilityButton(clearMeasureBtn, !!preview && supportsMeasurementPreview(preview));
+    toggleCapabilityButton(copyMeasureBtn, !!preview && supportsMeasurementPreview(preview));
     toggleCapabilityButton(calibrateBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
     syncGroupVisibility();
@@ -442,6 +444,27 @@ export function createHelperButtons(
     showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
   });
 
+  const copyMeasureBtn = markSecondary(inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn is-hidden",
+    attr: { "aria-label": t("helper.copyMeasurementsLabel") },
+  }));
+  setAction(copyMeasureBtn, "copy-measurements");
+  copyMeasureBtn.appendChild(createSvgIcon(`<path d="M4 19h16"/><path d="M7 16V8"/><path d="M12 16V5"/><path d="M17 16v-6"/><path d="M4 4h16"/>`));
+  copyMeasureBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    const markdown = preview.exportMeasurements();
+    if (!markdown) {
+      showTooltip(copyMeasureBtn, t("helper.noMeasurements"));
+      return;
+    }
+    void navigator.clipboard.writeText(markdown).then(() => {
+      showTooltip(copyMeasureBtn, t("helper.measurementsCopied"));
+    }).catch(() => {
+      showTooltip(copyMeasureBtn, t("helper.failed"));
+    });
+  });
+
 
   // Calibration button (scale)
   const calibrateBtn = markSecondary(inspectGroup.createEl("button", {
@@ -630,11 +653,13 @@ export function createHelperButtons(
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     const bounds = preview.getMeasurementBounds?.() ?? null;
+    const scale = preview.getMeasurementScale();
+    unitSelect.value = preview.getMeasurementUnit();
     originalBounds = bounds;
     if (bounds) {
-      boundsX.textContent = `X: ${bounds.x.toFixed(3)}`;
-      boundsY.textContent = `Y: ${bounds.y.toFixed(3)}`;
-      boundsZ.textContent = `Z: ${bounds.z.toFixed(3)}`;
+      boundsX.textContent = `X: ${(bounds.x * scale.x).toFixed(3)}`;
+      boundsY.textContent = `Y: ${(bounds.y * scale.y).toFixed(3)}`;
+      boundsZ.textContent = `Z: ${(bounds.z * scale.z).toFixed(3)}`;
     } else {
       boundsX.textContent = "X: -";
       boundsY.textContent = "Y: -";
@@ -654,6 +679,7 @@ export function createHelperButtons(
       y: originalBounds.y > 0.0001 ? vy / originalBounds.y : 1,
       z: originalBounds.z > 0.0001 ? vz / originalBounds.z : 1,
     };
+    preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
     preview.setMeasurementScale?.(scale);
     showTooltip(applyBtn, t("helper.calibrated"));
   }
@@ -661,6 +687,7 @@ export function createHelperButtons(
   function resetScale(): void {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
+    preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
     preview.setMeasurementScale?.({ x: 1, y: 1, z: 1 });
     updateBoundsDisplay();
     if (originalBounds) {
@@ -691,6 +718,11 @@ export function createHelperButtons(
   inputX.addEventListener("input", () => onRealInputChanged("x"));
   inputY.addEventListener("input", () => onRealInputChanged("y"));
   inputZ.addEventListener("input", () => onRealInputChanged("z"));
+  unitSelect.addEventListener("change", () => {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    preview.setMeasurementUnit(unitSelect.value as MeasurementUnit);
+  });
   applyBtn.addEventListener("click", applyScaleFromInputs);
   resetBtn2.addEventListener("click", resetScale);
 
@@ -699,9 +731,13 @@ export function createHelperButtons(
     if (isHidden) {
       updateBoundsDisplay();
       if (originalBounds) {
-        inputX.value = originalBounds.x.toFixed(3);
-        inputY.value = originalBounds.y.toFixed(3);
-        inputZ.value = originalBounds.z.toFixed(3);
+        const preview = getPreview();
+        const scale = preview && supportsMeasurementPreview(preview)
+          ? preview.getMeasurementScale()
+          : { x: 1, y: 1, z: 1 };
+        inputX.value = (originalBounds.x * scale.x).toFixed(3);
+        inputY.value = (originalBounds.y * scale.y).toFixed(3);
+        inputZ.value = (originalBounds.z * scale.z).toFixed(3);
       }
     }
     calibratePanel.classList.toggle("is-hidden", !isHidden);

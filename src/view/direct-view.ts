@@ -20,21 +20,13 @@ import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
 import { buildLocalAnalysisResult, buildPartRecordsFromEvidence } from "./workbench/analysis-result";
 import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
+import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
 
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
-const THREE_WORKBENCH_DIRECT_EXTS = new Set(["glb", "gltf"]);
 
 import { createDefaultProfile } from "../store/plugin-store";
-
-function canUseExperimentalThreeWorkbench(settings: PluginSettings, source: ReturnType<typeof toPreviewSource>): boolean {
-  return settings.experimentalThreeWorkbench
-    && settings.useThreeRenderer
-    && source.strategy === "direct"
-    && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext)
-    && THREE_WORKBENCH_DIRECT_EXTS.has(source.sourceExt);
-}
 
 function formatCount(value: number | undefined): string {
   return Math.round(value ?? 0).toLocaleString();
@@ -247,15 +239,7 @@ export class DirectModelView extends FileView {
       }
       const source = toPreviewSource(prepared);
 
-      const basePreviewOptions = {
-        ext: source.ext,
-        annotationMode: "edit",
-        allowEditModeOnThree: true,
-        allowWorkbenchFeaturesOnThree: canUseExperimentalThreeWorkbench(settings, source),
-        requireWorkbenchFeatures: true,
-        rendererRollout: settings.previewRendererRollout,
-        useThreeRenderer: settings.useThreeRenderer,
-      } as const;
+      const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, source.path);
@@ -615,15 +599,7 @@ export class DirectModelView extends FileView {
     canvas: HTMLCanvasElement,
     data: ArrayBuffer,
     source: ReturnType<typeof toPreviewSource>,
-    options: {
-      ext: string;
-      annotationMode: "edit";
-      allowEditModeOnThree: boolean;
-      allowWorkbenchFeaturesOnThree: boolean;
-      requireWorkbenchFeatures: true;
-      rendererRollout: PluginSettings["previewRendererRollout"];
-      useThreeRenderer: boolean;
-    },
+    options: DirectViewPreviewOptions,
     modelPath: string,
   ): Promise<{
       preview: AnnotationPreview;
@@ -642,7 +618,7 @@ export class DirectModelView extends FileView {
       return { preview: created.preview, summary, route: created.route };
     } catch (error) {
       created.preview.destroy();
-      if (created.route.backend !== "three" || !options.allowWorkbenchFeaturesOnThree) {
+      if (created.route.backend !== "three" || !options.requireWorkbenchFeatures || !options.allowWorkbenchFeaturesOnThree) {
         throw error;
       }
       console.warn("[AI3D] Experimental Three workbench failed; falling back to Babylon:", error);

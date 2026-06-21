@@ -76,8 +76,18 @@ import type {
   PreviewProjectionResult,
   PreviewWorldPoint,
   MeasurementScale,
+  MeasurementUnit,
   WorkbenchPreview,
 } from "../preview/types";
+import {
+  createMeasurementLabel,
+  createMeasurementMarkdown,
+  createMeasurementReading as buildMeasurementReading,
+  normalizeMeasurementUnit,
+  sanitizeMeasurementScale,
+  type MeasurementReading,
+  type MeasurementRecord,
+} from "../preview/measurement";
 
 /** Guard against concurrent OBJ loads monkey-patching the same prototype. */
 let objMtlLock: Promise<void> | null = null;
@@ -275,7 +285,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
-  private measurementUnit = "mm";
+  private measurementUnit: MeasurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Mesh; label: Mesh }> = [];
   private measurementMarkers: Mesh[] = [];
   private pendingPoint: Vector3 | null = null;
@@ -888,12 +898,21 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
 
   setMeasurementScale(scale: MeasurementScale): void {
-    this.measurementScale = { ...scale };
+    this.measurementScale = sanitizeMeasurementScale(scale);
     this.updateMeasurementLabels();
   }
 
   getMeasurementScale(): MeasurementScale {
     return { ...this.measurementScale };
+  }
+
+  setMeasurementUnit(unit: MeasurementUnit): void {
+    this.measurementUnit = normalizeMeasurementUnit(unit);
+    this.updateMeasurementLabels();
+  }
+
+  getMeasurementUnit(): MeasurementUnit {
+    return this.measurementUnit;
   }
 
   getMeasurementBounds(): { x: number; y: number; z: number } | null {
@@ -907,36 +926,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
     };
   }
 
-  private getRealDistance(start: Vector3, end: Vector3): number {
-    const dx = (end.x - start.x) * this.measurementScale.x;
-    const dy = (end.y - start.y) * this.measurementScale.y;
-    const dz = (end.z - start.z) * this.measurementScale.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
-  }
-
-  private formatMeasurementDistance(distance: number): string {
-    const unit = this.measurementUnit;
-    if (unit === "um" || unit === "μm") {
-      return distance < 1000 ? `${distance.toFixed(2)} μm` : `${(distance / 1000).toFixed(2)} mm`;
-    }
-    if (unit === "mm") {
-      return distance < 1 ? `${(distance * 1000).toFixed(2)} μm` : distance < 1000 ? `${distance.toFixed(2)} mm` : `${(distance / 1000).toFixed(3)} m`;
-    }
-    if (unit === "cm") {
-      return distance < 1 ? `${(distance * 10).toFixed(2)} mm` : distance < 100 ? `${distance.toFixed(2)} cm` : `${(distance / 100).toFixed(3)} m`;
-    }
-    if (unit === "m") {
-      return distance < 0.01 ? `${(distance * 1000).toFixed(2)} mm` : distance < 1 ? `${distance.toFixed(3)} m` : `${distance.toFixed(2)} m`;
-    }
-    return `${distance.toFixed(3)} ${unit}`;
+  exportMeasurements(): string {
+    return createMeasurementMarkdown(this.createMeasurementRecords());
   }
 
   updateMeasurementLabels(): void {
     if (this.measurementSegments.length === 0) return;
     const markerSize = this.getMeasurementMarkerSize() * 4;
     for (const segment of this.measurementSegments) {
-      const distance = this.getRealDistance(segment.start, segment.end);
-      const labelText = this.formatMeasurementDistance(distance);
+      const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
       segment.label.dispose(false, true);
       const mid = Vector3.Center(segment.start, segment.end);
       segment.label = this.createMeasurementLabelMesh(labelText, mid, markerSize);
@@ -1617,33 +1615,35 @@ export class BabylonModelPreview implements WorkbenchPreview {
     line.isPickable = false;
     line.renderingGroupId = 2;
 
-    const distance = this.getRealDistance(start, end);
-    const labelText = this.formatMeasurementDistance(distance);
+    const labelText = createMeasurementLabel(this.createMeasurementReading(start, end));
     const mid = Vector3.Center(start, end);
     const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 4);
 
     this.measurementSegments.push({ start, end, line, label });
   }
 
-  private createMeasurementLabelMesh(text: string, position: Vector3, scale: number): Mesh {
-    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 4, height: scale }, this.scene);
+  private createMeasurementLabelMesh(text: { primary: string; secondary: string }, position: Vector3, scale: number): Mesh {
+    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 5, height: scale * 1.25 }, this.scene);
     plane.position = position;
     plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
     plane.renderingGroupId = 2;
 
-    const texture = new DynamicTexture("measure-label-tex", { width: 512, height: 128 }, this.scene);
+    const texture = new DynamicTexture("measure-label-tex", { width: 640, height: 160 }, this.scene);
     const ctx = texture.getContext() as CanvasRenderingContext2D;
     ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
-    ctx.fillRect(0, 0, 512, 128);
+    ctx.fillRect(0, 0, 640, 160);
     ctx.strokeStyle = "#ff6b6b";
     ctx.lineWidth = 4;
-    ctx.strokeRect(0, 0, 512, 128);
+    ctx.strokeRect(0, 0, 640, 160);
     ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 48px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, 256, 64);
+    ctx.font = "bold 46px sans-serif";
+    ctx.fillText(text.primary, 320, 58);
+    ctx.font = "28px sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+    ctx.fillText(text.secondary, 320, 112);
     texture.update();
 
     const mat = new StandardMaterial("measure-label-mat", this.scene);
@@ -1657,7 +1657,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private ensurePreviewLine(): void {
     if (this.previewLine) return;
-    this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [Vector3.Zero(), Vector3.Zero()] }, this.scene);
+    this.previewLine = MeshBuilder.CreateLines("measure-preview", {
+      points: [Vector3.Zero(), Vector3.Zero()],
+      updatable: true,
+    }, this.scene);
     (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
     (this.previewLine as LinesMesh).alpha = 0.5;
     this.previewLine.isPickable = false;
@@ -1679,8 +1682,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
       const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
       endPoint = this.pendingPoint.add(ray.direction.scale(5));
     }
-    this.previewLine.dispose();
-    this.previewLine = MeshBuilder.CreateLines("measure-preview", { points: [this.pendingPoint, endPoint] }, this.scene);
+    this.previewLine = MeshBuilder.CreateLines("measure-preview", {
+      points: [this.pendingPoint, endPoint],
+      instance: this.previewLine as LinesMesh,
+    }, this.scene);
     (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
     (this.previewLine as LinesMesh).alpha = 0.5;
     this.previewLine.isPickable = false;
@@ -1691,6 +1696,28 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!this.previewLine) return;
     this.previewLine.dispose();
     this.previewLine = null;
+  }
+
+  private createMeasurementReading(start: Vector3, end: Vector3): MeasurementReading {
+    return buildMeasurementReading(
+      this.toMeasurementPoint(start),
+      this.toMeasurementPoint(end),
+      this.measurementScale,
+      this.measurementUnit,
+    );
+  }
+
+  private createMeasurementRecords(): MeasurementRecord[] {
+    return this.measurementSegments.map((segment, index) => ({
+      index: index + 1,
+      start: this.toMeasurementPoint(segment.start),
+      end: this.toMeasurementPoint(segment.end),
+      reading: this.createMeasurementReading(segment.start, segment.end),
+    }));
+  }
+
+  private toMeasurementPoint(point: Vector3): PreviewWorldPoint {
+    return { x: point.x, y: point.y, z: point.z };
   }
 
   private computeSummary(root: Mesh): ModelPreviewSummary {

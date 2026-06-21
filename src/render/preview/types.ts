@@ -107,14 +107,19 @@ export interface MeasurementScale {
   z: number;
 }
 
+export type MeasurementUnit = "um" | "mm" | "cm" | "m";
+
 export interface MeasurementPreview {
   toggleMeasurement(): boolean;
   isMeasurementActive(): boolean;
   clearMeasurements(): void;
   setMeasurementScale(scale: MeasurementScale): void;
   getMeasurementScale(): MeasurementScale;
+  setMeasurementUnit(unit: MeasurementUnit): void;
+  getMeasurementUnit(): MeasurementUnit;
   getMeasurementBounds(): { x: number; y: number; z: number } | null;
   updateMeasurementLabels(): void;
+  exportMeasurements(): string;
 }
 
 export interface DisassemblyPreview {
@@ -195,8 +200,11 @@ export function supportsMeasurementPreview(preview: unknown): preview is Measure
     && hasMethod(preview, "clearMeasurements")
     && hasMethod(preview, "setMeasurementScale")
     && hasMethod(preview, "getMeasurementScale")
+    && hasMethod(preview, "setMeasurementUnit")
+    && hasMethod(preview, "getMeasurementUnit")
     && hasMethod(preview, "getMeasurementBounds")
-    && hasMethod(preview, "updateMeasurementLabels");
+    && hasMethod(preview, "updateMeasurementLabels")
+    && hasMethod(preview, "exportMeasurements");
 }
 
 export function supportsDisassemblyPreview(preview: unknown): preview is DisassemblyPreview {
