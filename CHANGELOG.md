@@ -20,6 +20,7 @@
 - Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
 - Testing: cover knowledge-note generation markers for success, partial-write failure, and stale pending recovery warnings.
 - Testing: verify remote-draft timeout behavior in unit tests and the remote-draft verification script.
+- Testing: cover converted asset cache normalization and FreeCAD converter script generation/output validation.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
 ## 0.5.8
