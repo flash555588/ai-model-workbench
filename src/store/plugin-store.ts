@@ -278,7 +278,7 @@ function normalizeKnowledgeGenerationRecord(
     partNoteCount: Number.isFinite(saved.partNoteCount) ? Math.max(0, Math.floor(saved.partNoteCount)) : 0,
     previewImageCount: Number.isFinite(saved.previewImageCount) ? Math.max(0, Math.floor(saved.previewImageCount)) : 0,
     generatedAt: typeof saved.generatedAt === "string" ? saved.generatedAt : new Date().toISOString(),
-    status: saved.status === "failed" ? "failed" : "success",
+    status: saved.status === "failed" || saved.status === "pending" ? saved.status : "success",
     warningCount: Number.isFinite(saved.warningCount) ? Math.max(0, Math.floor(saved.warningCount)) : 0,
   };
 }
