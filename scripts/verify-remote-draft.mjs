@@ -14,6 +14,9 @@ await mkdir(outDir, { recursive: true });
 await writeFile(obsidianShimPath, `
   export async function requestUrl(request) {
     globalThis.__remoteDraftRequests = [...(globalThis.__remoteDraftRequests ?? []), request];
+    if (globalThis.__remoteDraftNeverResolve) {
+      return new Promise(() => {});
+    }
     return globalThis.__remoteDraftResponse ?? {
       status: 200,
       json: {
@@ -135,6 +138,17 @@ await writeFile(entryPath, `
   }
   assert(failed, "Remote draft HTTP failure was not surfaced");
 
+  globalThis.__remoteDraftNeverResolve = true;
+  let timedOut = false;
+  try {
+    await requestRemoteDraft(included, { timeoutMs: 5 });
+  } catch (error) {
+    timedOut = String(error).includes("timed out after 5ms");
+  } finally {
+    globalThis.__remoteDraftNeverResolve = false;
+  }
+  assert(timedOut, "Remote draft timeout was not surfaced");
+
   console.log("Remote draft privacy verification passed");
 `, "utf8");
 
@@ -144,6 +158,7 @@ await esbuild.build({
   platform: "node",
   format: "esm",
   outfile: bundlePath,
+  banner: { js: "globalThis.activeWindow = globalThis;" },
   logLevel: "silent",
   plugins: [
     {
