@@ -32,7 +32,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-003 | Knowledge generation remains local-first and records report, sidecar, index, preview evidence, and part notes | P0 | Verified | `npm run verify:knowledge-index` |
 | REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
 | REQ-005 | Registered part reuse feedback is visible in generated notes and direct workbench UI | P1 | Verified | `npm run verify:knowledge-index`, `npm run typecheck`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three` |
-| REQ-006 | Diagnostics reports expose support context without leaking draft service URLs or converter command paths | P1 | Verified | `npm run verify:diagnostics` |
+| REQ-006 | Diagnostics reports expose support context without leaking draft service URLs, converter command paths, or vault-relative model/note paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
 | REQ-008 | Real Obsidian smoke verification covers install, rendering, knowledge generation, and diagnostics when the host can launch Obsidian | P1 | Accepted | `npm run verify:obsidian` |
 
