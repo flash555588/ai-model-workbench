@@ -86,6 +86,11 @@ import type {
 import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import {
+  createPreviewEvidence,
+  createPreviewMaterialSummaryLabel,
+  type PreviewGroupedPartCandidates,
+} from "../preview/evidence";
+import {
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
@@ -586,24 +591,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.rootObject) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
     const groupedPartCandidates = this.computeComponentPartSummaries(this.rootObject, renderableMeshes);
-    const meshParts = renderableMeshes
-      .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
-      .map((mesh) => this.computePartSummary(mesh));
-    const parts = groupedPartCandidates.parts.length > 0 ? [...groupedPartCandidates.parts, ...meshParts] : meshParts;
-    const materialNames = new Set<string>();
-    for (const mesh of renderableMeshes) {
-      for (const material of materialList(mesh.material)) {
-        const name = describeMaterial(material);
-        if (name) materialNames.add(name);
-      }
-    }
-    return {
+    return createPreviewEvidence({
       summary: this.computeSummary(this.rootObject),
-      parts,
-      materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
-      resourceWarnings: [...this.resourceWarnings],
-      capturedAt: new Date().toISOString(),
-    };
+      renderableMeshes,
+      groupedPartCandidates,
+      createMeshPart: (mesh) => this.computePartSummary(mesh),
+      getMeshMaterialNames: (mesh) => materialList(mesh.material).map((material) => describeMaterial(material)),
+      resourceWarnings: this.resourceWarnings,
+    });
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
@@ -2148,10 +2143,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     });
   }
 
-  private computeComponentPartSummaries(root: Object3D, renderableMeshes: readonly Mesh[]): {
-    parts: ModelPartSummary[];
-    groupedMeshes: Set<Mesh>;
-  } {
+  private computeComponentPartSummaries(
+    root: Object3D,
+    renderableMeshes: readonly Mesh[],
+  ): PreviewGroupedPartCandidates<Mesh> {
     const renderableSet = new Set(renderableMeshes);
     const parts: ModelPartSummary[] = [];
     const groupedMeshes = new Set<Mesh>();
@@ -2199,47 +2194,43 @@ export class ThreeModelPreview implements WorkbenchPreview {
         for (const mesh of availableMeshes) {
           groupedMeshes.add(mesh);
         }
-      const bounds = new Box3();
-      for (const mesh of availableMeshes) {
-        mesh.updateWorldMatrix(true, false);
-        bounds.union(new Box3().setFromObject(mesh));
-      }
-      const materialNames = new Set<string>();
-      let triangleCount = 0;
-      let vertexCount = 0;
-      for (const mesh of availableMeshes) {
-        triangleCount += triangleCountForMesh(mesh);
-        vertexCount += vertexCountForMesh(mesh);
-        for (const material of materialList(mesh.material)) {
-          const name = describeMaterial(material);
-          if (name) materialNames.add(name);
+        const bounds = new Box3();
+        for (const mesh of availableMeshes) {
+          mesh.updateWorldMatrix(true, false);
+          bounds.union(new Box3().setFromObject(mesh));
         }
-      }
-      parts.push(createPreviewPartSummary({
-        name: getPartDisplayName(identity, getObjectDisplayName(object, `group-${object.id}`)),
-        triangleCount,
-        vertexCount,
-        materialName: materialNames.size === 0
-          ? null
-          : materialNames.size === 1
-            ? Array.from(materialNames)[0]
-            : `${materialNames.size} materials`,
-        boundingSize: getPreviewBoundsSize({
-          min: toPreviewWorldPoint(bounds.min),
-          max: toPreviewWorldPoint(bounds.max),
-        }),
-        center: getPreviewBoundsCenter({
-          min: toPreviewWorldPoint(bounds.min),
-          max: toPreviewWorldPoint(bounds.max),
-        }),
-        source: identity.hasExplicitIdentity ? "component" : "group",
-        meshNames: availableMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
-        childCount: availableMeshes.length,
-        componentId: identity.componentId,
-        occurrenceId: identity.occurrenceId,
-        partNumber: identity.partNumber,
-        componentPath: identity.componentPath,
-      }));
+        const materialNames = new Set<string>();
+        let triangleCount = 0;
+        let vertexCount = 0;
+        for (const mesh of availableMeshes) {
+          triangleCount += triangleCountForMesh(mesh);
+          vertexCount += vertexCountForMesh(mesh);
+          for (const material of materialList(mesh.material)) {
+            const name = describeMaterial(material);
+            if (name) materialNames.add(name);
+          }
+        }
+        parts.push(createPreviewPartSummary({
+          name: getPartDisplayName(identity, getObjectDisplayName(object, `group-${object.id}`)),
+          triangleCount,
+          vertexCount,
+          materialName: createPreviewMaterialSummaryLabel(materialNames),
+          boundingSize: getPreviewBoundsSize({
+            min: toPreviewWorldPoint(bounds.min),
+            max: toPreviewWorldPoint(bounds.max),
+          }),
+          center: getPreviewBoundsCenter({
+            min: toPreviewWorldPoint(bounds.min),
+            max: toPreviewWorldPoint(bounds.max),
+          }),
+          source: identity.hasExplicitIdentity ? "component" : "group",
+          meshNames: availableMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
+          childCount: availableMeshes.length,
+          componentId: identity.componentId,
+          occurrenceId: identity.occurrenceId,
+          partNumber: identity.partNumber,
+          componentPath: identity.componentPath,
+        }));
       });
     return { parts, groupedMeshes };
   }
