@@ -2,6 +2,7 @@ import { Notice, TFile, type App } from "obsidian";
 import type {
   AnalysisResult,
   AnnotationPin,
+  KnowledgeGenerationRecord,
   LocalDraftResult,
   ModelAssetProfile,
   ModelPreviewSummary,
@@ -36,6 +37,29 @@ export interface KnowledgeNoteBuildOptions {
 
 export interface GenerateKnowledgeNoteOptions {
   preview?: Pick<ModelPreview, "captureSnapshot" | "getModelEvidence"> | null;
+}
+
+function createKnowledgeGenerationRecord(options: {
+  modelPath: string;
+  reportNotePath?: string;
+  analysisSidecarPath?: string;
+  knowledgeIndexPath?: string;
+  partNoteCount?: number;
+  previewImageCount?: number;
+  status: KnowledgeGenerationRecord["status"];
+  warningCount?: number;
+}): KnowledgeGenerationRecord {
+  return {
+    modelPath: options.modelPath,
+    reportNotePath: options.reportNotePath,
+    analysisSidecarPath: options.analysisSidecarPath,
+    knowledgeIndexPath: options.knowledgeIndexPath,
+    partNoteCount: options.partNoteCount ?? 0,
+    previewImageCount: options.previewImageCount ?? 0,
+    generatedAt: new Date().toISOString(),
+    status: options.status,
+    warningCount: options.warningCount ?? 0,
+  };
 }
 
 function inferFormat(sourcePath: string): string {
@@ -1215,6 +1239,10 @@ export async function generateKnowledgeNote(
   let resolveLock!: () => void;
   noteGenerationLock = new Promise<void>((resolve) => { resolveLock = resolve; });
 
+  let pendingGeneration: KnowledgeGenerationRecord | null = null;
+  let analysis: AnalysisResult | null = null;
+  let previewImageCount = 0;
+
   try {
     const state = ps.store.getState();
     const path = state.currentModelPath;
@@ -1227,10 +1255,26 @@ export async function generateKnowledgeNote(
     const notePath = `${reportFolder}/${baseName} Report.md`;
     const analysisSidecarPath = `${reportFolder}/${baseName} Analysis.json`;
     const knowledgeIndexPath = `${reportFolder}/${baseName} Index.md`;
+    const stalePendingWarning = state.lastKnowledgeGeneration?.status === "pending"
+      ? `Previous knowledge generation for ${state.lastKnowledgeGeneration.modelPath} did not complete. This run can replace the pending marker if it finishes.`
+      : null;
+    if (stalePendingWarning) {
+      new Notice(stalePendingWarning);
+    }
+    pendingGeneration = createKnowledgeGenerationRecord({
+      modelPath: path,
+      reportNotePath: notePath,
+      analysisSidecarPath,
+      knowledgeIndexPath,
+      status: "pending",
+    });
+    ps.setLastKnowledgeGeneration(pendingGeneration);
+
     const evidence = options.preview?.getModelEvidence?.() ?? null;
     const snapshot = await captureEvidenceSnapshot(app, options.preview, state.settings.previewFolder, baseName);
+    previewImageCount = snapshot.paths.length;
     const registeredParts = await collectRegisteredPartsFromProfiles(app, state.modelAssetProfiles, path);
-    const analysis = buildLocalAnalysisResult({
+    analysis = buildLocalAnalysisResult({
       modelPath: path,
       profile,
       preview,
@@ -1238,111 +1282,133 @@ export async function generateKnowledgeNote(
       previewImages: snapshot.paths,
       registeredParts,
     });
+    if (stalePendingWarning) {
+      analysis.warnings = [...analysis.warnings, stalePendingWarning];
+    }
+    const currentAnalysis = analysis;
     if (snapshot.warning) {
-      analysis.warnings = [...analysis.warnings, snapshot.warning];
-      if (analysis.draftingInput) {
-        analysis.draftingInput = {
-          ...analysis.draftingInput,
+      currentAnalysis.warnings = [...currentAnalysis.warnings, snapshot.warning];
+      if (currentAnalysis.draftingInput) {
+        currentAnalysis.draftingInput = {
+          ...currentAnalysis.draftingInput,
           evidence: {
-            ...analysis.draftingInput.evidence,
-            warnings: [...analysis.draftingInput.evidence.warnings, snapshot.warning],
+            ...currentAnalysis.draftingInput.evidence,
+            warnings: [...currentAnalysis.draftingInput.evidence.warnings, snapshot.warning],
           },
         };
       }
     }
-    analysis.localDraft = createLocalDraftResult({
+    currentAnalysis.localDraft = createLocalDraftResult({
       baseName,
       sourcePath: path,
       profile,
       preview,
-      analysis,
+      analysis: currentAnalysis,
     });
-    analysis.pipeline.push({ stage: "draft", durationMs: 0, status: "success" });
+    currentAnalysis.pipeline.push({ stage: "draft", durationMs: 0, status: "success" });
     await createPartNoteDrafts({
       app,
       partFolder: state.settings.partFolder,
       baseName,
       notePath,
       sourcePath: path,
-      analysis,
+      analysis: currentAnalysis,
     });
-    if (analysis.draftingInput) {
-      analysis.draftingInput = {
-        ...analysis.draftingInput,
-        partCandidates: analysis.draftingInput.partCandidates.map((candidate) => {
-          const linkedPart = analysis.parts.find((part) => part.partId === candidate.partId);
+    if (currentAnalysis.draftingInput) {
+      currentAnalysis.draftingInput = {
+        ...currentAnalysis.draftingInput,
+        partCandidates: currentAnalysis.draftingInput.partCandidates.map((candidate) => {
+          const linkedPart = currentAnalysis.parts.find((part) => part.partId === candidate.partId);
           return linkedPart?.notePath ? { ...candidate, notePath: linkedPart.notePath } : candidate;
         }),
-        annotationLinks: [...(analysis.annotationLinks ?? [])],
+        annotationLinks: [...(currentAnalysis.annotationLinks ?? [])],
       };
     }
-    const remoteDecision = createRemoteDraftDecision(state.settings, analysis.draftingInput, LOCAL_ANALYSIS_VERSION);
+    const remoteDecision = createRemoteDraftDecision(state.settings, currentAnalysis.draftingInput, LOCAL_ANALYSIS_VERSION);
     if (remoteDecision.enabled) {
       try {
         const remoteDraft = await requestRemoteDraft(remoteDecision);
         if (remoteDraft) {
-          analysis.remoteDraft = remoteDraft;
-          analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "success" });
+          currentAnalysis.remoteDraft = remoteDraft;
+          currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "success" });
         } else {
-          analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
+          currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        analysis.warnings = [...analysis.warnings, `Remote draft failed: ${message}`];
-        analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "failed" });
+        currentAnalysis.warnings = [...currentAnalysis.warnings, `Remote draft failed: ${message}`];
+        currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "failed" });
       }
     } else {
-      analysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
+      currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
     }
     await ensureFolder(app, reportFolder);
-    await createKnowledgeIndex({
+    const indexFile = await createKnowledgeIndex({
       app,
       baseName,
       notePath,
       sourcePath: path,
       analysisSidecarPath,
       indexPath: knowledgeIndexPath,
-      analysis,
+      analysis: currentAnalysis,
       preview,
       profile,
     });
+    if (!indexFile) {
+      throw new Error(`Unable to write knowledge index: ${knowledgeIndexPath}`);
+    }
     const content = buildKnowledgeNoteContent({
       baseName,
       notePath,
       sourcePath: path,
       profile,
       preview,
-      analysis,
+      analysis: currentAnalysis,
       analysisSidecarPath,
-      knowledgeIndexPath: analysis.knowledgeIndexPath,
+      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
     });
 
-    await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(analysis, null, 2)}\n`);
+    const sidecarFile = await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(currentAnalysis, null, 2)}\n`);
+    if (!sidecarFile) {
+      throw new Error(`Unable to write analysis sidecar: ${analysisSidecarPath}`);
+    }
     const outputFile = await upsertTextFile(app, notePath, content);
 
-    if (!outputFile) return;
+    if (!outputFile) {
+      throw new Error(`Unable to write knowledge report: ${notePath}`);
+    }
 
     ps.updateModelProfile(path, (_existing) => ({
       analysisVersion: LOCAL_ANALYSIS_VERSION,
-      registeredParts: analysis.parts,
+      registeredParts: currentAnalysis.parts,
       reportNotePath: outputFile.path,
       analysisSidecarPath,
-      knowledgeIndexPath: analysis.knowledgeIndexPath,
+      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
       previewImagePaths: snapshot.paths,
     }));
-    ps.setLastKnowledgeGeneration({
+    ps.setLastKnowledgeGeneration(createKnowledgeGenerationRecord({
       modelPath: path,
       reportNotePath: outputFile.path,
       analysisSidecarPath,
-      knowledgeIndexPath: analysis.knowledgeIndexPath,
-      partNoteCount: analysis.partNotePaths?.length ?? 0,
-      previewImageCount: analysis.previewImages.length,
-      generatedAt: new Date().toISOString(),
+      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
+      partNoteCount: currentAnalysis.partNotePaths?.length ?? 0,
+      previewImageCount: currentAnalysis.previewImages.length,
       status: "success",
-      warningCount: analysis.warnings.length,
-    });
+      warningCount: currentAnalysis.warnings.length,
+    }));
     await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
     new Notice(`Knowledge note updated: ${outputFile.path}`);
+  } catch (error) {
+    if (pendingGeneration) {
+      ps.setLastKnowledgeGeneration(createKnowledgeGenerationRecord({
+        ...pendingGeneration,
+        partNoteCount: analysis?.partNotePaths?.length ?? 0,
+        previewImageCount: analysis?.previewImages.length ?? previewImageCount,
+        status: "failed",
+        warningCount: Math.max(1, analysis?.warnings.length ?? 0),
+      }));
+    }
+    throw error;
   } finally {
     resolveLock();
     noteGenerationLock = null;
