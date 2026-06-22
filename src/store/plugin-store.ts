@@ -40,18 +40,26 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   const store = createStore<PluginState>(INITIAL_STATE);
 
   let saveTimer: number | null = null;
+  let dirtyRevision = 0;
+  let savedRevision = 0;
+  let saveLoop: Promise<void> | null = null;
 
   function scheduleSave() {
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
       saveTimer = null;
-      persist().catch(err => console.error("[AI3D] Auto-save failed:", err));
+      flushLatestState().catch(err => console.error("[AI3D] Auto-save failed:", err));
     }, 500);
   }
 
-  async function persist() {
+  function markDirty() {
+    dirtyRevision += 1;
+    scheduleSave();
+  }
+
+  function snapshotPersistedState(): PersistedPluginState {
     const s = store.getState();
-    const data: PersistedPluginState = {
+    return {
       settings: s.settings,
       convertedAssetRecords: s.convertedAssetRecords,
       modelAssetProfiles: s.modelAssetProfiles,
@@ -59,11 +67,39 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       agentPlan: s.agentPlan,
       lastKnowledgeGeneration: s.lastKnowledgeGeneration,
     };
-    await plugin.saveData(data);
+  }
+
+  function flushLatestState(force = false): Promise<void> {
+    if (force && savedRevision >= dirtyRevision) {
+      dirtyRevision += 1;
+    }
+
+    if (!saveLoop) {
+      saveLoop = runSaveLoop();
+    }
+
+    return saveLoop;
+  }
+
+  async function runSaveLoop(): Promise<void> {
+    try {
+      while (savedRevision < dirtyRevision) {
+        const targetRevision = dirtyRevision;
+        const data = snapshotPersistedState();
+        await plugin.saveData(data);
+        savedRevision = Math.max(savedRevision, targetRevision);
+      }
+    } finally {
+      saveLoop = null;
+    }
+
+    if (savedRevision < dirtyRevision) {
+      await flushLatestState();
+    }
   }
 
   // Auto-save on every state change
-  store.subscribe(() => scheduleSave());
+  store.subscribe(() => markDirty());
 
   let localeLoadedFromSaved = false;
 
@@ -119,7 +155,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
         window.clearTimeout(saveTimer);
         saveTimer = null;
       }
-      await persist();
+      await flushLatestState(true);
     },
 
     dispose() {
@@ -128,7 +164,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
         saveTimer = null;
       }
       // Fire-and-forget final flush so pending state changes are not lost on unload.
-      persist().catch(err => console.error("[AI3D] Final save on dispose failed:", err));
+      flushLatestState(true).catch(err => console.error("[AI3D] Final save on dispose failed:", err));
     },
   };
 }
