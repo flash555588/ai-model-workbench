@@ -151,6 +151,9 @@ const context = await esbuild.context({
   legalComments: isProduction ? "none" : "inline",
   sourcemap: isProduction ? false : "inline",
   treeShaking: true,
+  loader: {
+    ".py": "text",
+  },
   outfile,
 });
 
