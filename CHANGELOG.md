@@ -11,6 +11,7 @@
 - Security: validate converter command paths and reject shell metacharacters.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
 - Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.
+- Stability: bound optional remote draft requests with a timeout so local knowledge-note generation can continue when a draft service hangs.
 - Stability: handle WebGL context loss/restoration in Three.js, Babylon.js, and 3dgrid previews.
 - Stability: add outer timeout to conversion manager to prevent hung converters from blocking previews.
 - Performance: pause Babylon.js preview render loops when the canvas leaves the viewport.
@@ -18,6 +19,7 @@
 - Performance: cap annotation pins and batch DOM reads/writes in label avoidance.
 - Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
 - Testing: cover knowledge-note generation markers for success, partial-write failure, and stale pending recovery warnings.
+- Testing: verify remote-draft timeout behavior in unit tests and the remote-draft verification script.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
 ## 0.5.8
