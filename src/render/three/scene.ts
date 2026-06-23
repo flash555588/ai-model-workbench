@@ -83,8 +83,18 @@ import type {
   MeasurementScale,
   MeasurementUnit,
 } from "../preview/types";
+import {
+  createAnnotationViewportProvider,
+  formatAnnotationCameraStateKey,
+  projectNormalizedDevicePointToCanvas,
+} from "../preview/annotation-projection";
 import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
+import {
+  createPreviewEvidence,
+  createPreviewMaterialSummaryLabel,
+  type PreviewGroupedPartCandidates,
+} from "../preview/evidence";
 import {
   createMeasurementLabel,
   createMeasurementMarkdown,
@@ -550,7 +560,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getAnnotationProvider(): AnnotationViewportProvider {
     const canvas = this.renderer.domElement;
-    return {
+    return createAnnotationViewportProvider({
       canvas,
       observeRender: (callback) => {
         this.renderObservers.add(callback);
@@ -561,7 +571,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       getCameraStateKey: () => this.getAnnotationCameraStateKey(),
       projectWorldPoint: (point, result) => this.projectAnnotationWorldPoint(point, result),
       isWorldPointOccluded: (point) => this.isAnnotationWorldPointOccluded(point),
-    };
+    });
   }
 
   exportModelInfo(modelPath?: string): string {
@@ -586,24 +596,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.rootObject) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
     const groupedPartCandidates = this.computeComponentPartSummaries(this.rootObject, renderableMeshes);
-    const meshParts = renderableMeshes
-      .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
-      .map((mesh) => this.computePartSummary(mesh));
-    const parts = groupedPartCandidates.parts.length > 0 ? [...groupedPartCandidates.parts, ...meshParts] : meshParts;
-    const materialNames = new Set<string>();
-    for (const mesh of renderableMeshes) {
-      for (const material of materialList(mesh.material)) {
-        const name = describeMaterial(material);
-        if (name) materialNames.add(name);
-      }
-    }
-    return {
+    return createPreviewEvidence({
       summary: this.computeSummary(this.rootObject),
-      parts,
-      materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
-      resourceWarnings: [...this.resourceWarnings],
-      capturedAt: new Date().toISOString(),
-    };
+      renderableMeshes,
+      groupedPartCandidates,
+      createMeshPart: (mesh) => this.computePartSummary(mesh),
+      getMeshMaterialNames: (mesh) => materialList(mesh.material).map((material) => describeMaterial(material)),
+      resourceWarnings: this.resourceWarnings,
+    });
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
@@ -1773,15 +1773,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private getAnnotationCameraStateKey(): string {
-    return [
-      this.camera.position.x.toFixed(3),
-      this.camera.position.y.toFixed(3),
-      this.camera.position.z.toFixed(3),
-      this.controls.target.x.toFixed(2),
-      this.controls.target.y.toFixed(2),
-      this.controls.target.z.toFixed(2),
-      this.camera instanceof PerspectiveCamera ? this.camera.fov.toFixed(2) : this.camera.zoom.toFixed(3),
-    ].join("_");
+    return formatAnnotationCameraStateKey([
+      { value: this.camera.position.x, digits: 3 },
+      { value: this.camera.position.y, digits: 3 },
+      { value: this.camera.position.z, digits: 3 },
+      { value: this.controls.target.x, digits: 2 },
+      { value: this.controls.target.y, digits: 2 },
+      { value: this.controls.target.z, digits: 2 },
+      {
+        value: this.camera instanceof PerspectiveCamera ? this.camera.fov : this.camera.zoom,
+        digits: this.camera instanceof PerspectiveCamera ? 2 : 3,
+      },
+    ]);
   }
 
   private projectAnnotationWorldPoint(point: PreviewWorldPoint, result: PreviewProjectionResult): boolean {
@@ -1793,17 +1796,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.scene.updateMatrixWorld();
     this.camera.updateMatrixWorld();
     this.annotationProjection.set(point.x, point.y, point.z).project(this.camera);
-
-    if (!Number.isFinite(this.annotationProjection.x)
-      || !Number.isFinite(this.annotationProjection.y)
-      || !Number.isFinite(this.annotationProjection.z)) {
-      return false;
-    }
-
-    result.screenX = ((this.annotationProjection.x + 1) / 2) * canvas.clientWidth;
-    result.screenY = ((1 - this.annotationProjection.y) / 2) * canvas.clientHeight;
-    result.depth = (this.annotationProjection.z + 1) / 2;
-    return true;
+    return projectNormalizedDevicePointToCanvas(this.annotationProjection, canvas, result);
   }
 
   private isAnnotationWorldPointOccluded(point: PreviewWorldPoint): boolean {
@@ -2148,10 +2141,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     });
   }
 
-  private computeComponentPartSummaries(root: Object3D, renderableMeshes: readonly Mesh[]): {
-    parts: ModelPartSummary[];
-    groupedMeshes: Set<Mesh>;
-  } {
+  private computeComponentPartSummaries(
+    root: Object3D,
+    renderableMeshes: readonly Mesh[],
+  ): PreviewGroupedPartCandidates<Mesh> {
     const renderableSet = new Set(renderableMeshes);
     const parts: ModelPartSummary[] = [];
     const groupedMeshes = new Set<Mesh>();
@@ -2199,47 +2192,43 @@ export class ThreeModelPreview implements WorkbenchPreview {
         for (const mesh of availableMeshes) {
           groupedMeshes.add(mesh);
         }
-      const bounds = new Box3();
-      for (const mesh of availableMeshes) {
-        mesh.updateWorldMatrix(true, false);
-        bounds.union(new Box3().setFromObject(mesh));
-      }
-      const materialNames = new Set<string>();
-      let triangleCount = 0;
-      let vertexCount = 0;
-      for (const mesh of availableMeshes) {
-        triangleCount += triangleCountForMesh(mesh);
-        vertexCount += vertexCountForMesh(mesh);
-        for (const material of materialList(mesh.material)) {
-          const name = describeMaterial(material);
-          if (name) materialNames.add(name);
+        const bounds = new Box3();
+        for (const mesh of availableMeshes) {
+          mesh.updateWorldMatrix(true, false);
+          bounds.union(new Box3().setFromObject(mesh));
         }
-      }
-      parts.push(createPreviewPartSummary({
-        name: getPartDisplayName(identity, getObjectDisplayName(object, `group-${object.id}`)),
-        triangleCount,
-        vertexCount,
-        materialName: materialNames.size === 0
-          ? null
-          : materialNames.size === 1
-            ? Array.from(materialNames)[0]
-            : `${materialNames.size} materials`,
-        boundingSize: getPreviewBoundsSize({
-          min: toPreviewWorldPoint(bounds.min),
-          max: toPreviewWorldPoint(bounds.max),
-        }),
-        center: getPreviewBoundsCenter({
-          min: toPreviewWorldPoint(bounds.min),
-          max: toPreviewWorldPoint(bounds.max),
-        }),
-        source: identity.hasExplicitIdentity ? "component" : "group",
-        meshNames: availableMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
-        childCount: availableMeshes.length,
-        componentId: identity.componentId,
-        occurrenceId: identity.occurrenceId,
-        partNumber: identity.partNumber,
-        componentPath: identity.componentPath,
-      }));
+        const materialNames = new Set<string>();
+        let triangleCount = 0;
+        let vertexCount = 0;
+        for (const mesh of availableMeshes) {
+          triangleCount += triangleCountForMesh(mesh);
+          vertexCount += vertexCountForMesh(mesh);
+          for (const material of materialList(mesh.material)) {
+            const name = describeMaterial(material);
+            if (name) materialNames.add(name);
+          }
+        }
+        parts.push(createPreviewPartSummary({
+          name: getPartDisplayName(identity, getObjectDisplayName(object, `group-${object.id}`)),
+          triangleCount,
+          vertexCount,
+          materialName: createPreviewMaterialSummaryLabel(materialNames),
+          boundingSize: getPreviewBoundsSize({
+            min: toPreviewWorldPoint(bounds.min),
+            max: toPreviewWorldPoint(bounds.max),
+          }),
+          center: getPreviewBoundsCenter({
+            min: toPreviewWorldPoint(bounds.min),
+            max: toPreviewWorldPoint(bounds.max),
+          }),
+          source: identity.hasExplicitIdentity ? "component" : "group",
+          meshNames: availableMeshes.map((mesh) => getObjectDisplayName(mesh, `mesh-${mesh.id}`)),
+          childCount: availableMeshes.length,
+          componentId: identity.componentId,
+          occurrenceId: identity.occurrenceId,
+          partNumber: identity.partNumber,
+          componentPath: identity.componentPath,
+        }));
       });
     return { parts, groupedMeshes };
   }

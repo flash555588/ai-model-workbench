@@ -102,7 +102,7 @@ export interface KnowledgeGenerationRecord {
   partNoteCount: number;
   previewImageCount: number;
   generatedAt: string;
-  status: "success" | "failed";
+  status: "pending" | "success" | "failed";
   warningCount: number;
 }
 

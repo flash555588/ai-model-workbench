@@ -19,6 +19,19 @@ export interface RemoteDraftDecision {
   request?: RemoteDraftRequest;
 }
 
+export interface RequestRemoteDraftOptions {
+  timeoutMs?: number;
+}
+
+export const DEFAULT_REMOTE_DRAFT_TIMEOUT_MS = 15_000;
+
+export class RemoteDraftTimeoutError extends Error {
+  constructor(timeoutMs: number, endpoint: string) {
+    super(`Remote draft request timed out after ${timeoutMs}ms: ${endpoint}`);
+    this.name = "RemoteDraftTimeoutError";
+  }
+}
+
 function normalizeBaseUrl(value: string): string | null {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) {
@@ -123,16 +136,47 @@ export function createRemoteDraftDecision(
   };
 }
 
-export async function requestRemoteDraft(decision: RemoteDraftDecision): Promise<RemoteDraftResult | null> {
+function normalizeTimeoutMs(timeoutMs: number | undefined): number {
+  return Number.isFinite(timeoutMs) && Number(timeoutMs) > 0
+    ? Math.floor(Number(timeoutMs))
+    : DEFAULT_REMOTE_DRAFT_TIMEOUT_MS;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, endpoint: string): Promise<T> {
+  let timeoutId: number | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = activeWindow.setTimeout(() => {
+      reject(new RemoteDraftTimeoutError(timeoutMs, endpoint));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== null) {
+      activeWindow.clearTimeout(timeoutId);
+    }
+  }
+}
+
+export async function requestRemoteDraft(
+  decision: RemoteDraftDecision,
+  options: RequestRemoteDraftOptions = {},
+): Promise<RemoteDraftResult | null> {
   if (!decision.enabled || !decision.endpoint || !decision.request) {
     return null;
   }
-  const response = await requestUrl({
-    url: decision.endpoint,
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(decision.request),
-  });
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  const response = await withTimeout(
+    requestUrl({
+      url: decision.endpoint,
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(decision.request),
+    }),
+    timeoutMs,
+    decision.endpoint,
+  );
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`Remote draft request failed: HTTP ${response.status}`);
   }

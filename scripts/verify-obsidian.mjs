@@ -791,7 +791,9 @@ async function verifyDirectWorkbench(page) {
   });
   assert(diagnosticsReport.includes("# AI Model Workbench Diagnostics"), "Diagnostics report title missing");
   assert(diagnosticsReport.includes("Knowledge index: set"), "Diagnostics report is missing knowledge index status");
-  assert(diagnosticsReport.includes(analysis.knowledgeIndexPath), "Diagnostics report is missing generated index path");
+  assert(diagnosticsReport.includes("Knowledge index: set (<redacted .md>)"), "Diagnostics report is missing redacted index status");
+  assert(!diagnosticsReport.includes(analysis.knowledgeIndexPath), "Diagnostics report leaked generated index path");
+  assert(!diagnosticsReport.includes(workbenchModelVaultPath), "Diagnostics report leaked current model path");
   assert(diagnosticsReport.includes("Last generation: success"), "Diagnostics report is missing last generation state");
   assert(diagnosticsReport.includes("service configured"), "Diagnostics report is missing remote service configured status");
   assert(!diagnosticsReport.includes("diagnostics.example.invalid"), "Diagnostics report leaked draft service host");

@@ -59,6 +59,16 @@ import {
 import { createPreviewOrbitCameraFit } from "../preview/camera-fit";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import {
+  createAnnotationViewportProvider,
+  formatAnnotationCameraStateKey,
+  projectViewportPointToCanvas,
+} from "../preview/annotation-projection";
+import {
+  createPreviewEvidence,
+  createPreviewMaterialSummaryLabel,
+  type PreviewGroupedPartCandidates,
+} from "../preview/evidence";
+import {
   createPreviewLineOfSight,
   isPreviewHitOccluded,
   toPreviewWorldPoint,
@@ -1095,21 +1105,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!this.rootMesh) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
     const groupedPartCandidates = this.computeComponentPartSummaries(renderableMeshes);
-    const meshParts = renderableMeshes
-      .filter((mesh) => !groupedPartCandidates.groupedMeshes.has(mesh))
-      .map((mesh) => this.computePartSummary(mesh));
-    const parts = groupedPartCandidates.parts.length > 0 ? [...groupedPartCandidates.parts, ...meshParts] : meshParts;
-    const materialNames = new Set<string>();
-    for (const mesh of renderableMeshes) {
-      if (mesh.material?.name) materialNames.add(mesh.material.name);
-    }
-    return {
+    return createPreviewEvidence({
       summary: this.computeSummary(this.rootMesh),
-      parts,
-      materialNames: Array.from(materialNames).sort((left, right) => left.localeCompare(right)),
-      resourceWarnings: [...this.resourceWarnings],
-      capturedAt: new Date().toISOString(),
-    };
+      renderableMeshes,
+      groupedPartCandidates,
+      createMeshPart: (mesh) => this.computePartSummary(mesh),
+      getMeshMaterialNames: (mesh) => [mesh.material?.name],
+      resourceWarnings: this.resourceWarnings,
+    });
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
@@ -1161,7 +1164,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private getAnnotationCameraStateKey(): string {
-    return `${this.camera.alpha.toFixed(3)}_${this.camera.beta.toFixed(3)}_${this.camera.radius.toFixed(3)}_${this.camera.target.x.toFixed(2)}_${this.camera.target.y.toFixed(2)}_${this.camera.target.z.toFixed(2)}`;
+    return formatAnnotationCameraStateKey([
+      { value: this.camera.alpha, digits: 3 },
+      { value: this.camera.beta, digits: 3 },
+      { value: this.camera.radius, digits: 3 },
+      { value: this.camera.target.x, digits: 2 },
+      { value: this.camera.target.y, digits: 2 },
+      { value: this.camera.target.z, digits: 2 },
+    ]);
   }
 
   private projectAnnotationWorldPoint(point: PreviewWorldPoint, result: PreviewProjectionResult): boolean {
@@ -1186,13 +1196,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.camera.viewport.toGlobal(rw, rh),
       BabylonModelPreview.annotationProjection,
     );
-
-    const scaleX = canvas.clientWidth / rw;
-    const scaleY = canvas.clientHeight / rh;
-    result.screenX = BabylonModelPreview.annotationProjection.x * scaleX;
-    result.screenY = BabylonModelPreview.annotationProjection.y * scaleY;
-    result.depth = BabylonModelPreview.annotationProjection.z;
-    return true;
+    return projectViewportPointToCanvas(
+      BabylonModelPreview.annotationProjection,
+      rw,
+      rh,
+      canvas,
+      result,
+    );
   }
 
   private isAnnotationWorldPointOccluded(point: PreviewWorldPoint): boolean {
@@ -1225,7 +1235,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!canvas) {
       throw new Error("Preview canvas is unavailable");
     }
-    return {
+    return createAnnotationViewportProvider({
       canvas,
       observeRender: (callback) => {
         const obs = this.scene.onAfterRenderCameraObservable.add((camera) => {
@@ -1240,7 +1250,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       getCameraStateKey: () => this.getAnnotationCameraStateKey(),
       projectWorldPoint: (point, result) => this.projectAnnotationWorldPoint(point, result),
       isWorldPointOccluded: (point) => this.isAnnotationWorldPointOccluded(point),
-    };
+    });
   }
 
   getCanvas(): HTMLCanvasElement | null {
@@ -1463,10 +1473,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
     };
   }
 
-  private computeComponentPartSummaries(renderableMeshes: readonly AbstractMesh[]): {
-    parts: ModelPartSummary[];
-    groupedMeshes: Set<AbstractMesh>;
-  } {
+  private computeComponentPartSummaries(
+    renderableMeshes: readonly AbstractMesh[],
+  ): PreviewGroupedPartCandidates<AbstractMesh> {
     const renderableSet = new Set(renderableMeshes);
     const parts: ModelPartSummary[] = [];
     const groupedMeshes = new Set<AbstractMesh>();
@@ -1495,43 +1504,39 @@ export class BabylonModelPreview implements WorkbenchPreview {
     candidates
       .sort((left, right) => left.childMeshes.length - right.childMeshes.length)
       .forEach(({ node, childMeshes, identity }) => {
-      const availableMeshes = childMeshes.filter((mesh) => !groupedMeshes.has(mesh));
-      if (availableMeshes.length < 1) return;
-      if (!identity.hasExplicitIdentity && availableMeshes.length < 2) return;
-      for (const mesh of availableMeshes) {
-        groupedMeshes.add(mesh);
-      }
-      const bounds = getBabylonMeshesPreviewBounds(availableMeshes);
-      if (!bounds) return;
-      const materialNames = new Set<string>();
-      let triangleCount = 0;
-      let vertexCount = 0;
-      for (const mesh of availableMeshes) {
-        triangleCount += getBabylonTriangleCount(mesh);
-        vertexCount += getBabylonVertexCount(mesh);
-        if (mesh.material?.name) {
-          materialNames.add(mesh.material.name);
+        const availableMeshes = childMeshes.filter((mesh) => !groupedMeshes.has(mesh));
+        if (availableMeshes.length < 1) return;
+        if (!identity.hasExplicitIdentity && availableMeshes.length < 2) return;
+        for (const mesh of availableMeshes) {
+          groupedMeshes.add(mesh);
         }
-      }
-      parts.push(createPreviewPartSummary({
-        name: getPartDisplayName(identity, getBabylonNodeDisplayName(node, `component-${node.uniqueId}`)),
-        triangleCount,
-        vertexCount,
-        materialName: materialNames.size === 0
-          ? null
-          : materialNames.size === 1
-            ? Array.from(materialNames)[0]
-            : `${materialNames.size} materials`,
-        boundingSize: getPreviewBoundsSize(bounds),
-        center: getPreviewBoundsCenter(bounds),
-        source: identity.hasExplicitIdentity ? "component" : "group",
-        meshNames: availableMeshes.map((mesh) => mesh.name || `mesh-${mesh.uniqueId}`),
-        childCount: availableMeshes.length,
-        componentId: identity.componentId,
-        occurrenceId: identity.occurrenceId,
-        partNumber: identity.partNumber,
-        componentPath: identity.componentPath,
-      }));
+        const bounds = getBabylonMeshesPreviewBounds(availableMeshes);
+        if (!bounds) return;
+        const materialNames = new Set<string>();
+        let triangleCount = 0;
+        let vertexCount = 0;
+        for (const mesh of availableMeshes) {
+          triangleCount += getBabylonTriangleCount(mesh);
+          vertexCount += getBabylonVertexCount(mesh);
+          if (mesh.material?.name) {
+            materialNames.add(mesh.material.name);
+          }
+        }
+        parts.push(createPreviewPartSummary({
+          name: getPartDisplayName(identity, getBabylonNodeDisplayName(node, `component-${node.uniqueId}`)),
+          triangleCount,
+          vertexCount,
+          materialName: createPreviewMaterialSummaryLabel(materialNames),
+          boundingSize: getPreviewBoundsSize(bounds),
+          center: getPreviewBoundsCenter(bounds),
+          source: identity.hasExplicitIdentity ? "component" : "group",
+          meshNames: availableMeshes.map((mesh) => mesh.name || `mesh-${mesh.uniqueId}`),
+          childCount: availableMeshes.length,
+          componentId: identity.componentId,
+          occurrenceId: identity.occurrenceId,
+          partNumber: identity.partNumber,
+          componentPath: identity.componentPath,
+        }));
       });
     return { parts, groupedMeshes };
   }

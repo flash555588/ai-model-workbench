@@ -214,6 +214,14 @@ export const zhCN: Record<TranslationKey, string> = {
   "helper.interactAction": "交互",
   "helper.scrollAction": "滚动",
 
+  // Preview canvas accessibility
+  "previewCanvas.inlineLabel": "3D model preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.gridLabel": "3D model grid preview. Shortcuts: {shortcuts}",
+  "previewCanvas.liveLabel": "Embedded 3D model preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.directLabel": "3D file preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.modelShortcuts": "R reset view, W wireframe, G axes, B bounding box, M measurement, Space animation",
+  "previewCanvas.gridShortcuts": "R reset view, W wireframe",
+
   // 工作台与视图
   "workbench.emptyTitle": "暂无模型",
   "workbench.emptyText": "使用“导入 3D 模型”命令加载 GLB、GLTF、STL、OBJ 或 PLY 文件。",

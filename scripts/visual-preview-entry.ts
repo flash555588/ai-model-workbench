@@ -5,6 +5,7 @@ import { createModelPreview } from "../src/render/preview/factory";
 import { resolvePreviewRoute } from "../src/render/preview/routing";
 import type { AnnotationPreview } from "../src/render/preview/types";
 import { createHelperButtons } from "../src/view/inline/helper-buttons";
+import { configureModelPreviewCanvas } from "../src/view/inline/preview-canvas-accessibility";
 import { renderRegisteredPartMatchRow } from "../src/view/direct-workbench-registered-match";
 
 interface DomCreateOptions {
@@ -164,6 +165,7 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
   if (!(host instanceof HTMLDivElement) || !(canvas instanceof HTMLCanvasElement)) {
     throw new Error("Preview shell was not created");
   }
+  configureModelPreviewCanvas(canvas, "inline", getModelPathForPreview());
   return { host, canvas };
 }
 

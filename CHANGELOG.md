@@ -4,18 +4,25 @@
 
 - Performance: preserve original STEP/OCCT material colors while reducing GLB size by trying the OCCT glTF writer before the existing XDE component fallback.
 - Performance: reuse existing `.ai3d-converted.*` files only when they are newer than the source model, avoiding stale geometry while skipping unnecessary conversions.
+- Refactor: move FreeCAD/CadQuery conversion Python into bundled script templates while keeping TypeScript responsible for invocation and output validation.
 - Routing: align production direct file view with the default Three.js edit-preview path while keeping converted workbench inputs on the conservative Babylon.js route.
 - UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
 - Stability: increase default conversion timeout from 120s to 300s so large STEP models can complete without timing out.
 - Security: sanitize remote draft output and model-derived metadata before writing generated notes.
+- Security: redact vault-relative model, report, index, and folder paths from copied diagnostics reports by default.
 - Security: validate converter command paths and reject shell metacharacters.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
+- Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.
+- Stability: bound optional remote draft requests with a timeout so local knowledge-note generation can continue when a draft service hangs.
 - Stability: handle WebGL context loss/restoration in Three.js, Babylon.js, and 3dgrid previews.
 - Stability: add outer timeout to conversion manager to prevent hung converters from blocking previews.
 - Performance: pause Babylon.js preview render loops when the canvas leaves the viewport.
 - Performance: skip unchanged cells in Babylon.js 3dgrid rendering.
 - Performance: cap annotation pins and batch DOM reads/writes in label avoidance.
 - Testing: add Vitest with unit tests for escape-html, remote-draft sanitization, and conversion manager timeout/deduplication.
+- Testing: cover knowledge-note generation markers for success, partial-write failure, and stale pending recovery warnings.
+- Testing: verify remote-draft timeout behavior in unit tests and the remote-draft verification script.
+- Testing: cover converted asset cache normalization and FreeCAD converter script generation/output validation.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
 ## 0.5.8

@@ -212,6 +212,14 @@ export const en = {
   "helper.interactAction": "Interact",
   "helper.scrollAction": "Scroll",
 
+  // Preview canvas accessibility
+  "previewCanvas.inlineLabel": "3D model preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.gridLabel": "3D model grid preview. Shortcuts: {shortcuts}",
+  "previewCanvas.liveLabel": "Embedded 3D model preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.directLabel": "3D file preview: {model}. Shortcuts: {shortcuts}",
+  "previewCanvas.modelShortcuts": "R reset view, W wireframe, G axes, B bounding box, M measurement, Space animation",
+  "previewCanvas.gridShortcuts": "R reset view, W wireframe",
+
   // Workbench and views
   "workbench.emptyTitle": "No model",
   "workbench.emptyText": "Use the \"import 3D model\" command to load a GLB, GLTF, STL, OBJ, or PLY file.",
