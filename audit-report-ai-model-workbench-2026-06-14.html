@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Model Workbench Audit Report</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f7f8fa; color: #24292f; line-height: 1.6; }
+.container { display: flex; max-width: 1400px; margin: 0 auto; }
+.sidebar { width: 280px; flex-shrink: 0; background: #fff; border-right: 1px solid #e1e4e8; padding: 24px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: #57606a; margin: 0 0 12px; }
+.sidebar a { display: block; color: #24292f; text-decoration: none; padding: 6px 8px; border-radius: 6px; font-size: 14px; }
+.sidebar a:hover { background: #f3f4f6; }
+.sidebar .toc-h3 { padding-left: 20px; font-size: 13px; color: #57606a; }
+.main { flex: 1; padding: 40px; max-width: 900px; background: #fff; min-height: 100vh; box-shadow: 0 0 20px rgba(0,0,0,0.03); }
+h1 { font-size: 32px; border-bottom: 2px solid #0969da; padding-bottom: 12px; margin-top: 0; }
+h2 { font-size: 24px; margin-top: 48px; border-bottom: 1px solid #d0d7de; padding-bottom: 8px; }
+h3 { font-size: 20px; margin-top: 32px; color: #1f2328; }
+h4 { font-size: 17px; margin-top: 24px; color: #1f2328; }
+p, li { font-size: 15px; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; }
+pre { background: #f6f8fa; padding: 16px; border-radius: 8px; overflow-x: auto; }
+pre code { background: transparent; padding: 0; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+th { background: #f6f8fa; font-weight: 600; }
+blockquote { border-left: 4px solid #d0d7de; padding-left: 16px; color: #57606a; margin: 16px 0; }
+.score-board { background: #f6f8fa; padding: 16px; border-radius: 8px; margin: 16px 0; font-family: SFMono-Regular, Consolas, monospace; white-space: pre-wrap; line-height: 1.5; }
+.metric-good { color: #1a7f37; }
+.metric-bad { color: #cf222e; }
+.metric-warn { color: #9a6700; }
+@media (max-width: 960px) {
+  .container { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: relative; border-right: none; border-bottom: 1px solid #e1e4e8; }
+  .main { padding: 20px; }
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #0d1117; color: #c9d1d9; }
+  .sidebar, .main { background: #161b22; box-shadow: none; }
+  .sidebar { border-color: #30363d; }
+  .sidebar a { color: #c9d1d9; }
+  .sidebar a:hover { background: #21262d; }
+  h1 { border-color: #58a6ff; }
+  h2 { border-color: #30363d; }
+  code, pre { background: #21262d; }
+  table th { background: #21262d; }
+  th, td, blockquote { border-color: #30363d; }
+  .score-board { background: #21262d; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <nav class="sidebar">
+    <h2>目录</h2>
+    <a class="toc-h2" href="#1-executive-summary">1. Executive Summary</a>
+    <a class="toc-h3" href="#score-dashboard">Score Dashboard</a>
+    <a class="toc-h3" href="#finding-statistics">Finding Statistics</a>
+    <a class="toc-h2" href="#2-project-map">2. Project Map</a>
+    <a class="toc-h3" href="#21-">2.1 组件与职责</a>
+    <a class="toc-h3" href="#22-">2.2 运行时入口与初始化顺序</a>
+    <a class="toc-h3" href="#23-">2.3 状态所有权</a>
+    <a class="toc-h3" href="#24-">2.4 持久化</a>
+    <a class="toc-h3" href="#25-">2.5 外部接口</a>
+    <a class="toc-h3" href="#26-">2.6 安全边界</a>
+    <a class="toc-h3" href="#27-">2.7 高风险区域</a>
+    <a class="toc-h3" href="#coverage-matrix">Coverage Matrix</a>
+    <a class="toc-h2" href="#3-top-risks">3. Top Risks</a>
+    <a class="toc-h2" href="#4-detailed-findings">4. Detailed Findings</a>
+    <a class="toc-h3" href="#41-release">4.1 Release</a>
+    <a class="toc-h3" href="#finding-package-lockjson-manifestpackagejson-release-">Finding: package-lock.json 版本与 manifest/package.json 不一致，阻塞 release 校验</a>
+    <a class="toc-h3" href="#finding-mainjs-dirty">Finding: main.js 被纳入版本控制且当前 dirty/锁定，本地构建失败</a>
+    <a class="toc-h3" href="#finding-changelog-053-055-">Finding: CHANGELOG 缺失 0.5.3 / 0.5.5 条目</a>
+    <a class="toc-h3" href="#finding-">Finding: 文档中的版本示例陈旧</a>
+    <a class="toc-h3" href="#finding-release-workflow-tag-">Finding: release workflow 的 tag 触发模式过于宽松</a>
+    <a class="toc-h3" href="#finding-release-workflow-tag-shell">Finding: release workflow 中 tag 输入直接插值到 shell</a>
+    <a class="toc-h3" href="#42-stability">4.2 Stability</a>
+    <a class="toc-h3" href="#finding-pluginstore-onunload-flush-">Finding: PluginStore 在 onunload 时不 flush 待保存状态</a>
+    <a class="toc-h3" href="#finding-">Finding: 多处错误被静默吞没</a>
+    <a class="toc-h3" href="#finding-webgl-">Finding: 缺少 WebGL 上下文丢失 / 恢复处理</a>
+    <a class="toc-h3" href="#finding-">Finding: 转换管道缺少外层超时</a>
+    <a class="toc-h3" href="#finding-">Finding: 命令回调中的异步错误未处理</a>
+    <a class="toc-h3" href="#finding-">Finding: 部分模块缺少结构化加载错误反馈</a>
+    <a class="toc-h3" href="#43-security">4.3 Security</a>
+    <a class="toc-h3" href="#finding-esbuild-ghsa-gv7w-rqvm-qjhr-rce-">Finding: esbuild 存在 GHSA-gv7w-rqvm-qjhr RCE 漏洞</a>
+    <a class="toc-h3" href="#finding-htmlmarkdown-vault">Finding: 远程草稿返回内容未做 HTML/Markdown 转义即写入 Vault</a>
+    <a class="toc-h3" href="#finding-html-">Finding: 模型派生元数据注入笔记时缺少 HTML 转义</a>
+    <a class="toc-h3" href="#finding-">Finding: 转换器命令设置允许任意可执行文件</a>
+    <a class="toc-h3" href="#finding-">Finding: 持久化转换缓存可引用任意文件系统路径</a>
+    <a class="toc-h3" href="#finding-endpoint-url">Finding: 远程草稿 endpoint 接受私有/内部 URL</a>
+    <a class="toc-h3" href="#finding-ai-">Finding: AI 提示注入风险</a>
+    <a class="toc-h3" href="#finding-stb-2-">Finding: 安全相关失败被静默吞没（与 STB-2 关联）</a>
+    <a class="toc-h3" href="#finding-token-ci-">Finding: 手动 token 扫描未在 CI 中强制执行</a>
+    <a class="toc-h3" href="#finding-babylon-">Finding: Babylon 网络守卫延迟安装且依赖内部实现</a>
+    <a class="toc-h3" href="#44-performance">4.4 Performance</a>
+    <a class="toc-h3" href="#finding-threejs-babylonjs">Finding: 生产产物同时打包 Three.js 与 Babylon.js</a>
+    <a class="toc-h3" href="#finding-babylon-">Finding: Babylon 预览渲染循环不息</a>
+    <a class="toc-h3" href="#finding-babylon-3dgrid-cell">Finding: Babylon 3dgrid 每帧重绘每个 cell</a>
+    <a class="toc-h3" href="#finding-on-">Finding: 标注投影导致 O(n²) 布局抖动</a>
+    <a class="toc-h3" href="#finding-">Finding: 测量与标注集合无上限增长</a>
+    <a class="toc-h3" href="#finding-annotationmanager-effect-">Finding: AnnotationManager 中存在 effect 扩散</a>
+    <a class="toc-h3" href="#finding-helper-buttons-dom-">Finding: helper-buttons 中 DOM 即状态</a>
+    <a class="toc-h3" href="#finding-obj-">Finding: OBJ 纹理内联导致纹理内存翻倍</a>
+    <a class="toc-h3" href="#finding-threejs-render-target-">Finding: Three.js 像素比快速变化导致 render target 重复分配</a>
+    <a class="toc-h3" href="#45-testing">4.5 Testing</a>
+    <a class="toc-h3" href="#finding-">Finding: 无单元测试框架或单元测试</a>
+    <a class="toc-h3" href="#finding-">Finding: 验证脚本断言实现细节</a>
+    <a class="toc-h3" href="#finding-harness-">Finding: 浏览器 harness 存在脆弱性风险</a>
+    <a class="toc-h3" href="#finding-">Finding: 转换管道缺少自动化覆盖</a>
+    <a class="toc-h3" href="#finding-release-workflow-eslint">Finding: release workflow 未执行 eslint</a>
+    <a class="toc-h3" href="#46-maintainability-design">4.6 Maintainability &amp;amp; Design</a>
+    <a class="toc-h3" href="#finding-scene-">Finding: scene 文件为神类，违反单一职责</a>
+    <a class="toc-h3" href="#finding-three-babylon-">Finding: Three 与 Babylon 渲染器之间存在重复逻辑</a>
+    <a class="toc-h3" href="#finding-settingsts-display-ui-">Finding: settings.ts display() 是巨型 UI 构建器</a>
+    <a class="toc-h3" href="#finding-maints-">Finding: main.ts 包含大量视图逻辑</a>
+    <a class="toc-h3" href="#finding-direct-viewts-loadmodel-">Finding: direct-view.ts loadModel() 职责过多</a>
+    <a class="toc-h3" href="#finding-pluginstore-raw-setstate-actions">Finding: PluginStore 暴露 raw setState，缺少 actions</a>
+    <a class="toc-h3" href="#finding-profile">Finding: 视图层直接修改持久化 profile</a>
+    <a class="toc-h3" href="#finding-">Finding: 标注编辑器与投影为单体</a>
+    <a class="toc-h3" href="#finding-crlflf-">Finding: 混合 CRLF/LF 换行符</a>
+    <a class="toc-h3" href="#finding-todofixmehack-">Finding: 缺少 TODO/FIXME/HACK 标记</a>
+    <a class="toc-h3" href="#finding-">Finding: 设置项命名不一致</a>
+    <a class="toc-h3" href="#finding-">Finding: 公共接口文档不足</a>
+    <a class="toc-h3" href="#47-type-safety">4.7 Type Safety</a>
+    <a class="toc-h3" href="#finding-babylon-scene-any-">Finding: Babylon scene 中存在显式 any 与不安全成员访问</a>
+    <a class="toc-h3" href="#finding-as-">Finding: 广泛存在 `as` 类型断言</a>
+    <a class="toc-h3" href="#finding-">Finding: 非空断言普遍存在</a>
+    <a class="toc-h3" href="#finding-">Finding: 导出函数缺少返回类型</a>
+    <a class="toc-h3" href="#48-configuration">4.8 Configuration</a>
+    <a class="toc-h3" href="#finding-">Finding: 设置输入缺少校验</a>
+    <a class="toc-h3" href="#49-observability">4.9 Observability</a>
+    <a class="toc-h3" href="#finding-info-consoledebug">Finding: info 级别日志写入 console.debug</a>
+    <a class="toc-h3" href="#finding-">Finding: 性能快照/转换耗时未暴露</a>
+    <a class="toc-h3" href="#410-data-integrity">4.10 Data Integrity</a>
+    <a class="toc-h3" href="#finding-analysis">Finding: 知识笔记生成在文件写入完成前变更 analysis</a>
+    <a class="toc-h3" href="#finding-">Finding: 转换缓存写入前未重新校验文件</a>
+    <a class="toc-h3" href="#finding-schema-version">Finding: 持久化状态缺少 schema version</a>
+    <a class="toc-h3" href="#411-privacy">4.11 Privacy</a>
+    <a class="toc-h3" href="#finding-vault-">Finding: 诊断报告包含 Vault 路径结构</a>
+    <a class="toc-h3" href="#412-accessibility">4.12 Accessibility</a>
+    <a class="toc-h3" href="#finding-">Finding: 缺少正式的无障碍验证</a>
+    <a class="toc-h3" href="#413-supply-chain">4.13 Supply Chain</a>
+    <a class="toc-h3" href="#finding-esbuild-source-patch-">Finding: esbuild source patch 脆弱</a>
+    <a class="toc-h3" href="#finding-babylon-">Finding: 声明了未使用的 Babylon 包</a>
+    <a class="toc-h3" href="#414-documentation">4.14 Documentation</a>
+    <a class="toc-h3" href="#finding-">Finding: 预览路由矩阵与实现基本一致</a>
+    <a class="toc-h3" href="#415-backend-api">4.15 Backend API</a>
+    <a class="toc-h2" href="#5-recent-commit-capability-evolution">5. Recent Commit Capability Evolution</a>
+    <a class="toc-h3" href="#51-commit-window">5.1 Commit Window</a>
+    <a class="toc-h3" href="#52-major-feature-inflection-points">5.2 Major Feature Inflection Points</a>
+    <a class="toc-h3" href="#53-stability-improvements">5.3 Stability Improvements</a>
+    <a class="toc-h3" href="#54-preview-routing-evolution">5.4 Preview Routing Evolution</a>
+    <a class="toc-h3" href="#55-knowledge-base-part-notes-progression">5.5 Knowledge Base / Part Notes Progression</a>
+    <a class="toc-h3" href="#56-release-cadence">5.6 Release Cadence</a>
+    <a class="toc-h3" href="#57-code-growth-patterns">5.7 Code Growth Patterns</a>
+    <a class="toc-h3" href="#58-risks-introduced-by-recent-commits">5.8 Risks Introduced by Recent Commits</a>
+    <a class="toc-h2" href="#6-metrics-comparison">6. Metrics Comparison</a>
+    <a class="toc-h3" href="#61-build-volume">6.1 Build Volume</a>
+    <a class="toc-h3" href="#62-type-safety">6.2 Type Safety</a>
+    <a class="toc-h3" href="#63-test-coverage">6.3 Test Coverage</a>
+    <a class="toc-h3" href="#64-build-health">6.4 Build Health</a>
+    <a class="toc-h3" href="#65-rendering-performance">6.5 Rendering Performance</a>
+    <a class="toc-h2" href="#7-principles-compliance">7. Principles Compliance</a>
+    <a class="toc-h2" href="#8-recommended-fix-order">8. Recommended Fix Order</a>
+    <a class="toc-h2" href="#9-quick-wins">9. Quick Wins（本周可完成）</a>
+    <a class="toc-h2" href="#10-long-term-refactor-plan">10. Long-Term Refactor Plan</a>
+    <a class="toc-h3" href="#101-2-4-">10.1 渲染器架构瘦身（2-4 周）</a>
+    <a class="toc-h3" href="#102-1-">10.2 状态管理规范化（1 周）</a>
+    <a class="toc-h3" href="#103-2-4-">10.3 测试金字塔建设（2-4 周）</a>
+    <a class="toc-h3" href="#104-1-2-">10.4 安全与隐私加固（1-2 周）</a>
+    <a class="toc-h3" href="#105-2-3-">10.5 性能专项（2-3 周）</a>
+    <a class="toc-h3" href="#106-1-">10.6 发布工程自动化（1 周）</a>
+    <a class="toc-h2" href="#11-methodology-limitations">11. Methodology &amp;amp; Limitations</a>
+  </nav>
+  <main class="main">
+<h1 id="summary">Fuck My Shit Mountain Audit Report</h1>
+<p><strong>Project:</strong> AI Model Workbench（Obsidian 3D 模型预览与知识笔记插件） <strong>Audit mode:</strong> full <strong>Date:</strong> 2026-06-14 <strong>Reviewer:</strong> Kimi Code CLI</p>
+<hr>
+<h2 id="executive-summary">1. Executive Summary</h2>
+<p>AI Model Workbench 是一款基于 TypeScript 的 Obsidian 插件，用于在 Vault 中渲染 GLB/GLTF/STL/PLY/OBJ 等 3D 模型、添加三维标注，并将模型证据转化为关联知识笔记。项目架构清晰，采用 domain → store → io → render → view 分层，Three.js 作为单模型主渲染路径，Babylon.js 作为 3dgrid 与保守回退路径，且已建立较完整的浏览器/Playwright/Obsidian 验证脚本矩阵。</p>
+<p>然而，近期（约 2026-05-25 至 2026-06-08）迭代速度极快：30 余条提交中出现了 Three.js 主渲染迁移、知识索引与零件注册、跨格式零件匹配、工作区 UI 重构、距离测量工具等重大变更，单次提交可达 +5,300/-680 行。高节奏带来明显的可维护性与稳定性债务：大量文件超过 500 行、Three/Babylon 双端重复实现、生成的 <code>main.js</code> 被纳入版本控制且当前处于 dirty/锁定状态导致本地构建失败、<code>package-lock.json</code> 仍停留在 0.4.3 而 manifest 已经是 0.5.5 等。</p>
+<p>主要风险集中在：<strong>发布流程阻塞</strong>（package-lock 版本不一致、dirty bundle）、<strong>稳定性</strong>（store 在卸载时未 flush、多处错误静默吞没、缺少 WebGL 上下文恢复）、<strong>性能</strong>（3.8 MB 双运行时 bundle、Babylon 渲染循环不息、标注投影 O(n²) 布局抖动）、<strong>测试</strong>（无单元测试、集成测试依赖 CSS 类与文案）、<strong>安全</strong>（esbuild 存在 RCE 漏洞、远程草稿内容未做 HTML 转义、转换器命令路径可被任意指定）。</p>
+<p>亮点包括：本地优先的知识生成默认策略、Babylon 网络请求守护、GitHub Actions 产物签名与 release 校验、丰富的 i18n、较完整的预览路由文档与决策记录。</p>
+<p>总评：<strong>Overall 5.2 / B</strong> — 项目在功能演进上积极进取，但发布工程、稳定性、性能与测试债务已积累到需要刻意投资而非临时修补的程度。</p>
+<h3 id="score-dashboard">Score Dashboard</h3>
+<pre><code class="language-">Security        ██████░░░░  6.0  B   本地优先与网络守卫较好，但 esbuild 漏洞、远程草稿注入、任意转换器命令削弱信任
+Stability       █████░░░░░  5.5  B   有序列化锁与单适配器超时，但 store 未 flush、错误吞没、缺 WebGL 恢复
+Performance     █████░░░░░  5.0  B   Three.js 有帧预算与视口暂停，但双运行时 bundle、Babylon 不息循环、O(n²) 投影
+Testing         ████░░░░░░  4.5  C   无单元测试；集成脚本覆盖广但易碎，转换管道 uncovered
+Maintainability █████░░░░░  5.5  B   分层清晰，但神类文件、双端重复、混合换行、store 暴露 raw setState
+Design          █████░░░░░  5.5  B   渲染器抽象良好，但 SRP 违反、重复、大量 as 与非空断言
+Release         ████░░░░░░  4.5  C   CI 带产物签名，但 package-lock 版本阻塞、dirty bundle、changelog 缺 0.5.3/0.5.5
+─────────────────────────────────────
+Overall         █████░░░░░  5.2  B</code></pre>
+<p>每个维度按 0.0–10.0 评分，<strong>越高越好</strong>。评分基于整体工程判断，非机械扣分。详见 <code>rubrics/scoring.md</code>。</p>
+<h3 id="finding-statistics">Finding Statistics</h3>
+<table><thead><tr><th>Severity</th><th>Count</th><th>Confirmed</th><th>Suspected</th></tr></thead><tbody><tr><td>Critical</td><td>0</td><td>0</td><td>0</td></tr><tr><td>High</td><td>10</td><td>8</td><td>0</td></tr><tr><td>Medium</td><td>36</td><td>27</td><td>0</td></tr><tr><td>Low</td><td>16</td><td>12</td><td>0</td></tr><tr><td>Info</td><td>1</td><td>0</td><td>0</td></tr><tr><td><strong>Total</strong></td><td><strong>63</strong></td><td><strong>47</strong></td><td><strong>0</strong></td></tr></tbody></table>
+<hr>
+<h2 id="2-project-map">2. Project Map</h2>
+<h3 id="21-">2.1 组件与职责</h3>
+<pre><code class="language-text">src/
+├── main.ts                    # 插件生命周期、命令注册、视图/处理器注册
+├── settings.ts                # 设置页 UI 与诊断控件
+├── domain/                    # 共享类型与常量
+├── store/                     # createStore 原语 + Obsidian loadData/saveData 桥接
+├── io/                        # 格式注册、模型管线、转换器、缓存
+├── render/                    # 渲染器抽象 + Three.js/Babylon.js 实现
+├── view/                      # direct-view、inline、workbench
+├── i18n/                      # 中英双语
+└── utils/                     # 路径、日志、DOM、设备、note-reader 等</code></pre>
+<h3 id="22-">2.2 运行时入口与初始化顺序</h3>
+<ol>
+<li><code>main.ts:onload()</code> 加载 <code>PluginStore</code>、创建转换缓存、注册命令/文件视图/代码块处理器/实时预览扩展、安装 heading pin observer。</li>
+<li>用户触发模型预览时，<code>src/io/model-pipeline.ts</code> 根据扩展名与格式能力决定 direct/convert 策略。</li>
+<li><code>src/render/preview/routing.ts</code> 选择 Three.js 或 Babylon.js 路径；<code>factory.ts</code> 动态导入对应渲染器。</li>
+<li>渲染器实现 <code>WorkbenchPreview</code> / <code>ModelPreview</code> 接口，通过 <code>AnnotationManager</code> 叠加标注。</li>
+<li>知识笔记生成在 <code>src/view/workbench/knowledge-note.ts</code> 中完成，写入报告、sidecar、索引、零件草稿与预览图。</li>
+</ol>
+<h3 id="23-">2.3 状态所有权</h3>
+<ul>
+<li><code>PluginStore</code> 持有 <code>settings</code>、<code>modelAssetProfiles</code>、<code>convertedAssetRecords</code>、<code>lastKnowledgeGeneration</code> 等持久化状态。</li>
+<li>但视图层（<code>direct-view.ts</code>、<code>helper-buttons.ts</code>）直接调用 <code>ps.store.setState()</code> 修改 profiles，绕过 store 动作。</li>
+<li>渲染器内部状态（相机、选中零件、测量线段、wireframe）由各自 scene 类持有，Three/Babylon 双端重复。</li>
+</ul>
+<h3 id="24-">2.4 持久化</h3>
+<ul>
+<li>Obsidian <code>loadData/saveData</code> 通过 <code>data.json</code> 保存；<code>PluginStore</code> 用 500 ms debounce 自动保存。</li>
+<li>缺少 schema version；卸载时不会 flush pending save。</li>
+<li>转换缓存记录 <code>outputPath</code>，未限制在 Vault 内。</li>
+</ul>
+<h3 id="25-">2.5 外部接口</h3>
+<ul>
+<li>本地文件系统：读取 Vault 模型、写入报告/图片/缓存。</li>
+<li>外部 CLI：FreeCAD、Python + cadquery/trimesh、obj2gltf、FBX2glTF。</li>
+<li>网络：可选远程草稿 <code>POST /draft-note</code>；Babylon 网络守护拦截远程脚本/资源请求。</li>
+</ul>
+<h3 id="security">2.6 安全边界</h3>
+<ul>
+<li>知识生成默认本地-only；远程草稿需显式配置。</li>
+<li>转换器命令由用户设置/环境变量决定，当前未校验。</li>
+<li>模型派生字符串直接插入生成的 Markdown，仅做了部分转义。</li>
+</ul>
+<h3 id="27-">2.7 高风险区域</h3>
+<ul>
+<li><code>src/render/three/scene.ts</code>（2,099 行）与 <code>src/render/babylon/scene.ts</code>（1,661 行）：神类文件，双端重复。</li>
+<li><code>src/view/workbench/knowledge-note.ts</code>（1,365 行）：文件 I/O 与状态变更交织。</li>
+<li><code>src/view/direct-view.ts</code>（694 行）与 <code>src/settings.ts</code>（651 行）：大文件、多职责。</li>
+<li>发布工程：<code>package-lock.json</code> 与 manifest 版本不一致，<code>main.js</code> dirty/锁定。</li>
+</ul>
+<h3 id="coverage">Coverage Matrix</h3>
+<table><thead><tr><th>Dimension</th><th>Coverage</th><th>Evidence inspected</th><th>Exclusions / limits</th></tr></thead><tbody><tr><td>Architecture</td><td>High</td><td><code>src/main.ts</code>, <code>src/settings.ts</code>, <code>src/domain/<em></code>, <code>src/store/</em></code>, <code>src/io/model-pipeline.ts</code>, <code>src/io/formats/<em></code>, <code>src/render/preview/</em></code>, <code>docs/development-handoff.md</code>, <code>docs/preview-routing-matrix.md</code></td><td>未做运行时架构验证</td></tr><tr><td>Security</td><td>High</td><td><code>src/render/babylon/network-guard.ts</code>, <code>src/view/workbench/remote-draft.ts</code>, <code>src/io/conversion/*</code>, <code>src/diagnostics/report.ts</code>, <code>src/main.ts</code>, <code>src/settings.ts</code>, <code>SECURITY.md</code>, <code>package.json</code>, <code>package-lock.json</code>, <code>.github/workflows/release.yml</code>, <code>npm audit</code>, <code>eslint</code></td><td>未在真实 Obsidian 中做动态渗透测试</td></tr><tr><td>Stability</td><td>High</td><td><code>src/store/plugin-store.ts</code>, <code>src/main.ts</code>, <code>src/io/conversion/manager.ts</code>, <code>src/io/conversion/conversion-service.ts</code>, <code>src/render/three/scene.ts</code>, <code>src/render/babylon/scene.ts</code>, <code>src/render/preview/annotations.ts</code>, <code>src/view/direct-view.ts</code>, <code>src/utils/log.ts</code>, <code>src/diagnostics/report.ts</code></td><td>未在 iOS/Android 真机测试 WebGL 上下文丢失</td></tr><tr><td>Performance</td><td>High</td><td><code>src/render/three/scene.ts</code>, <code>src/render/babylon/scene.ts</code>, <code>src/render/babylon/grid.ts</code>, <code>src/render/preview/annotations.ts</code>, <code>src/view/inline/helper-buttons.ts</code>, <code>src/view/inline/code-block.ts</code>, <code>src/view/direct-view.ts</code>, <code>package.json</code>, <code>esbuild.config.mjs</code>, <code>main.js</code></td><td>未使用性能分析器采样真实用户场景</td></tr><tr><td>Testing</td><td>High</td><td><code>scripts/verify-*.mjs</code>, <code>package.json</code>, <code>eslint.config.mjs</code>, <code>npm run typecheck</code>, <code>npm run build</code>, <code>npm audit</code></td><td>未执行完整的 <code>verify:obsidian</code>（需要 macOS + Obsidian）</td></tr><tr><td>Maintainability</td><td>High</td><td>全部 <code>src/**/*.ts</code> 文件大小、导入方向、重复模式、TODO 标记、换行符</td><td>未逐行阅读最大文件的全部实现</td></tr><tr><td>Design</td><td>High</td><td>渲染器抽象、scene 类职责、类型断言、非空断言、原则交叉检查</td><td>同上</td></tr><tr><td>Release</td><td>High</td><td><code>.github/workflows/release.yml</code>, <code>scripts/verify-release-assets.mjs</code>, <code>manifest.json</code>, <code>package.json</code>, <code>versions.json</code>, <code>CHANGELOG.md</code>, <code>main.js</code> git 状态</td><td>未触发真实 release workflow</td></tr><tr><td>Documentation</td><td>High</td><td><code>README.md</code>, <code>README.zh-CN.md</code>, <code>CHANGELOG.md</code>, <code>docs/*.md</code>, <code>FORMAT_SUPPORT_DESIGN.md</code>, <code>AGENTS.md</code>, <code>SECURITY.md</code></td><td>未验证所有安装步骤</td></tr><tr><td>Configuration</td><td>High</td><td><code>src/settings.ts</code>, <code>src/domain/constants.ts</code>, <code>src/store/plugin-store.ts</code></td><td>未在全部平台测试配置默认值</td></tr><tr><td>Observability</td><td>Medium</td><td><code>src/utils/log.ts</code>, <code>src/diagnostics/report.ts</code></td><td>未在运行时检查日志输出与指标持久化</td></tr><tr><td>Data Integrity</td><td>High</td><td><code>src/store/plugin-store.ts</code>, <code>src/io/cache/converted-asset-cache.ts</code>, <code>src/io/conversion/conversion-service.ts</code>, <code>src/view/workbench/knowledge-note.ts</code></td><td>未做异常断电/崩溃测试</td></tr><tr><td>Privacy</td><td>High</td><td><code>src/view/workbench/remote-draft.ts</code>, <code>src/diagnostics/report.ts</code>, <code>src/view/workbench/analysis-result.ts</code>, <code>README.md</code> 隐私声明</td><td>未审计远程服务端行为</td></tr><tr><td>Accessibility</td><td>Medium</td><td><code>src/settings.ts</code>, <code>src/view/inline/helper-buttons.ts</code>, <code>src/render/preview/annotations.ts</code></td><td>未使用屏幕阅读器或 axe-core 运行时测试</td></tr><tr><td>Supply Chain</td><td>High</td><td><code>package.json</code>, <code>package-lock.json</code>, <code>.github/workflows/release.yml</code>, <code>npm audit</code>, <code>esbuild.config.mjs</code></td><td>未做全量传递依赖审计</td></tr><tr><td>Cost</td><td>Medium</td><td><code>src/view/workbench/remote-draft.ts</code>, <code>package.json</code></td><td>未测量远程草稿实际 token/API 花费</td></tr><tr><td>AI Safety</td><td>High</td><td><code>src/view/workbench/remote-draft.ts</code>, <code>src/view/workbench/analysis-result.ts</code>, <code>src/view/workbench/knowledge-note.ts</code></td><td>未在真实 LLM 服务上做提示注入评估</td></tr><tr><td>Fallback</td><td>High</td><td><code>src/main.ts</code>, <code>src/io/conversion/<em></code>, <code>src/render/babylon/scene.ts</code>, <code>src/view/</em></code> 的 catch 分支</td><td>未穷尽所有错误路径</td></tr><tr><td>Testing Authenticity</td><td>High</td><td><code>scripts/verify-*.mjs</code> 断言内容</td><td>未在 CI 外多次运行验证稳定性</td></tr><tr><td>Type Safety</td><td>High</td><td><code>src/**/*.ts</code> 中的 <code>any</code>、<code>as</code>、<code>!</code>、返回类型</td><td>未启用 <code>no-non-null-assertion</code> 跑全量检查</td></tr><tr><td>Frontend State</td><td>High</td><td><code>src/render/three/scene.ts</code>, <code>src/render/babylon/scene.ts</code>, <code>src/render/preview/annotations.ts</code>, <code>src/view/direct-view.ts</code>, <code>src/view/inline/helper-buttons.ts</code></td><td>未使用 React DevTools（项目未用 React）</td></tr><tr><td>Backend API</td><td>Not assessed</td><td>N/A</td><td>本项目为 Obsidian 插件，无服务端 API</td></tr><tr><td>Dependency Weight</td><td>High</td><td><code>package.json</code>, <code>src/**/*.ts</code> import 模式，<code>main.js</code> 大小</td><td>未做 bundle 分析树状图</td></tr><tr><td>Code Consistency</td><td>High</td><td>命名、import 组织、错误处理模式、换行符</td><td>未运行 formatter 全量检查</td></tr><tr><td>Comment Coverage</td><td>Medium</td><td><code>src/render/preview/types.ts</code>, <code>src/render/preview/component-identity.ts</code>, <code>src/render/three/scene.ts</code>, <code>src/render/babylon/scene.ts</code></td><td>未统计注释行比例</td></tr></tbody></table>
+<hr>
+<h2 id="3-top-risks">3. Top Risks</h2>
+<ol>
+<li><strong>package-lock.json 版本 0.4.3 与 manifest 0.5.5 不一致，阻塞 release 校验</strong>（Release，High）</li>
+<li><strong>PluginStore 在 onunload 时不 flush 待保存状态，可能导致标注/零件注册/最近生成元数据丢失</strong>（Stability，High）</li>
+<li><strong>esbuild 存在 GHSA-gv7w-rqvm-qjhr 漏洞，CI/build 环境可被 compromised registry 远程代码执行</strong>（Security/Supply Chain，High）</li>
+<li><strong>远程草稿返回内容未经 HTML/Markdown 转义即写入 Vault 笔记</strong>（Security/AI Safety，High）</li>
+<li><strong>Babylon 预览渲染循环不息，无可见性/脏检查，持续消耗 GPU/电池</strong>（Performance，High）</li>
+<li><strong>生产产物同时打包 Three.js 与 Babylon.js 两个完整运行时，main.js 约 3.8 MB</strong>（Performance/Release，High）</li>
+<li><strong>转换器命令路径可被任意指定，可能执行恶意程序</strong>（Security/Configuration，Medium）</li>
+<li><strong>main.js 被纳入版本控制且当前 dirty/锁定，本地构建失败</strong>（Release，Medium）</li>
+<li><strong>无单元测试；集成测试断言 CSS 类与文案，易碎</strong>（Testing，Medium）</li>
+<li><strong>Three/Babylon scene 文件为 2,099 / 1,661 行神类，重复实现测量/聚焦/爆炸/拆卸</strong>（Maintainability/Design，Medium）</li>
+<li><strong>标注投影存在 O(n²) DOM layout thrashing</strong>（Performance，High）</li>
+<li><strong>CHANGELOG 缺失 0.5.3 / 0.5.5 条目，development-handoff/README 版本示例陈旧</strong>（Documentation/Release，Medium）</li>
+</ol>
+<hr>
+<h2 id="4-detailed-findings">4. Detailed Findings</h2>
+<h3 id="release">4.1 Release</h3>
+<h3 id="finding-package-lockjson-manifestpackagejson-release-">Finding: package-lock.json 版本与 manifest/package.json 不一致，阻塞 release 校验</h3>
+<ul>
+<li>ID: REL-1</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Release</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>package-lock.json</code>, <code>package.json</code>, <code>manifest.json</code>, <code>scripts/verify-release-assets.mjs:26-27</code></li>
+<li>Evidence: <code>node -p "require('./package-lock.json').version"</code> 输出 <code>0.4.3</code>；<code>package.json</code> 与 <code>manifest.json</code> 为 <code>0.5.5</code>。</li>
+<li>Problem: 三个发布关键文件版本号不一致，<code>verify-release-assets.mjs</code> 会在 release 阶段直接失败。</li>
+<li>Why it matters: 这是发布流程的门禁检查，不一致意味着无法通过 CI 自动发布。</li>
+<li>Realistic failure scenario: 维护者 tag <code>0.5.5</code> 并推送；GitHub Actions 在 <code>verify:release</code> 步骤退出码非零，release 产物无法上传。</li>
+<li>Minimal fix: 运行 <code>npm version 0.5.5 --no-git-tag-version</code> 或手动同步 <code>package-lock.json</code> 的两个 version 字段。</li>
+<li>Better long-term fix: 在 release workflow 中加入 <code>npm run verify:release</code> 作为前置步骤；在 <code>preversion</code>/<code>postversion</code> 脚本中自动对齐。</li>
+<li>Regression test suggestion: 本地运行 <code>npm run verify:release</code> 成功；CI 在 release 前执行相同脚本。</li>
+<li>Estimated effort: 5 minutes</li>
+</ul>
+<h3 id="finding-mainjs-dirty">Finding: main.js 被纳入版本控制且当前 dirty/锁定，本地构建失败</h3>
+<ul>
+<li>ID: REL-2</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Release</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>main.js</code>, <code>esbuild.config.mjs</code>, 构建流程</li>
+<li>Evidence: <code>git status</code> 显示 <code>M main.js</code>；<code>npm run build</code> 报错 <code>UNKNOWN: unknown error, open '...\\main.js'</code>；<code>git diff --stat main.js</code> 显示 439 insertions / 439 deletions。</li>
+<li>Problem: 生成的 bundle 被提交到 git 且当前被其他进程（可能是正在运行的 Obsidian 实例）锁定，导致无法覆盖。</li>
+<li>Why it matters: 开发者无法生成干净的 release bundle；CI 可能使用陈旧或未提交的 bundle。</li>
+<li>Realistic failure scenario: 发布前 <code>npm run build</code> 失败；维护者被迫手动复制 bundle 或关闭 Obsidian 后再构建。</li>
+<li>Minimal fix: 关闭持有 main.js 句柄的进程；提交构建后的正确版本；或在 CI 中构建并在发布时 upload。</li>
+<li>Better long-term fix: 决定是否保留 main.js 在 git 中（Obsidian 社区常见做法）——若保留，则每次 release commit 必须包含重新构建的 bundle；若移除，则 <code>.gitignore</code> 并在 CI 构建产物中发布。</li>
+<li>Regression test suggestion: 在干净 checkout 中运行 <code>npm run build</code> 成功。</li>
+<li>Estimated effort: 15分钟</li>
+</ul>
+<h3 id="finding-changelog-053-055-">Finding: CHANGELOG 缺失 0.5.3 / 0.5.5 条目</h3>
+<ul>
+<li>ID: REL-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Release / Documentation</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>CHANGELOG.md</code>, <code>versions.json</code></li>
+<li>Evidence: <code>CHANGELOG.md</code> 末尾为 0.5.1；<code>versions.json</code> 已包含 <code>0.5.3</code>、<code>0.5.5</code>。</li>
+<li>Problem: 用户与审阅者无法从 changelog 获知近两版变更。</li>
+<li>Why it matters: 这直接影响 用户与审阅者无法从 changelog 获知近两版变更。</li>
+<li>Realistic failure scenario: 用户报告 0.5.5 的 bug，维护者需反查 git 才能确认变更范围；release note 不完整。</li>
+<li>Minimal fix: 补充 0.5.3 与 0.5.5 条目，概述自 0.5.1 以来的主要 commit 主题。</li>
+<li>Better long-term fix: 使用 <code>conventional-changelog</code> 或 <code>changesets</code> 自动生成 changelog；在 CI 中校验 manifest 版本必须在 CHANGELOG 中存在。</li>
+<li>Regression test suggestion: CI 校验 <code>manifest.json</code> version 出现在 CHANGELOG.md 中。</li>
+<li>Estimated effort: 20分钟</li>
+</ul>
+<h3 id="documentation">Finding: 文档中的版本示例陈旧</h3>
+<ul>
+<li>ID: REL-4</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Release / Documentation</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>docs/development-handoff.md:11,219,223</code>, <code>README.md:698</code>, <code>README.zh-CN.md:709</code>, <code>.github/workflows/release.yml:10</code></li>
+<li>Evidence: <code>development-handoff.md</code> 声称当前版本为 0.4.0；README release 示例使用 0.4.0。</li>
+<li>Problem: 新贡献者按文档执行会得到错误版本。</li>
+<li>Why it matters: 这直接影响 新贡献者按文档执行会得到错误版本。</li>
+<li>Realistic failure scenario: 贡献者阅读 README 后使用 <code>npm run verify:obsidian -- --release-tag 0.4.0</code>，下载旧产物验证，浪费时间。</li>
+<li>Minimal fix: 全文替换硬编码版本为当前 <code>0.5.5</code> 或占位符 <code>&lt;version&gt;</code>。</li>
+<li>Better long-term fix: 在文档构建/校验脚本中替换占位符为 manifest 版本。</li>
+<li>Regression test suggestion: 文档 lint 发现硬编码版本号与 manifest 不一致即失败。</li>
+<li>Estimated effort: 15分钟</li>
+</ul>
+<h3 id="finding-release-workflow-tag-">Finding: release workflow 的 tag 触发模式过于宽松</h3>
+<ul>
+<li>ID: REL-5</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Release / Supply Chain</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>.github/workflows/release.yml:5-6</code></li>
+<li>Evidence: <code>on.push.tags: '<em>.</em>.*'</code> 匹配任意两个点的 tag。</li>
+<li>Problem: 非预期 tag 或恶意 tag 可触发 release。</li>
+<li>Why it matters: 这直接影响 非预期 tag 或恶意 tag 可触发 release。</li>
+<li>Realistic failure scenario: 协作者误推 <code>foo.bar.baz</code> 或预发布 tag 触发 workflow。</li>
+<li>Minimal fix: 使用更严格的 glob/regex，并在 job 中校验 tag 与 manifest 版本一致。</li>
+<li>Better long-term fix: 长期：使用更严格的 glob/regex，并在 job 中校验 tag 与 manifest 版本一致。</li>
+<li>Regression test suggestion: 推送无效 tag，断言 workflow 跳过或失败。</li>
+<li>Estimated effort: 15分钟</li>
+</ul>
+<h3 id="finding-release-workflow-tag-shell">Finding: release workflow 中 tag 输入直接插值到 shell</h3>
+<ul>
+<li>ID: REL-6</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Security / Release</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>.github/workflows/release.yml:66-84</code></li>
+<li>Evidence: <code>TAG="${{ inputs.tag }}"</code> 直接插值。</li>
+<li>Problem: tag 中 shell 元字符可能执行命令。</li>
+<li>Why it matters: 这直接影响 tag 中 shell 元字符可能执行命令。</li>
+<li>Realistic failure scenario: 恶意/误操作 tag 如 <code>0.5.5; rm -rf /</code> 触发 shell 注入。</li>
+<li>Minimal fix: 通过 <code>env:</code> 传入 input，脚本中引用 <code>$TAG</code>。</li>
+<li>Better long-term fix: 长期：通过 <code>env:</code> 传入 input，脚本中引用 <code>$TAG</code>。</li>
+<li>Regression test suggestion: actionlint / CI lint 通过。</li>
+<li>Estimated effort: 10分钟</li>
+</ul>
+<hr>
+<h3 id="stability">4.2 Stability</h3>
+<h3 id="finding-pluginstore-onunload-flush-">Finding: PluginStore 在 onunload 时不 flush 待保存状态</h3>
+<ul>
+<li>ID: STB-1</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Stability / Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/store/plugin-store.ts:30-38,76-89</code>, <code>src/main.ts:113-116</code></li>
+<li>Evidence: <code>scheduleSave()</code> 使用 500 ms debounce；<code>dispose()</code> 仅 <code>clearTimeout</code> 不调用 <code>persist()</code>；<code>onunload()</code> 只调用 <code>ps.dispose()</code>。</li>
+<li>Problem: 卸载/重载插件前 500 ms 内的状态变更（标注、零件注册、最近生成元数据）可能丢失。</li>
+<li>Why it matters: 这直接影响 卸载/重载插件前 500 ms 内的状态变更（标注、零件注册、最近生成元数据）可能丢失。</li>
+<li>Realistic failure scenario: 用户添加一个 pin 或生成报告后立即重载插件，变更消失。</li>
+<li>Minimal fix: 在 <code>dispose()</code> 中若 <code>saveTimer</code> 活跃则同步或 await <code>persist()</code>；让 <code>onunload()</code> 能等待完成。</li>
+<li>Better long-term fix: 引入 <code>beforeunload</code> 风格的 awaitable dispose；暴露 <code>flush()</code> API 并在所有卸载路径调用。</li>
+<li>Regression test suggestion: <code>verify:settings</code> 中修改状态、触发 unload、重载后断言持久化。</li>
+<li>Estimated effort: 30分钟</li>
+</ul>
+<h3 id="finding-">Finding: 多处错误被静默吞没</h3>
+<ul>
+<li>ID: STB-2</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Stability / Fallback / Security</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/main.ts:482</code>, <code>src/view/workbench/knowledge-note.ts:769</code>, <code>src/view/inline/helper-buttons.ts:517</code>, <code>src/utils/note-reader.ts:99</code>, <code>src/utils/node-shim.ts:46</code>, <code>src/io/conversion/conversion-service.ts:48</code>, <code>src/render/babylon/scene.ts:118-140</code></li>
+<li>Evidence: 多处 <code>.catch(() =&gt; {})</code>、<code>catch { return null; }</code>、<code>try { ... } catch { return null; }</code>。</li>
+<li>Problem: 真实失败被隐藏，调试和事故响应困难，安全相关失败（如 data.json 被篡改）也无记录。</li>
+<li>Why it matters: 这直接影响 真实失败被隐藏，调试和事故响应困难，安全相关失败（如 data.json 被篡改）也无记录。</li>
+<li>Realistic failure scenario: GLTF metadata 解析失败静默返回 null，零件身份提取无警告；用户看到“没有零件”却不知是文件损坏。</li>
+<li>Minimal fix: 使用项目 logger 至少记录 warn/error；将异常加入 <code>resourceWarnings</code> 或 <code>analysis.warnings</code>。</li>
+<li>Better long-term fix: 引入统一错误处理策略：用户可见错误用 Notice，诊断用 warn，致命用 error；每个 catch 必须说明为何吞掉。</li>
+<li>Regression test suggestion: 注入失败并断言日志/警告出现。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-webgl-">Finding: 缺少 WebGL 上下文丢失 / 恢复处理</h3>
+<ul>
+<li>ID: STB-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Stability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/scene.ts:358-408</code>, <code>src/render/babylon/scene.ts:340-367</code>, <code>src/render/babylon/grid.ts:79-91</code></li>
+<li>Evidence: WebGL 上下文创建时设置 <code>preserveDrawingBuffer: true</code>，无 <code>webglcontextlost</code>/<code>webglcontextrestored</code> 监听。</li>
+<li>Problem: GPU 压力或移动端休眠可能导致画布变白且无法恢复。</li>
+<li>Why it matters: 这直接影响 GPU 压力或移动端休眠可能导致画布变白且无法恢复。</li>
+<li>Realistic failure scenario: 用户在 iOS 上切换应用后返回，预览画布保持空白，只能重新打开文件。</li>
+<li>Minimal fix: 添加上下文监听：丢失时停止循环，恢复时重新初始化；同时提供手动 reload 动作。</li>
+<li>Better long-term fix: 封装渲染上下文恢复策略，所有 renderer 共享统一生命周期。</li>
+<li>Regression test suggestion: Playwright 模拟上下文丢失，验证恢复或优雅提示。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-">Finding: 转换管道缺少外层超时</h3>
+<ul>
+<li>ID: STB-4</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Stability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/io/conversion/manager.ts:41-65</code>, <code>src/io/conversion/conversion-service.ts:116-120</code></li>
+<li>Evidence: 各 adapter 有 <code>DEFAULT_TIMEOUT_MS</code>，但 <code>ConversionManager.convert()</code> 与 <code>convertForPreview()</code> 没有外层超时。</li>
+<li>Problem: 命令发现或卡住的 adapter 会无限期挂起预览流程。</li>
+<li>Why it matters: 这直接影响 命令发现或卡住的 adapter 会无限期挂起预览流程。</li>
+<li>Realistic failure scenario: <code>freecadcmd</code> 路径存在但二进制挂起，UI loading 遮罩一直显示。</li>
+<li>Minimal fix: 用 <code>Promise.race</code> 包裹 <code>conversionManager.convert()</code>，配置可调整的外层超时。</li>
+<li>Better long-term fix: 统一的 cancellation token + abort controller 贯穿 conversion service。</li>
+<li>Regression test suggestion: mock 挂起 converter，断言超时警告/取消。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-">Finding: 命令回调中的异步错误未处理</h3>
+<ul>
+<li>ID: STB-5</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Stability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/main.ts:62-84,377-385</code></li>
+<li>Evidence: <code>() =&gt; void this.openKnowledgeIndex()</code> 等 fire-and-forget 模式。</li>
+<li>Problem: 异步错误变成未处理 promise rejection。</li>
+<li>Why it matters: 这直接影响 异步错误变成未处理 promise rejection。</li>
+<li>Realistic failure scenario: <code>openKnowledgeIndex</code> 因 Vault 权限失败，用户看不到任何反馈，错误只在 DevTools。</li>
+<li>Minimal fix: 包装异步回调，捕获并以 Notice/Toast 展示。</li>
+<li>Better long-term fix: 统一的命令错误边界。</li>
+<li>Regression test suggestion: 验证命令错误能 surfaced 为 Notice。</li>
+<li>Estimated effort: 1小时</li>
+</ul>
+<h3 id="finding-">Finding: 部分模块缺少结构化加载错误反馈</h3>
+<ul>
+<li>ID: STB-6</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Stability / Fallback</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/loaders/register.ts:21-24</code></li>
+<li>Evidence: loader 注册失败时 catch 仅 <code>console.error</code>。</li>
+<li>Problem: 用户无法知道 Babylon loader 初始化失败，后续加载会报错。</li>
+<li>Why it matters: 这直接影响 用户无法知道 Babylon loader 初始化失败，后续加载会报错。</li>
+<li>Realistic failure scenario: 在正常使用中，用户无法知道 Babylon loader 初始化失败，后续加载会报错。 导致功能异常。</li>
+<li>Minimal fix: 将 loader 注册错误加入 <code>resourceWarnings</code> 并展示。</li>
+<li>Better long-term fix: 长期：将 loader 注册错误加入 <code>resourceWarnings</code> 并展示。</li>
+<li>Regression test suggestion: 破坏 loader 文件路径，验证 UI 提示。</li>
+<li>Estimated effort: 1小时</li>
+</ul>
+<hr>
+<h3 id="security">4.3 Security</h3>
+<h3 id="finding-esbuild-ghsa-gv7w-rqvm-qjhr-rce-">Finding: esbuild 存在 GHSA-gv7w-rqvm-qjhr RCE 漏洞</h3>
+<ul>
+<li>ID: SEC-1</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Security / Supply Chain</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>package.json:31</code>, <code>package-lock.json</code></li>
+<li>Evidence: <code>npm audit</code> 报告 <code>esbuild 0.17.0 - 0.28.0</code> 受 GHSA-gv7w-rqvm-qjhr 影响。</li>
+<li>Problem: 若 CI/build 环境的 registry 被入侵，可能下载并执行恶意 esbuild 二进制。</li>
+<li>Why it matters: 这直接影响 若 CI/build 环境的 registry 被入侵，可能下载并执行恶意 esbuild 二进制。</li>
+<li>Realistic failure scenario: 攻击者污染 registry；CI 执行 <code>npm ci</code> 时触发恶意代码。</li>
+<li>Minimal fix: 升级 esbuild 到 &gt;=0.28.1，重新生成 lockfile，再次 <code>npm audit</code>。</li>
+<li>Better long-term fix: CI 中加入 <code>npm audit --audit-level=low</code>；锁定次要版本范围。</li>
+<li>Regression test suggestion: CI 中 <code>npm audit</code> 无 high/critical 漏洞。</li>
+<li>Estimated effort: 30分钟</li>
+</ul>
+<h3 id="finding-htmlmarkdown-vault">Finding: 远程草稿返回内容未做 HTML/Markdown 转义即写入 Vault</h3>
+<ul>
+<li>ID: SEC-2</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Security / AI Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/workbench/remote-draft.ts:125-157</code>, <code>src/view/workbench/knowledge-note.ts:441-471</code></li>
+<li>Evidence: <code>normalizeRemoteDraftResult</code> 仅做类型检查与字符串 trim；<code>buildRemoteDraftSection</code> 直接将 title/summary/body/tags/warnings 拼入 Markdown。</li>
+<li>Problem: 被攻陷的 draft endpoint 可向用户 Vault 注入任意 Markdown/HTML。</li>
+<li>Why it matters: 这直接影响 被攻陷的 draft endpoint 可向用户 Vault 注入任意 Markdown/HTML。</li>
+<li>Realistic failure scenario: Endpoint 返回 <code>[](javascript:alert(1))</code> 或 Obsidian iframe 语法，笔记渲染时执行。</li>
+<li>Minimal fix: 对远程返回字段做 HTML 实体转义与 Markdown 表格分隔符转义；限制字段长度；校验 tags。</li>
+<li>Better long-term fix: 对远程内容使用 Markdown AST 或 Obsidian API 安全插入；将远程输出视为不可信内容沙箱。</li>
+<li>Regression test suggestion: <code>verify:remote-draft</code> 使用恶意 payload，断言输出被转义。</li>
+<li>Estimated effort: 3小时</li>
+</ul>
+<h3 id="finding-html-">Finding: 模型派生元数据注入笔记时缺少 HTML 转义</h3>
+<ul>
+<li>ID: SEC-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Security</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/workbench/knowledge-note.ts:542,575,600,746</code>；<code>src/render/preview/report.ts:54</code></li>
+<li>Evidence: <code>escapeTableCell</code> 只转义 <code>|</code> 与换行；零件/材质/网格/标注字符串直接插入 Markdown。</li>
+<li>Problem: 恶意模型可在名称中携带 HTML/JS，最终进入生成的笔记。</li>
+<li>Why it matters: 这直接影响 恶意模型可在名称中携带 HTML/JS，最终进入生成的笔记。</li>
+<li>Realistic failure scenario: GLB 零件名为 <code>&lt;img src=x onerror=alert(1)&gt;</code>，报告渲染时执行。</li>
+<li>Minimal fix: 所有模型派生字符串在插入 Markdown 前做 HTML 转义。</li>
+<li>Better long-term fix: 统一的数据清洗层，区分可信（模板）与不可信（模型）输入。</li>
+<li>Regression test suggestion: 渲染含恶意名称的模型，验证输出已清洗。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-">Finding: 转换器命令设置允许任意可执行文件</h3>
+<ul>
+<li>ID: SEC-4</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Security / Configuration</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/io/conversion/command-discovery.ts:296-306,681-689</code>；各 converter adapter；<code>src/settings.ts:442-505</code></li>
+<li>Evidence: <code>parseCommandValue</code> 将设置/环境值直接传给 <code>execFile</code>，无校验或白名单。</li>
+<li>Problem: 被篡改的 <code>data.json</code> 或环境可让插件执行任意程序。</li>
+<li>Why it matters: 这直接影响 被篡改的 <code>data.json</code> 或环境可让插件执行任意程序。</li>
+<li>Realistic failure scenario: 攻击者设置 <code>freecadCommand</code> 为恶意软件路径，插件在转换时启动它。</li>
+<li>Minimal fix: 校验命令为存在的文件（非目录），优先使用 PATH 解析名，将解析结果暴露到 diagnostics，对非预期路径警告。</li>
+<li>Better long-term fix: 提供预设命令 discover 路径；用户自定义路径需显式确认；使用 allowlist 校验哈希。</li>
+<li>Regression test suggestion: 设置非法命令断言 diagnostics 警告；设置为目录断言拒绝。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-">Finding: 持久化转换缓存可引用任意文件系统路径</h3>
+<ul>
+<li>ID: SEC-5</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Security / Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/io/cache/converted-asset-cache.ts:19-31</code>, <code>src/io/conversion/conversion-service.ts:76-86</code>, <code>src/utils/resolve-path.ts:135-139</code></li>
+<li>Evidence: <code>ConvertedAssetRecord.outputPath</code> 直接存入 state 并被使用，无 Vault 边界检查。</li>
+<li>Problem: 被篡改的 <code>data.json</code> 可导致插件读取任意本地文件。</li>
+<li>Why it matters: 这直接影响 被篡改的 <code>data.json</code> 可导致插件读取任意本地文件。</li>
+<li>Realistic failure scenario: <code>outputPath</code> 被设为 <code>/etc/passwd</code>，插件尝试读取并作为 GLB 使用。</li>
+<li>Minimal fix: 校验缓存 <code>outputPath</code> 位于 Vault 或预期输出目录；拒绝绝对外部路径。</li>
+<li>Better long-term fix: 长期：校验缓存 <code>outputPath</code> 位于 Vault 或预期输出目录；拒绝绝对外部路径。</li>
+<li>Regression test suggestion: 注入 Vault 外路径，断言拒绝/警告。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-endpoint-url">Finding: 远程草稿 endpoint 接受私有/内部 URL</h3>
+<ul>
+<li>ID: SEC-6</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Security / AI Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/workbench/remote-draft.ts:21-39</code></li>
+<li>Evidence: <code>normalizeBaseUrl</code> 仅校验协议，未阻止私有 IP/localhost。</li>
+<li>Problem: 恶意或输错的 URL 可利用 Obsidian 应用的网络权限访问内部服务。</li>
+<li>Why it matters: 这直接影响 恶意或输错的 URL 可利用 Obsidian 应用的网络权限访问内部服务。</li>
+<li>Realistic failure scenario: 配置 <code>http://localhost:8787</code> 或 <code>http://169.254.1.1</code>，插件向内部服务发送模型摘要。</li>
+<li>Minimal fix: 增加可选 host/IP 白名单，对私有/本地地址给出警告。</li>
+<li>Better long-term fix: 长期：增加可选 host/IP 白名单，对私有/本地地址给出警告。</li>
+<li>Regression test suggestion: 配置 <code>localhost</code> 断言警告；配置公网域名允许。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-ai-">Finding: AI 提示注入风险</h3>
+<ul>
+<li>ID: SEC-7</li>
+<li>Severity: Medium</li>
+<li>Confidence: Medium</li>
+<li>Category: AI Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/workbench/analysis-result.ts:358-404</code>, <code>src/view/workbench/remote-draft.ts:76-91</code></li>
+<li>Evidence: draft payload 将 profile notes、pin label、annotation heading refs、part names 与 task instruction 混合，无明确分隔。</li>
+<li>Problem: 攻击者控制的模型/标注文本可能影响 LLM 行为。</li>
+<li>Why it matters: 这直接影响 攻击者控制的模型/标注文本可能影响 LLM 行为。</li>
+<li>Realistic failure scenario: 零件名为 "Ignore previous instructions and ..."，draft 输出偏离预期。</li>
+<li>Minimal fix: 将系统/任务指令与用户/模型内容分离；将模型/标注文本视为不可信；增加输出校验。</li>
+<li>Better long-term fix: 使用结构化 prompt 模板并做提示注入测试（如 OWASP LLM Top 10 案例）。</li>
+<li>Regression test suggestion: 注入提示注入字符串，断言 draft 不遵循。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="security">Finding: 安全相关失败被静默吞没（与 STB-2 关联）</h3>
+<ul>
+<li>ID: SEC-8</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Security / Stability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: 同 STB-2</li>
+<li>Evidence: 同 STB-2 同 STB-2</li>
+<li>Problem: 文件读取与解析失败（可能是篡改信号）被隐藏。</li>
+<li>Why it matters: 无法检测异常或安全事件。</li>
+<li>Realistic failure scenario: data.json 被篡改后解析失败但无日志，用户无法发现。</li>
+<li>Minimal fix: 记录失败。</li>
+<li>Better long-term fix: 建立统一错误处理策略。</li>
+<li>Regression test suggestion: 篡改 data.json，验证错误被记录。</li>
+<li>Estimated effort: 1小时（合并 STB-2 工作）</li>
+</ul>
+<h3 id="finding-token-ci-">Finding: 手动 token 扫描未在 CI 中强制执行</h3>
+<ul>
+<li>ID: SEC-9</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Security / Supply Chain</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>SECURITY.md:11-16</code>, <code>.github/workflows/release.yml</code></li>
+<li>Evidence: SECURITY.md  instructs 手动 <code>rg</code> 扫描；workflow 未执行。</li>
+<li>Problem: 泄露的 PAT 可能随 release 流出。</li>
+<li>Why it matters: 这直接影响 泄露的 PAT 可能随 release 流出。</li>
+<li>Realistic failure scenario: 在正常使用中，泄露的 PAT 可能随 release 流出。 导致功能异常。</li>
+<li>Minimal fix: 在 release workflow 中加入自动 token 扫描步骤。</li>
+<li>Better long-term fix: 长期：在 release workflow 中加入自动 token 扫描步骤。</li>
+<li>Regression test suggestion: 分支中提交测试 token，验证 CI 失败。</li>
+<li>Estimated effort: 30分钟</li>
+</ul>
+<h3 id="finding-babylon-">Finding: Babylon 网络守卫延迟安装且依赖内部实现</h3>
+<ul>
+<li>ID: SEC-10</li>
+<li>Severity: Low</li>
+<li>Confidence: Medium</li>
+<li>Category: Security</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/loaders/register.ts:21-24</code>, <code>src/render/babylon/network-guard.ts:27-70</code></li>
+<li>Evidence: 守卫在 <code>ensureLoadersRegistered</code> 中运行；monkey-patch <code>Tools._LoadScript*</code> 与 <code>WebRequest</code>。</li>
+<li>Problem: Babylon 升级可能改变内部 API，导致远程 URL 绕过。</li>
+<li>Why it matters: 这直接影响 Babylon 升级可能改变内部 API，导致远程 URL 绕过。</li>
+<li>Realistic failure scenario: 在正常使用中，Babylon 升级可能改变内部 API，导致远程 URL 绕过。 导致功能异常。</li>
+<li>Minimal fix: 尽早安装守卫（<code>onload</code> 阶段）；增加测试验证远程 URL 被拒绝。</li>
+<li>Better long-term fix: 长期：尽早安装守卫（<code>onload</code> 阶段）；增加测试验证远程 URL 被拒绝。</li>
+<li>Regression test suggestion: 尝试加载远程资源，断言拒绝。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="performance">4.4 Performance</h3>
+<h3 id="finding-threejs-babylonjs">Finding: 生产产物同时打包 Three.js 与 Babylon.js</h3>
+<ul>
+<li>ID: PER-1</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Performance / Dependency Weight / Release</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>package.json:38-44</code>, <code>src/render/preview/factory.ts:21-27</code>, <code>esbuild.config.mjs</code></li>
+<li>Evidence: <code>main.js</code> 约 3.8 MB minified；动态导入两个渲染器导致 esbuild 同时包含两者。</li>
+<li>Problem: 用户下载约 1.5-2 MB 不会使用的 runtime（取决于设置）。</li>
+<li>Why it matters: 这直接影响 用户下载约 1.5-2 MB 不会使用的 runtime（取决于设置）。</li>
+<li>Realistic failure scenario: 移动端用户在慢网络下载过大 bundle，首次加载缓慢。</li>
+<li>Minimal fix: 移除未使用的 <code>@babylonjs/gui</code>、<code>@babylonjs/materials</code>、<code>@babylonjs/serializers</code>；评估代码分割或双产物。</li>
+<li>Better long-term fix: 仅在真正需要时通过 Obsidian 的 <code>require</code> 机制或分包加载 Babylon；发布时提供 lite/standard 两种 bundle。</li>
+<li>Regression test suggestion: CI 中追踪 bundle 大小，超过阈值失败。</li>
+<li>Estimated effort: 1-2天</li>
+</ul>
+<h3 id="finding-babylon-">Finding: Babylon 预览渲染循环不息</h3>
+<ul>
+<li>ID: PER-2</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Performance</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/scene.ts:1318-1329</code></li>
+<li>Evidence: <code>runRenderLoop</code> 持续运行，无可见性/脏检查。</li>
+<li>Problem: 预览离开视口后仍消耗 GPU/电池。</li>
+<li>Why it matters: 这直接影响 预览离开视口后仍消耗 GPU/电池。</li>
+<li>Realistic failure scenario: 用户滚动笔记使多个 Babylon 预览离开视口，每个仍以 60 FPS 渲染。</li>
+<li>Minimal fix: 增加 <code>IntersectionObserver</code>，不可见时暂停/停止循环，仅在脏时渲染。</li>
+<li>Better long-term fix: 长期：增加 <code>IntersectionObserver</code>，不可见时暂停/停止循环，仅在脏时渲染。</li>
+<li>Regression test suggestion: Playwright 验证 off-screen 后 <code>requestAnimationFrame</code>/loop 次数下降。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-babylon-3dgrid-cell">Finding: Babylon 3dgrid 每帧重绘每个 cell</h3>
+<ul>
+<li>ID: PER-3</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Performance</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/grid.ts:391-412</code></li>
+<li>Evidence: <code>renderFrame()</code> 每帧清空 engine 并遍历每个 cell 做完整 <code>scene.render()</code>。</li>
+<li>Problem: 静态多模型网格持续以 60 FPS 重绘。</li>
+<li>Why it matters: 这直接影响 静态多模型网格持续以 60 FPS 重绘。</li>
+<li>Realistic failure scenario: <code>3dgrid</code> 含 6 个模型时 GPU 持续满载。</li>
+<li>Minimal fix: 追踪每 cell 脏状态；未变化时跳过；静态网格仅在交互时渲染。</li>
+<li>Better long-term fix: 长期：追踪每 cell 脏状态；未变化时跳过；静态网格仅在交互时渲染。</li>
+<li>Regression test suggestion: 测量静态 grid 帧时间，初始渲染后应大幅下降。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-on-">Finding: 标注投影导致 O(n²) 布局抖动</h3>
+<ul>
+<li>ID: PER-4</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Performance / Frontend State</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/preview/annotations.ts:783-905</code></li>
+<li>Evidence: <code>updateProjections()</code> 在嵌套循环中调用 <code>getBoundingClientRect()</code> 并同时写入 CSS 变量。</li>
+<li>Problem: 每次样式写入强制同步布局重算；pin 多时卡顿。</li>
+<li>Why it matters: 这直接影响 每次样式写入强制同步布局重算；pin 多时卡顿。</li>
+<li>Realistic failure scenario: 50+ bookmark 的模型旋转时明显掉帧。</li>
+<li>Minimal fix: 批量读/写（fastdom 风格），缓存 rect，限制 pin 数量，移动时降低投影频率。</li>
+<li>Better long-term fix: 长期：批量读/写（fastdom 风格），缓存 rect，限制 pin 数量，移动时降低投影频率。</li>
+<li>Regression test suggestion: 用 50 个 pin 测试，断言帧预算不被突破。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-">Finding: 测量与标注集合无上限增长</h3>
+<ul>
+<li>ID: PER-5</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Performance / Stability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/scene.ts:269,1846,1891</code>, <code>src/render/babylon/scene.ts:273-275,1529,1575</code>, <code>src/render/preview/annotations.ts:64,149</code></li>
+<li>Evidence: 数组仅在显式 remove 时缩小，无最大数量限制。</li>
+<li>Problem: 用户可创建成千上万 pin/测量，拖垮性能与内存。</li>
+<li>Why it matters: 这直接影响 用户可创建成千上万 pin/测量，拖垮性能与内存。</li>
+<li>Realistic failure scenario: 误触或脚本批量创建大量 pin，应用变慢或崩溃。</li>
+<li>Minimal fix: 增加可配置上限，达到时警告并禁用新增。</li>
+<li>Better long-term fix: 长期：增加可配置上限，达到时警告并禁用新增。</li>
+<li>Regression test suggestion: 尝试超过上限，断言 UI 阻止创建。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-annotationmanager-effect-">Finding: AnnotationManager 中存在 effect 扩散</h3>
+<ul>
+<li>ID: PER-6</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Performance / Frontend State</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/preview/annotations.ts:59-125,316-366,495-562,637-649,718-731,775-780</code></li>
+<li>Evidence: 多个 observer、debounce timer、hover timeout、pulse timeout、per-element listener。</li>
+<li>Problem: 销毁时容易遗漏 timer/listener，模型切换后泄漏累积。</li>
+<li>Why it matters: 这直接影响 销毁时容易遗漏 timer/listener，模型切换后泄漏累积。</li>
+<li>Realistic failure scenario: 在正常使用中，销毁时容易遗漏 timer/listener，模型切换后泄漏累积。 导致功能异常。</li>
+<li>Minimal fix: 集中管理所有 disposable；在 <code>destroy()</code> 中统一清除。</li>
+<li>Better long-term fix: 长期：集中管理所有 disposable；在 <code>destroy()</code> 中统一清除。</li>
+<li>Regression test suggestion: 反复创建/销毁 AnnotationManager，断言无 dangling timer/listener。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-helper-buttons-dom-">Finding: helper-buttons 中 DOM 即状态</h3>
+<ul>
+<li>ID: PER-7</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Frontend State</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/inline/helper-buttons.ts:140-150,207-235</code></li>
+<li>Evidence: <code>syncCapabilities()</code> 与 <code>syncGroupVisibility()</code> 查询 DOM class 决定状态；<code>syncToggleStates()</code> 每次重绘 SVG 图标。</li>
+<li>Problem: 状态从 DOM 派生脆弱且慢。</li>
+<li>Why it matters: 这直接影响 状态从 DOM 派生脆弱且慢。</li>
+<li>Realistic failure scenario: 在正常使用中，状态从 DOM 派生脆弱且慢。 导致功能异常。</li>
+<li>Minimal fix: 在 JS 对象中维护按钮状态，diff-apply class。</li>
+<li>Better long-term fix: 长期：在 JS 对象中维护按钮状态，diff-apply class。</li>
+<li>Regression test suggestion: 快速切换状态，断言无多余 DOM 操作。</li>
+<li>Estimated effort: 3小时</li>
+</ul>
+<h3 id="finding-obj-">Finding: OBJ 纹理内联导致纹理内存翻倍</h3>
+<ul>
+<li>ID: PER-8</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Performance</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/scene.ts:418-500</code></li>
+<li>Evidence: 每个候选纹理被读取、base64 编码、写回 MTL。</li>
+<li>Problem: 大纹理同时作为 Vault buffer 与 inline data URL 驻留内存。</li>
+<li>Why it matters: 这直接影响 大纹理同时作为 Vault buffer 与 inline data URL 驻留内存。</li>
+<li>Realistic failure scenario: 4K 纹理 OBJ 加载时内存占用约 2x。</li>
+<li>Minimal fix: 按 Vault 路径缓存 data URL；超过阈值时跳过内联。</li>
+<li>Better long-term fix: 长期：按 Vault 路径缓存 data URL；超过阈值时跳过内联。</li>
+<li>Regression test suggestion: 重复加载同一 OBJ 断言纹理 data URL 缓存命中。</li>
+<li>Estimated effort: 3小时</li>
+</ul>
+<h3 id="finding-threejs-render-target-">Finding: Three.js 像素比快速变化导致 render target 重复分配</h3>
+<ul>
+<li>ID: PER-9</li>
+<li>Severity: Medium</li>
+<li>Confidence: Medium</li>
+<li>Category: Performance</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/scene.ts:1023-1098</code></li>
+<li>Evidence: <code>updateFrameBudget()</code> 在慢/快帧连续变化时调整 scale 并调用 <code>resizeRenderer()</code>。</li>
+<li>Problem: 反复重新分配 render target 造成卡顿。</li>
+<li>Why it matters: 这直接影响 反复重新分配 render target 造成卡顿。</li>
+<li>Realistic failure scenario: 在正常使用中，反复重新分配 render target 造成卡顿。 导致功能异常。</li>
+<li>Minimal fix: 增加滞回与节流。</li>
+<li>Better long-term fix: 长期：增加滞回与节流。</li>
+<li>Regression test suggestion: 模拟交替帧时间，断言像素比稳定。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="testing">4.5 Testing</h3>
+<h3 id="testing">Finding: 无单元测试框架或单元测试</h3>
+<ul>
+<li>ID: TST-1</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Testing</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>package.json</code>, 项目根目录</li>
+<li>Evidence: devDependencies 中无测试运行器；无 <code>*.test.ts</code> 文件。</li>
+<li>Problem: 纯函数（几何、路径解析、远程草稿规范化）缺少快速回归测试。</li>
+<li>Why it matters: 这直接影响 纯函数（几何、路径解析、远程草稿规范化）缺少快速回归测试。</li>
+<li>Realistic failure scenario: 重构 <code>resolve-path</code> 边界场景出错，只能通过慢速 Playwright harness 发现。</li>
+<li>Minimal fix: 引入 Vitest，先为纯函数模块编写种子测试。</li>
+<li>Better long-term fix: 单元测试覆盖工具函数、转换器适配器、store 动作、渲染器抽象；CI 中运行 <code>npm test</code>。</li>
+<li>Regression test suggestion: CI 中 <code>npm test</code> 通过。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-">Finding: 验证脚本断言实现细节</h3>
+<ul>
+<li>ID: TST-2</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Testing / Testing Authenticity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>scripts/verify-preview.mjs</code>, <code>scripts/verify-preview-success.mjs</code>, <code>scripts/verify-obsidian.mjs</code></li>
+<li>Evidence: 硬编码 ARIA label、精确 CSS 类、精确按钮文案、精确生成笔记路径。</li>
+<li>Problem: UI 文案或结构变化会导致测试失败。</li>
+<li>Why it matters: 这直接影响 UI 文案或结构变化会导致测试失败。</li>
+<li>Realistic failure scenario: 重命名工具栏按钮 label，测试失败但功能正常。</li>
+<li>Minimal fix: 为关键元素添加 <code>data-testid</code>；将断言与面向用户的字符串解耦。</li>
+<li>Better long-term fix: 长期：为关键元素添加 <code>data-testid</code>；将断言与面向用户的字符串解耦。</li>
+<li>Regression test suggestion: 修改 UI 文案后验证测试仍通过。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-harness-">Finding: 浏览器 harness 存在脆弱性风险</h3>
+<ul>
+<li>ID: TST-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Testing</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>scripts/verify-preview.mjs</code>, <code>scripts/verify-obsidian.mjs</code></li>
+<li>Evidence: 使用固定 <code>waitForTimeout</code>；canvas pixel-ratio 断言；精确 <code>toDataURL</code> 比较；浏览器自动检测差异。</li>
+<li>Problem: 不同机器/CI 上非确定性失败。</li>
+<li>Why it matters: 这直接影响 不同机器/CI 上非确定性失败。</li>
+<li>Realistic failure scenario: CI runner 比本地慢，120 ms 超时过早触发。</li>
+<li>Minimal fix: 用 <code>waitForFunction</code>/事件替代 sleep；canvas 比较使用容差；固定浏览器路径或测试矩阵。</li>
+<li>Better long-term fix: 长期：用 <code>waitForFunction</code>/事件替代 sleep；canvas 比较使用容差；固定浏览器路径或测试矩阵。</li>
+<li>Regression test suggestion: 在较慢 VM 上运行 harness 验证稳定性。</li>
+<li>Estimated effort: 2天</li>
+</ul>
+<h3 id="finding-">Finding: 转换管道缺少自动化覆盖</h3>
+<ul>
+<li>ID: TST-4</li>
+<li>Severity: High</li>
+<li>Confidence: High</li>
+<li>Category: Testing</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/io/conversion/adapters/*.ts</code>, <code>src/io/conversion/command-discovery.ts</code></li>
+<li>Evidence: 无 <code>verify:conversion</code> 脚本；转换仅在 Obsidian 测试中被负面触发。</li>
+<li>Problem: STEP/IGES/BREP/SLDPRT/FBX/3MF/DAE 路径可能静默损坏。</li>
+<li>Why it matters: 这直接影响 STEP/IGES/BREP/SLDPRT/FBX/3MF/DAE 路径可能静默损坏。</li>
+<li>Realistic failure scenario: Python 脚本变更破坏 STEP 转换，直到用户报告才发现。</li>
+<li>Minimal fix: 使用 stub Python/CLI 脚本产生已知 GLB 输出，建立 mock-converter harness。</li>
+<li>Better long-term fix: 长期：使用 stub Python/CLI 脚本产生已知 GLB 输出，建立 mock-converter harness。</li>
+<li>Regression test suggestion: CI 中运行 mock 转换。</li>
+<li>Estimated effort: 2天</li>
+</ul>
+<h3 id="finding-release-workflow-eslint">Finding: release workflow 未执行 eslint</h3>
+<ul>
+<li>ID: TST-5</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Testing / Release</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>.github/workflows/release.yml</code>, <code>eslint.config.mjs</code></li>
+<li>Evidence: release workflow 运行 typecheck 但不运行 eslint；eslint 报告 21 个问题。</li>
+<li>Problem: lint 错误进入 main 与 release。</li>
+<li>Why it matters: 这直接影响 lint 错误进入 main 与 release。</li>
+<li>Realistic failure scenario: <code>obsidianmd/prefer-create-el</code> 错误意味着代码使用了 Obsidian 不推荐的 API，插件可能在 Obsidian 审核中失败。</li>
+<li>Minimal fix: 在 CI 与 release workflow 中加入 <code>npm run lint</code>；修复当前错误。</li>
+<li>Better long-term fix: 长期：在 CI 与 release workflow 中加入 <code>npm run lint</code>；修复当前错误。</li>
+<li>Regression test suggestion: CI 在 lint 错误时失败。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="design">4.6 Maintainability &amp; Design</h3>
+<h3 id="finding-scene-">Finding: scene 文件为神类，违反单一职责</h3>
+<ul>
+<li>ID: MAINT-1</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Design</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/scene.ts</code>（2,099 行）, <code>src/render/babylon/scene.ts</code>（1,661 行）</li>
+<li>Evidence: 每个类同时负责 renderer setup、loading、camera、lights、shadows、animation、measurement、focus、wireframe、bounding box、explode/disassembly、snapshots、frame budget。</li>
+<li>Problem: 难以测试、review、扩展；修改时回归风险高。</li>
+<li>Why it matters: 这直接影响 难以测试、review、扩展；修改时回归风险高。</li>
+<li>Realistic failure scenario: 修复 measurement bug 需要触碰 2,000 行文件，容易引入回归。</li>
+<li>Minimal fix: 先提取工具函数减少文件长度。</li>
+<li>Better long-term fix: 提取渲染器无关的 controller（MeasurementController、FocusController、FrameBudgetController），渲染器只做 thin adapter。</li>
+<li>Regression test suggestion: 为提取的 controller 增加单元测试。</li>
+<li>Estimated effort: 1-2周</li>
+</ul>
+<h3 id="finding-three-babylon-">Finding: Three 与 Babylon 渲染器之间存在重复逻辑</h3>
+<ul>
+<li>ID: MAINT-2</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Design</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/loaders.ts:34-48,182-258</code> vs <code>src/render/babylon/scene.ts:184-197,416-475</code>；<code>src/render/three/scene.ts:171</code> vs <code>src/render/babylon/scene.ts:114</code>；measurement/focus/explode/disassembly 均重复。</li>
+<li>Evidence: 见代码审查与静态分析结果。</li>
+<li>Problem: 修复需要在两处应用；行为可能分叉。</li>
+<li>Why it matters: 这直接影响 修复需要在两处应用；行为可能分叉。</li>
+<li>Realistic failure scenario: OBJ 纹理回退在 Three 修复但 Babylon 未修复，用户看到不一致结果。</li>
+<li>Minimal fix: 将共享逻辑移入 <code>src/io/formats/obj-resources.ts</code> 与 <code>src/render/preview/component-identity.ts</code>。</li>
+<li>Better long-term fix: 统一 scene controller 抽象，双端仅实现底层绘制 API。</li>
+<li>Regression test suggestion: 跨渲染器 parity 测试 OBJ 加载与 measurement。</li>
+<li>Estimated effort: 3天</li>
+</ul>
+<h3 id="finding-settingsts-display-ui-">Finding: settings.ts display() 是巨型 UI 构建器</h3>
+<ul>
+<li>ID: MAINT-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/settings.ts:63-589</code></li>
+<li>Evidence: 单个 <code>display()</code> 方法 527 行构建整个设置页。</li>
+<li>Problem: 难 review、难测试、难扩展。</li>
+<li>Why it matters: 这直接影响 难 review、难测试、难扩展。</li>
+<li>Realistic failure scenario: 增加一个设置项需要修改巨大方法，易产生合并冲突。</li>
+<li>Minimal fix: 拆分为 section builder 函数或类。</li>
+<li>Better long-term fix: 长期：拆分为 section builder 函数或类。</li>
+<li>Regression test suggestion: 验证每个 section 渲染预期控件。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-maints-">Finding: main.ts 包含大量视图逻辑</h3>
+<ul>
+<li>ID: MAINT-4</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/main.ts:118-375</code></li>
+<li>Evidence: <code>setupHeadingPinObserver()</code> 是 258 行私有方法，负责 heading pin badge。</li>
+<li>Problem: 生命周期文件混合视图功能。</li>
+<li>Why it matters: 这直接影响 生命周期文件混合视图功能。</li>
+<li>Realistic failure scenario: 在正常使用中，生命周期文件混合视图功能。 导致功能异常。</li>
+<li>Minimal fix: 提取到 <code>src/view/heading-pin-observer.ts</code>。</li>
+<li>Better long-term fix: 长期：提取到 <code>src/view/heading-pin-observer.ts</code>。</li>
+<li>Regression test suggestion: 验证 heading badge 仍正常显示。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<h3 id="finding-direct-viewts-loadmodel-">Finding: direct-view.ts loadModel() 职责过多</h3>
+<ul>
+<li>ID: MAINT-5</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Design</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/direct-view.ts:150-370</code></li>
+<li>Evidence: 约 221 行方法覆盖布局、IO、预览编排、标注 wiring、知识 UI、错误处理。</li>
+<li>Problem: 违反 SRP；测试脆弱。</li>
+<li>Why it matters: 这直接影响 违反 SRP；测试脆弱。</li>
+<li>Realistic failure scenario: 在正常使用中，违反 SRP；测试脆弱。 导致功能异常。</li>
+<li>Minimal fix: 拆分为更小方法。</li>
+<li>Better long-term fix: 长期：拆分为更小方法。</li>
+<li>Regression test suggestion: 用 shims 对每个子方法做单元测试。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-pluginstore-raw-setstate-actions">Finding: PluginStore 暴露 raw setState，缺少 actions</h3>
+<ul>
+<li>ID: MAINT-6</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Design / Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/store/plugin-store.ts:27-90</code></li>
+<li>Evidence: 调用方直接使用 <code>ps.store.setState()</code>。</li>
+<li>Problem: 无不变式约束；视图可任意修改持久化状态。</li>
+<li>Why it matters: 这直接影响 无不变式约束；视图可任意修改持久化状态。</li>
+<li>Realistic failure scenario: 在正常使用中，无不变式约束；视图可任意修改持久化状态。 导致功能异常。</li>
+<li>Minimal fix: 增加带类型的 store actions，限制直接 setState。</li>
+<li>Better long-term fix: 长期：增加带类型的 store actions，限制直接 setState。</li>
+<li>Regression test suggestion: 断言只有 store actions 可修改 profiles。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<h3 id="finding-profile">Finding: 视图层直接修改持久化 profile</h3>
+<ul>
+<li>ID: MAINT-7</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/direct-view.ts:318-322,389-397</code></li>
+<li>Evidence: 视图调用 <code>this.ps.store.setState({ modelAssetProfiles: ... })</code> 更新 pin 与注册零件。</li>
+<li>Problem: 绕过规范化与未来不变式。</li>
+<li>Why it matters: 这直接影响 绕过规范化与未来不变式。</li>
+<li>Realistic failure scenario: 在正常使用中，绕过规范化与未来不变式。 导致功能异常。</li>
+<li>Minimal fix: 使用 MAINT-6 的 store actions。</li>
+<li>Better long-term fix: 长期：使用 MAINT-6 的 store actions。</li>
+<li>Regression test suggestion: 同 MAINT-6。</li>
+<li>Estimated effort: 30分钟（依赖 MAINT-6）</li>
+</ul>
+<h3 id="finding-">Finding: 标注编辑器与投影为单体</h3>
+<ul>
+<li>ID: MAINT-8</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/preview/annotations.ts:218-465,783-866</code></li>
+<li>Evidence: <code>showEditorInternal()</code> 约 247 行；<code>updateProjections()</code> 约 84 行且嵌套 if 密集。</li>
+<li>Problem: 难以维护与验证。</li>
+<li>Why it matters: 这直接影响 难以维护与验证。</li>
+<li>Realistic failure scenario: 在正常使用中，难以维护与验证。 导致功能异常。</li>
+<li>Minimal fix: 提取 <code>AnnotationEditor</code> 组件；拆分投影函数。</li>
+<li>Better long-term fix: 长期：提取 <code>AnnotationEditor</code> 组件；拆分投影函数。</li>
+<li>Regression test suggestion: 单元测试编辑器渲染与投影数学。</li>
+<li>Estimated effort: 2天</li>
+</ul>
+<h3 id="finding-crlflf-">Finding: 混合 CRLF/LF 换行符</h3>
+<ul>
+<li>ID: MAINT-9</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Code Consistency</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/settings.ts</code>, <code>src/render/babylon/scene.ts</code>, <code>src/render/babylon/loaders/register.ts</code>, <code>src/render/babylon/loaders/ply-loader.ts</code></li>
+<li>Evidence: <code>file</code> 报告 Babylon 文件为 CRLF，settings.ts 为 mixed。</li>
+<li>Problem: diff 噪音、跨平台不一致。</li>
+<li>Why it matters: 这直接影响 diff 噪音、跨平台不一致。</li>
+<li>Realistic failure scenario: 在正常使用中，diff 噪音、跨平台不一致。 导致功能异常。</li>
+<li>Minimal fix: 增加 <code>.editorconfig</code>；在 <code>.gitattributes</code> 中强制 <code>* text=auto eol=lf</code>；一次性 normalize。</li>
+<li>Better long-term fix: 长期：增加 <code>.editorconfig</code>；在 <code>.gitattributes</code> 中强制 <code>* text=auto eol=lf</code>；一次性 normalize。</li>
+<li>Regression test suggestion: CI 检查 <code>file</code> 报告所有 <code>*.ts</code> 为 LF。</li>
+<li>Estimated effort: 30分钟</li>
+</ul>
+<h3 id="finding-todofixmehack-">Finding: 缺少 TODO/FIXME/HACK 标记</h3>
+<ul>
+<li>ID: MAINT-10</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Comment Coverage</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/</code>, <code>docs/</code></li>
+<li>Evidence: <code>rg TODO|FIXME|HACK|XXX|SAFETY</code> 无匹配。</li>
+<li>Problem: 已知债务未标注，难以跟踪。</li>
+<li>Why it matters: 这直接影响 已知债务未标注，难以跟踪。</li>
+<li>Realistic failure scenario: 在正常使用中，已知债务未标注，难以跟踪。 导致功能异常。</li>
+<li>Minimal fix: 采用 <code>TODO(context)</code> 约定标记已知债务。</li>
+<li>Better long-term fix: 长期：采用 <code>TODO(context)</code> 约定标记已知债务。</li>
+<li>Regression test suggestion: 无。</li>
+<li>Estimated effort: N/A（持续实践）</li>
+</ul>
+<h3 id="finding-">Finding: 设置项命名不一致</h3>
+<ul>
+<li>ID: MAINT-11</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Code Consistency</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/settings.ts:379-388,442-453</code></li>
+<li>Evidence: UI label <code>preferObj2gltf</code> 实际更新 <code>preferObj2gltfForObj</code>；UI label <code>pythonCmd</code> 更新 <code>freecadCommand</code>。</li>
+<li>Problem: 搜索/替换易出错，令人困惑。</li>
+<li>Why it matters: 这直接影响 搜索/替换易出错，令人困惑。</li>
+<li>Realistic failure scenario: 在正常使用中，搜索/替换易出错，令人困惑。 导致功能异常。</li>
+<li>Minimal fix: 统一 identifier。</li>
+<li>Better long-term fix: 长期：统一 identifier。</li>
+<li>Regression test suggestion: 验证设置 round-trip。</li>
+<li>Estimated effort: 30分钟</li>
+</ul>
+<h3 id="documentation">Finding: 公共接口文档不足</h3>
+<ul>
+<li>ID: MAINT-12</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Maintainability / Comment Coverage</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/preview/types.ts:38-67</code>, <code>src/render/preview/component-identity.ts:110-130</code></li>
+<li>Evidence: 关键方法与函数缺少 JSDoc。</li>
+<li>Problem: 新渲染器/零件匹配实现需要反推语义。</li>
+<li>Why it matters: 这直接影响 新渲染器/零件匹配实现需要反推语义。</li>
+<li>Realistic failure scenario: 在正常使用中，新渲染器/零件匹配实现需要反推语义。 导致功能异常。</li>
+<li>Minimal fix: 为公共方法及关键函数添加 JSDoc。</li>
+<li>Better long-term fix: 长期：为公共方法及关键函数添加 JSDoc。</li>
+<li>Regression test suggestion: 无。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="type-safety">4.7 Type Safety</h3>
+<h3 id="security">Finding: Babylon scene 中存在显式 any 与不安全成员访问</h3>
+<ul>
+<li>ID: TS-1</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Type Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/babylon/scene.ts:1566,1611-1612,1634-1635</code></li>
+<li>Evidence: <code>(line as any).color = ...</code> 等。</li>
+<li>Problem: 绕过类型安全，可能运行时错误。</li>
+<li>Why it matters: 这直接影响 绕过类型安全，可能运行时错误。</li>
+<li>Realistic failure scenario: 在正常使用中，绕过类型安全，可能运行时错误。 导致功能异常。</li>
+<li>Minimal fix: 使用类型化的 Babylon API 或收窄接口。</li>
+<li>Better long-term fix: 长期：使用类型化的 Babylon API 或收窄接口。</li>
+<li>Regression test suggestion: typecheck 与 lint 通过。</li>
+<li>Estimated effort: 1小时</li>
+</ul>
+<h3 id="finding-as-">Finding: 广泛存在 `as` 类型断言</h3>
+<ul>
+<li>ID: TS-2</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Type Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: 多文件；<code>src/render/babylon/scene.ts</code>（26 处）、<code>src/view/workbench/knowledge-note.ts</code>、<code>src/view/inline/code-block.ts:391-425</code> 等。</li>
+<li>Evidence: JSON/配置解析后直接 cast，无验证。</li>
+<li>Problem: 非法数据可能运行时崩溃或行为异常。</li>
+<li>Why it matters: 这直接影响 非法数据可能运行时崩溃或行为异常。</li>
+<li>Realistic failure scenario: 在正常使用中，非法数据可能运行时崩溃或行为异常。 导致功能异常。</li>
+<li>Minimal fix: 引入校验函数，如 <code>isThreeDBlockConfig</code>、<code>isGltfJson</code>。</li>
+<li>Better long-term fix: 长期：引入校验函数，如 <code>isThreeDBlockConfig</code>、<code>isGltfJson</code>。</li>
+<li>Regression test suggestion: 用非法 payload 做 fuzz 测试。</li>
+<li>Estimated effort: 2天</li>
+</ul>
+<h3 id="finding-">Finding: 非空断言普遍存在</h3>
+<ul>
+<li>ID: TS-3</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Type Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: 全部 <code>src/**/*.ts</code>；约 470 处 <code>!.</code></li>
+<li>Evidence: <code>this.axesHelper!.visible</code>、<code>this.previewLine!.material</code> 等。</li>
+<li>Problem: dispose 后字段可能为 null，断言掩盖此情况。</li>
+<li>Why it matters: 这直接影响 dispose 后字段可能为 null，断言掩盖此情况。</li>
+<li>Realistic failure scenario: 在正常使用中，dispose 后字段可能为 null，断言掩盖此情况。 导致功能异常。</li>
+<li>Minimal fix: 启用 <code>no-non-null-assertion</code> lint 规则；使用 guard 或可选链。</li>
+<li>Better long-term fix: 长期：启用 <code>no-non-null-assertion</code> lint 规则；使用 guard 或可选链。</li>
+<li>Regression test suggestion: 增加 dispose 在 load 之前的生命周期测试。</li>
+<li>Estimated effort: 3天</li>
+</ul>
+<h3 id="finding-">Finding: 导出函数缺少返回类型</h3>
+<ul>
+<li>ID: TS-4</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Type Safety</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/utils/node-shim.ts</code>, <code>src/render/preview/geometry.ts</code>, <code>src/io/conversion/command-discovery.ts</code>, <code>src/view/workbench/knowledge-note.ts</code></li>
+<li>Evidence: 大量导出/公共函数依赖推断。</li>
+<li>Problem: API 契约隐含；意外签名变更无法捕获。</li>
+<li>Why it matters: 这直接影响 API 契约隐含；意外签名变更无法捕获。</li>
+<li>Realistic failure scenario: 在正常使用中，API 契约隐含；意外签名变更无法捕获。 导致功能异常。</li>
+<li>Minimal fix: 为公共函数添加显式返回类型。</li>
+<li>Better long-term fix: 长期：为公共函数添加显式返回类型。</li>
+<li>Regression test suggestion: typecheck 已覆盖。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<hr>
+<h3 id="configuration">4.8 Configuration</h3>
+<h3 id="finding-">Finding: 设置输入缺少校验</h3>
+<ul>
+<li>ID: CFG-1</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Configuration</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/settings.ts:106-153,293-337,440-505</code></li>
+<li>Evidence: 文件夹路径、命令路径、serviceBaseUrl 仅做 <code>.trim()</code>；enum 用 <code>as</code> 强转。</li>
+<li>Problem: 非法值会延迟到运行时失败。</li>
+<li>Why it matters: 这直接影响 非法值会延迟到运行时失败。</li>
+<li>Realistic failure scenario: 用户在 draft URL 中输入带空格的 <code>http://</code>，远程草稿静默失败。</li>
+<li>Minimal fix: 增加 <code>validateSettings()</code>，限制范围、拒绝非法字符、校验 enum。</li>
+<li>Better long-term fix: 长期：增加 <code>validateSettings()</code>，限制范围、拒绝非法字符、校验 enum。</li>
+<li>Regression test suggestion: <code>verify:settings</code> 用非法值断言规范化/警告。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<hr>
+<h3 id="observability">4.9 Observability</h3>
+<h3 id="finding-info-consoledebug">Finding: info 级别日志写入 console.debug</h3>
+<ul>
+<li>ID: OBS-1</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Observations</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/utils/log.ts:51-54</code></li>
+<li>Evidence: <code>info()</code> 调用 <code>console.debug</code>。</li>
+<li>Problem: 部分浏览器默认过滤 debug 日志。</li>
+<li>Why it matters: 这直接影响 部分浏览器默认过滤 debug 日志。</li>
+<li>Realistic failure scenario: 在正常使用中，部分浏览器默认过滤 debug 日志。 导致功能异常。</li>
+<li>Minimal fix: 改为 <code>console.info</code> 或 <code>console.log</code>。</li>
+<li>Better long-term fix: 长期：改为 <code>console.info</code> 或 <code>console.log</code>。</li>
+<li>Regression test suggestion: 设置 info 级别并断言 <code>console.info</code> 被调用。</li>
+<li>Estimated effort: 5分钟</li>
+</ul>
+<h3 id="performance">Finding: 性能快照/转换耗时未暴露</h3>
+<ul>
+<li>ID: OBS-2</li>
+<li>Severity: Low</li>
+<li>Confidence: Medium</li>
+<li>Category: Observability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/render/three/scene.ts</code>, <code>src/io/conversion/adapters/*.ts</code></li>
+<li>Evidence: 内部计时存在，但未持久化或展示给用户。</li>
+<li>Problem: 生产环境难以诊断性能/转换问题。</li>
+<li>Why it matters: 这直接影响 生产环境难以诊断性能/转换问题。</li>
+<li>Realistic failure scenario: 在正常使用中，生产环境难以诊断性能/转换问题。 导致功能异常。</li>
+<li>Minimal fix: 将关键计时加入 diagnostics report。</li>
+<li>Better long-term fix: 长期：将关键计时加入 diagnostics report。</li>
+<li>Regression test suggestion: <code>verify:diagnostics</code> 断言包含计时字段。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="data-integrity">4.10 Data Integrity</h3>
+<h3 id="finding-analysis">Finding: 知识笔记生成在文件写入完成前变更 analysis</h3>
+<ul>
+<li>ID: DI-1</li>
+<li>Severity: Medium</li>
+<li>Confidence: High</li>
+<li>Category: Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/view/workbench/knowledge-note.ts:1220-1364</code></li>
+<li>Evidence: <code>generateKnowledgeNote</code> 先 mutate <code>analysis</code>，再写文件，最后更新 store；部分失败会留下不一致状态。</li>
+<li>Problem: store 与 sidecar 可能不一致。</li>
+<li>Why it matters: 这直接影响 store 与 sidecar 可能不一致。</li>
+<li>Realistic failure scenario: 磁盘满导致 part-note 写入中断，<code>analysis.partNotePaths</code> 部分填充。</li>
+<li>Minimal fix: 不可变地构建最终对象；所有 I/O 成功后一次性更新 store。</li>
+<li>Better long-term fix: 长期：不可变地构建最终对象；所有 I/O 成功后一次性更新 store。</li>
+<li>Regression test suggestion: 注入 I/O 失败并断言无部分状态持久化。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-">Finding: 转换缓存写入前未重新校验文件</h3>
+<ul>
+<li>ID: DI-2</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/io/conversion/conversion-service.ts:116-133</code></li>
+<li>Evidence: 转换成功后立即写入缓存，不再检查文件是否存在。</li>
+<li>Problem: 输出可能被删除或损坏后仍被缓存。</li>
+<li>Why it matters: 这直接影响 输出可能被删除或损坏后仍被缓存。</li>
+<li>Realistic failure scenario: 杀毒软件在缓存写入前删除输出，stale 条目被持久化。</li>
+<li>Minimal fix: 在 <code>convertedAssetCache.set()</code> 前重新 <code>isCachedOutputAvailable(result.outputPath)</code>。</li>
+<li>Better long-term fix: 长期：在 <code>convertedAssetCache.set()</code> 前重新 <code>isCachedOutputAvailable(result.outputPath)</code>。</li>
+<li>Regression test suggestion: 在转换与缓存写入之间删除输出，断言缓存不更新。</li>
+<li>Estimated effort: 1小时</li>
+</ul>
+<h3 id="finding-schema-version">Finding: 持久化状态缺少 schema version</h3>
+<ul>
+<li>ID: DI-3</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Data Integrity</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/store/plugin-store.ts:62-73</code></li>
+<li>Evidence: <code>PersistedPluginState</code> 无 <code>schemaVersion</code> 字段。</li>
+<li>Problem: 未来破坏性变更无法区分旧格式。</li>
+<li>Why it matters: 这直接影响 未来破坏性变更无法区分旧格式。</li>
+<li>Realistic failure scenario: 新增设置形状后，旧 <code>data.json</code> 被静默错误解释。</li>
+<li>Minimal fix: 增加 <code>schemaVersion</code> 并在破坏性变更时 bump。</li>
+<li>Better long-term fix: 长期：增加 <code>schemaVersion</code> 并在破坏性变更时 bump。</li>
+<li>Regression test suggestion: 加载旧 <code>data.json</code> 并断言迁移路径。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="privacy">4.11 Privacy</h3>
+<h3 id="finding-vault-">Finding: 诊断报告包含 Vault 路径结构</h3>
+<ul>
+<li>ID: PRIV-1</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Privacy</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>src/diagnostics/report.ts:60-103</code></li>
+<li>Evidence: 包含 <code>currentModelPath</code>、<code>reportNotePath</code>、<code>analysisSidecarPath</code>、<code>knowledgeIndexPath</code>。</li>
+<li>Problem: 路径在共享 bug 报告时可能敏感。</li>
+<li>Why it matters: 这直接影响 路径在共享 bug 报告时可能敏感。</li>
+<li>Realistic failure scenario: 在正常使用中，路径在共享 bug 报告时可能敏感。 导致功能异常。</li>
+<li>Minimal fix: 在 SECURITY.md 中说明；提供 redact-paths 选项。</li>
+<li>Better long-term fix: 长期：在 SECURITY.md 中说明；提供 redact-paths 选项。</li>
+<li>Regression test suggestion: <code>verify:diagnostics</code> 测试 redact flag。</li>
+<li>Estimated effort: 1小时</li>
+</ul>
+<hr>
+<h3 id="accessibility">4.12 Accessibility</h3>
+<h3 id="accessibility">Finding: 缺少正式的无障碍验证</h3>
+<ul>
+<li>ID: ACC-1</li>
+<li>Severity: Low</li>
+<li>Confidence: Medium</li>
+<li>Category: Accessibility</li>
+<li>Status: Suspected</li>
+<li>Affected area: <code>src/settings.ts</code>, <code>src/view/inline/helper-buttons.ts</code>, <code>src/render/preview/annotations.ts</code></li>
+<li>Evidence: UI 使用 Obsidian API 构建；无 axe/屏幕阅读器测试。</li>
+<li>Problem: 键盘/焦点/屏幕阅读器问题可能存在。</li>
+<li>Why it matters: 这直接影响 键盘/焦点/屏幕阅读器问题可能存在。</li>
+<li>Realistic failure scenario: 纯键盘用户无法操作工具栏或标注编辑器。</li>
+<li>Minimal fix: 增加键盘快捷键文档；在 Playwright 中运行 accessibility 检查。</li>
+<li>Better long-term fix: 长期：增加键盘快捷键文档；在 Playwright 中运行 accessibility 检查。</li>
+<li>Regression test suggestion: 在 <code>verify:preview</code> 中加入 axe-core 扫描。</li>
+<li>Estimated effort: 1天</li>
+</ul>
+<hr>
+<h3 id="supply-chain">4.13 Supply Chain</h3>
+<h3 id="finding-esbuild-source-patch-">Finding: esbuild source patch 脆弱</h3>
+<ul>
+<li>ID: SUP-1</li>
+<li>Severity: Medium</li>
+<li>Confidence: Medium</li>
+<li>Category: Supply Chain / Maintainability</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>esbuild.config.mjs:49-126</code></li>
+<li>Evidence: 用正则 patch Babylon 源文件；无测试验证 patch 是否生效。</li>
+<li>Problem: Babylon 升级可能静默破坏 patch。</li>
+<li>Why it matters: 这直接影响 Babylon 升级可能静默破坏 patch。</li>
+<li>Realistic failure scenario: 升级到 Babylon 9.7，<code>_LoadScriptNative</code> 正则不再匹配，远程脚本守护失效。</li>
+<li>Minimal fix: 锁定经过测试的 Babylon 范围；增加构建测试验证 patch 后的 guard 字符串存在。</li>
+<li>Better long-term fix: 长期：锁定经过测试的 Babylon 范围；增加构建测试验证 patch 后的 guard 字符串存在。</li>
+<li>Regression test suggestion: 构建测试断言 patch 函数包含拒绝错误。</li>
+<li>Estimated effort: 4小时</li>
+</ul>
+<h3 id="finding-babylon-">Finding: 声明了未使用的 Babylon 包</h3>
+<ul>
+<li>ID: SUP-2</li>
+<li>Severity: Low</li>
+<li>Confidence: High</li>
+<li>Category: Dependency Weight</li>
+<li>Status: Confirmed</li>
+<li>Affected area: <code>package.json:39,43-44</code></li>
+<li>Evidence: <code>@babylonjs/gui</code>、<code>@babylonjs/materials</code>、<code>@babylonjs/serializers</code> 在 <code>src/</code> 中无 import。</li>
+<li>Problem: 安装体积、lockfile、审计面增加。</li>
+<li>Why it matters: 这直接影响 安装体积、lockfile、审计面增加。</li>
+<li>Realistic failure scenario: 在正常使用中，安装体积、lockfile、审计面增加。 导致功能异常。</li>
+<li>Minimal fix: 移除未使用包。</li>
+<li>Better long-term fix: 长期：移除未使用包。</li>
+<li>Regression test suggestion: 移除后 <code>npm run build</code> 成功。</li>
+<li>Estimated effort: 15分钟</li>
+</ul>
+<hr>
+<h3 id="documentation">4.14 Documentation</h3>
+<h3 id="finding-">Finding: 预览路由矩阵与实现基本一致</h3>
+<ul>
+<li>ID: DOC-3</li>
+<li>Severity: Info</li>
+<li>Confidence: High</li>
+<li>Category: Documentation</li>
+<li>Status: Verified</li>
+<li>Affected area: <code>docs/preview-routing-matrix.md</code></li>
+<li>Evidence: 矩阵记录了 direct/code-block/3dgrid/workbench 的默认/实验/回退路径，与代码基本对齐。</li>
+<li>Problem: 与 预览路由矩阵与实现基本一致 相关的问题需要进一步调查。</li>
+<li>Why it matters: 这直接影响 与 预览路由矩阵与实现基本一致 相关的问题需要进一步调查。</li>
+<li>Realistic failure scenario: 在正常使用中，与 预览路由矩阵与实现基本一致 相关的问题需要进一步调查。 导致功能异常。</li>
+<li>Minimal fix: 待补充</li>
+<li>Better long-term fix: 长期：待补充</li>
+<li>Regression test suggestion: 添加对应的回归测试，覆盖该失败路径。</li>
+<li>Estimated effort: 2小时</li>
+</ul>
+<hr>
+<h3 id="backend-api">4.15 Backend API</h3>
+<ul>
+<li>Status: Not assessed</li>
+<li><strong>Reason:</strong> 本项目为 Obsidian 插件，无服务端 API。</li>
+</ul>
+<hr>
+<h2 id="5-recent-commit-capability-evolution">5. Recent Commit Capability Evolution</h2>
+<h3 id="51-commit-window">5.1 Commit Window</h3>
+<p>分析窗口：最近约 30 条提交，时间跨度约 2026-05-25 至 2026-06-08，提交者以单一作者为主，节奏非常快（部分日期 4-5 条 commit）。</p>
+<h3 id="52-major-feature-inflection-points">5.2 Major Feature Inflection Points</h3>
+<table><thead><tr><th>Commit</th><th>Version</th><th>What changed</th></tr></thead><tbody><tr><td><code>be3db73</code></td><td>—</td><td>Three.js 正式成为单模型主渲染路径；引入 renderer-agnostic 抽象；单次提交 +5,326/-680 行，为近期最大变更。</td></tr><tr><td><code>f952415</code></td><td>—</td><td>增加 Three/Babylon 渲染器切换能力。</td></tr><tr><td><code>e3bdfba</code></td><td>0.4.0</td><td>引入零件笔记草稿（part note drafts）与模型知识索引。</td></tr><tr><td><code>fd49104</code></td><td>0.4.3</td><td>增加 diagnostics report、registered part matching、自动零件注册。</td></tr><tr><td><code>e478b42</code> / <code>b1cf45b</code></td><td>—</td><td>GLB component identity 与跨格式零件匹配。</td></tr><tr><td><code>355c2e1</code> / <code>e8d094a</code> / <code>c078c22</code></td><td>—</td><td>Workspace UI 重构为基于 track 的侧边栏。</td></tr><tr><td><code>7c487e9</code></td><td>0.5.5</td><td>增加距离测量工具（distance measurement）。</td></tr></tbody></table>
+<h3 id="stability">5.3 Stability Improvements</h3>
+<ul>
+<li>弹窗/独立窗口兼容性修复（<code>f952415</code> 相关）。</li>
+<li>Lint 合规性修复（大量 <code>style</code>/<code>lint</code> 提交）。</li>
+<li>加载中断提示与资源加载鲁棒性增强。</li>
+<li>资源释放与性能相关 work（Three.js frame budget、viewport pause）。</li>
+<li>序列化锁 <code>generation</code> counter 防止并发保存。</li>
+</ul>
+<h3 id="54-preview-routing-evolution">5.4 Preview Routing Evolution</h3>
+<ul>
+<li>早期单一路径逐步拆分为：</li>
+<li><strong>Direct file view</strong>：默认 Babylon，可实验性切换到 Three.js，失败回退 Babylon。</li>
+<li><strong>Code-block inline</strong>：默认 Three.js。</li>
+<li><strong><code>3dgrid</code></strong>：强制 Babylon（grid 实现）。</li>
+<li><strong>Workbench</strong>：默认 Three.js，Babylon 作为保守回退。</li>
+<li>路由矩阵已记录在 <code>docs/preview-routing-matrix.md</code>，但矩阵更新略滞后于代码变更。</li>
+</ul>
+<h3 id="55-knowledge-base-part-notes-progression">5.5 Knowledge Base / Part Notes Progression</h3>
+<ul>
+<li>0.4.0：从分析结果生成知识笔记与零件草稿。</li>
+<li>0.4.3：引入 registered parts；direct view 自动将捕获的零件候选注册到 model profile；后续模型可在完整报告存在前检测复用零件。</li>
+<li>近期：增加零件身份跨格式匹配、知识索引更新、sidecar 持久化。</li>
+</ul>
+<h3 id="release">5.6 Release Cadence</h3>
+<p>版本序列：0.4.0 → 0.4.3 → 0.5.1 → 0.5.3 → 0.5.5。</p>
+<ul>
+<li>从 0.4.x 跳到 0.5.x 反映 API/功能跃迁（Three.js 主渲染、测量工具）。</li>
+<li>多个 commit 同时 bump <code>package.json</code>/<code>manifest.json</code>/<code>versions.json</code> 但未同步 <code>package-lock.json</code>。</li>
+</ul>
+<h3 id="57-code-growth-patterns">5.7 Code Growth Patterns</h3>
+<ul>
+<li>最大增长来自 <code>src/render/three/scene.ts</code> 与 <code>src/render/babylon/scene.ts</code>。</li>
+<li><code>src/view/workbench/knowledge-note.ts</code>、<code>src/view/direct-view.ts</code>、<code>src/settings.ts</code> 持续膨胀。</li>
+<li><code>docs/</code> 与 <code>scripts/</code> 同步增长，说明文档与验证投入较多。</li>
+</ul>
+<h3 id="58-risks-introduced-by-recent-commits">5.8 Risks Introduced by Recent Commits</h3>
+<ul>
+<li><strong>巨型提交</strong>：<code>be3db73</code> 一次改动超过 6,000 行，review 困难，是近期最大的回归风险源。</li>
+<li><strong>生成产物提交</strong>：<code>main.js</code> 作为生成文件被反复提交，且当前 dirty/锁定。</li>
+<li><strong>UI 快速重构</strong>：工作区多次 reorganize 为 track-based sidebar，若验证脚本硬编码 DOM 结构，易频繁 break。</li>
+<li><strong>双渲染器维护负担</strong>：每次新功能（measurement、explode、focus）都需要在 Three 与 Babylon 两端实现，债务加速累积。</li>
+<li><strong>版本号不一致</strong>：从 0.4.3 到 0.5.5 的更新未完整同步 lockfile 与 changelog。</li>
+</ul>
+<hr>
+<h2 id="6-metrics-comparison">6. Metrics Comparison</h2>
+<h3 id="61-build-volume">6.1 Build Volume</h3>
+<table><thead><tr><th>Metric</th><th>Current (0.5.5)</th><th>Recent history</th><th>Trend</th></tr></thead><tbody><tr><td><code>main.js</code> (uncompressed)</td><td>~3.97 MB (3.8 MB reported by ls)</td><td>3.945 MB at <code>27103cb</code></td><td>↔ Flat / slight growth</td></tr><tr><td><code>styles.css</code></td><td>40 KB</td><td>—</td><td>—</td></tr><tr><td><code>node_modules</code></td><td>281 MB</td><td>—</td><td>—</td></tr><tr><td><code>.venv</code></td><td>14 MB</td><td>—</td><td>—</td></tr></tbody></table>
+<p><strong>Observation:</strong> 尽管近期有帧预算、viewport pause 等性能 work，但 bundle 体积没有下降趋势，因为 Three.js 与 Babylon.js 两个完整运行时仍被打包在一起。</p>
+<h3 id="type-safety">6.2 Type Safety</h3>
+<table><thead><tr><th>Metric</th><th>Current</th><th>Target</th><th>Trend</th></tr></thead><tbody><tr><td><code>npm run typecheck</code></td><td>Passes</td><td>Passes</td><td>✅ Stable</td></tr><tr><td>eslint problems</td><td>21 (19 errors, 2 warnings)</td><td>0</td><td>❌ Regressed / not enforced</td></tr><tr><td><code>any</code> usage</td><td>Present</td><td>Minimal</td><td>⚠️ Debt</td></tr><tr><td><code>as</code> assertions</td><td>Many (Babylon scene alone 26)</td><td>Minimal</td><td>⚠️ Debt</td></tr><tr><td>Non-null assertions (<code>!</code>)</td><td>~470 across src</td><td>Minimal</td><td>❌ High</td></tr></tbody></table>
+<p><strong>Observation:</strong> TypeScript 编译通过，但 lint 与类型断言债务明显，release workflow 未运行 eslint。</p>
+<h3 id="63-test-coverage">6.3 Test Coverage</h3>
+<table><thead><tr><th>Layer</th><th>Coverage</th><th>Evidence</th></tr></thead><tbody><tr><td>Unit tests</td><td>None</td><td>No test runner, no <code>*.test.ts</code></td></tr><tr><td>Integration / verification scripts</td><td>11 scripts</td><td><code>scripts/verify-*.mjs</code></td></tr><tr><td>Conversion pipelines</td><td>Not covered</td><td>No <code>verify:conversion</code></td></tr><tr><td>Remote draft privacy/security</td><td>Partial</td><td><code>verify:remote-draft</code> exists but asserts structure, not sanitization</td></tr><tr><td>Obsidian end-to-end</td><td>Requires host</td><td><code>verify:obsidian</code> skipped in this audit</td></tr></tbody></table>
+<p><strong>Observation:</strong> 验证矩阵广但浅；缺乏对关键路径的细粒度回归保护。</p>
+<h3 id="64-build-health">6.4 Build Health</h3>
+<table><thead><tr><th>Check</th><th>Result</th></tr></thead><tbody><tr><td><code>npm run typecheck</code></td><td>✅ Pass</td></tr><tr><td><code>npm run build</code></td><td>❌ Fail — <code>main.js</code> locked/dirty</td></tr><tr><td><code>npm audit</code></td><td>❌ 1 High (esbuild)</td></tr><tr><td><code>npm run lint</code></td><td>❌ 21 problems</td></tr><tr><td><code>npm run verify:release</code></td><td>❌ Blocked by package-lock version mismatch</td></tr></tbody></table>
+<h3 id="performance">6.5 Rendering Performance</h3>
+<table><thead><tr><th>Aspect</th><th>Current</th><th>Notes</th></tr></thead><tbody><tr><td>Three.js frame budget</td><td>✅ Implemented</td><td><code>updateFrameBudget()</code> adjusts pixel ratio</td></tr><tr><td>Viewport pause (Three)</td><td>✅ Implemented</td><td>IntersectionObserver-based</td></tr><tr><td>Babylon loop pause</td><td>❌ Missing</td><td><code>runRenderLoop</code> continuous</td></tr><tr><td>Grid re-render</td><td>❌ Every frame</td><td><code>renderFrame()</code> clears &amp; re-renders all cells</td></tr><tr><td>Annotation projection</td><td>❌ O(n²) layout thrashing</td><td><code>getBoundingClientRect()</code> inside nested loops</td></tr><tr><td>Resource disposal</td><td>⚠️ Partial</td><td>Timers/observers in AnnotationManager need audit</td></tr></tbody></table>
+<p><strong>Observation:</strong> Three.js 路径已有节电措施，Babylon 路径仍是主要能耗风险；标注系统是交互帧率瓶颈。</p>
+<hr>
+<h2 id="7-principles-compliance">7. Principles Compliance</h2>
+<p>对照 <code>rubrics/principles.md</code>：</p>
+<table><thead><tr><th>Principle</th><th>Compliance</th><th>Notes</th></tr></thead><tbody><tr><td>Prefer explicit contracts</td><td>⚠️ Partial</td><td>渲染器接口较好，但内部大量 <code>as</code>/<code>!</code> 与非空断言</td></tr><tr><td>Fail fast and noisily</td><td>❌ Weak</td><td>多处 catch 静默吞没错误</td></tr><tr><td>Keep surfaces small and typed</td><td>⚠️ Partial</td><td><code>PluginStore</code> 暴露 raw setState；设置校验不足</td></tr><tr><td>Make state explicit and owned</td><td>⚠️ Partial</td><td>视图直接 mutate persisted profiles；DOM-as-state 在 helper-buttons</td></tr><tr><td>Secure by default</td><td>✅ Strong</td><td>本地优先、Babylon 网络守卫、远程草稿默认关闭</td></tr><tr><td>Verify at boundaries</td><td>⚠️ Partial</td><td>类型边界校验不足；远程内容未做 HTML 转义</td></tr><tr><td>Document why, not just what</td><td>⚠️ Partial</td><td>文档丰富，但代码级 JSDoc 与 TODO 不足</td></tr><tr><td>Test what must not break</td><td>❌ Weak</td><td>无单元测试；关键转换管道未覆盖</td></tr><tr><td>Reduce and justify dependencies</td><td>⚠️ Partial</td><td>同时依赖 Three 与 Babylon；声明了未使用的 Babylon 包</td></tr><tr><td>Review risk in code paths that touch money, data, or identity</td><td>✅ Mostly</td><td>远程草稿与转换命令有安全思考，但实现上有 gaps</td></tr></tbody></table>
+<hr>
+<h2 id="8-recommended-fix-order">8. Recommended Fix Order</h2>
+<p>按风险收益比排序，优先处理阻塞发布与数据丢失问题：</p>
+<ol>
+<li><strong>REL-1</strong> — 同步 package-lock.json 到 0.5.5（5 分钟，解除 release 阻塞）</li>
+<li><strong>REL-2</strong> — 解决 main.js dirty/锁定，确保 <code>npm run build</code> 可用（15 分钟）</li>
+<li><strong>STB-1</strong> — PluginStore unload flush（30 分钟，防止数据丢失）</li>
+<li><strong>SEC-1</strong> — 升级 esbuild 并重新生成 lockfile（30 分钟）</li>
+<li><strong>SEC-2</strong> — 远程草稿输出 HTML/Markdown 转义（3 小时，用户安全）</li>
+<li><strong>SEC-3</strong> — 模型派生字符串 HTML 转义（2 小时）</li>
+<li><strong>TST-5</strong> — CI/release workflow 加入 eslint 并修复现有错误（2 小时）</li>
+<li><strong>PER-1</strong> — 减少 bundle 体积：移除未使用 Babylon 包，评估代码分割（1-2 天）</li>
+<li><strong>PER-2</strong> / <strong>PER-3</strong> / <strong>PER-4</strong> — Babylon 循环/Grid/标注投影性能优化（各 4 小时 - 1 天）</li>
+<li><strong>TST-1</strong> / <strong>TST-4</strong> — 引入单元测试与转换 mock 测试（各 1-2 天）</li>
+<li><strong>MAINT-1</strong> / <strong>MAINT-2</strong> — 拆分 scene 神类与消除双端重复（1-2 周，长期架构投资）</li>
+</ol>
+<hr>
+<h2 id="9-quick-wins">9. Quick Wins（本周可完成）</h2>
+<table><thead><tr><th>ID</th><th>Fix</th><th>Effort</th><th>Impact</th></tr></thead><tbody><tr><td>REL-1</td><td>同步 package-lock 版本</td><td>5 min</td><td>解除 release 阻塞</td></tr><tr><td>REL-2</td><td>关闭锁定进程并提交干净 main.js</td><td>15 min</td><td>恢复本地构建</td></tr><tr><td>REL-3</td><td>补充 CHANGELOG 0.5.3/0.5.5</td><td>20 min</td><td>发布文档完整</td></tr><tr><td>REL-4</td><td>更新文档版本示例</td><td>15 min</td><td>新贡献者体验</td></tr><tr><td>SEC-1</td><td>升级 esbuild</td><td>30 min</td><td>消除 high 漏洞</td></tr><tr><td>STB-1</td><td>store unload flush</td><td>30 min</td><td>防止数据丢失</td></tr><tr><td>OBS-1</td><td>info 日志改用 console.info</td><td>5 min</td><td>日志可见性</td></tr><tr><td>SUP-2</td><td>移除未使用 Babylon 包</td><td>15 min</td><td>减小依赖面</td></tr><tr><td>REL-5 / REL-6</td><td>收紧 release tag 触发与输入处理</td><td>25 min</td><td>供应链安全</td></tr><tr><td>STB-2 starter</td><td>为所有空 catch 添加 warn 日志</td><td>2 h</td><td>调试能力</td></tr></tbody></table>
+<hr>
+<h2 id="10-long-term-refactor-plan">10. Long-Term Refactor Plan</h2>
+<h3 id="architecture">10.1 渲染器架构瘦身（2-4 周）</h3>
+<ul>
+<li>提取 <code>SceneController</code> 接口：measurement、focus、explode/disassembly、wireframe、snapshot、frame budget。</li>
+<li>Three.js 与 Babylon.js 各自实现 <code>RendererAdapter</code>，将平台无关逻辑上提。</li>
+<li>目标：<code>src/render/three/scene.ts</code> 与 <code>src/render/babylon/scene.ts</code> 均 &lt; 800 行。</li>
+</ul>
+<h3 id="102-1-">10.2 状态管理规范化（1 周）</h3>
+<ul>
+<li><code>PluginStore</code> 提供 typed actions：<code>registerPart</code>、<code>addPin</code>、<code>updateProfile</code>。</li>
+<li>视图层禁止直接 <code>setState</code>。</li>
+<li>增加 <code>schemaVersion</code> 与迁移逻辑。</li>
+</ul>
+<h3 id="testing">10.3 测试金字塔建设（2-4 周）</h3>
+<ul>
+<li>引入 Vitest。</li>
+<li>单元测试：resolve-path、geometry、component-identity、remote-draft normalization、store actions。</li>
+<li>mock 转换测试：stub Python/CLI 脚本覆盖 STEP/IGES/OBJ/FBX/3MF/DAE。</li>
+<li>将现有验证脚本的断言从 CSS 类/文案迁移到 <code>data-testid</code>。</li>
+</ul>
+<h3 id="privacy">10.4 安全与隐私加固（1-2 周）</h3>
+<ul>
+<li>统一不可信输入清洗层（模型元数据、远程草稿、LLM 输出）。</li>
+<li>转换器命令 allowlist / PATH 解析 / 校验。</li>
+<li>远程 endpoint 私有 IP 警告与 allowlist。</li>
+<li>提示注入测试矩阵。</li>
+</ul>
+<h3 id="performance">10.5 性能专项（2-3 周）</h3>
+<ul>
+<li>Babylon viewport pause / dirty rendering。</li>
+<li>3dgrid 静态缓存。</li>
+<li>Annotation projection 批量读写 + 缓存 + 上限。</li>
+<li>Bundle splitting / lazy Babylon loading。</li>
+</ul>
+<h3 id="release">10.6 发布工程自动化（1 周）</h3>
+<ul>
+<li>CI 中 <code>npm run lint</code>、<code>npm audit</code>、<code>npm run verify:release</code>。</li>
+<li>文档版本号自动化校验。</li>
+<li>考虑 changesets 或 conventional-changelog 生成 release notes。</li>
+</ul>
+<hr>
+<h2 id="11-methodology-limitations">11. Methodology &amp; Limitations</h2>
+<ul>
+<li><strong>Approach:</strong> 基于 <code>fuck-my-shit-mountain</code> skill 的 full 模式，结合静态代码分析、依赖审计、构建/类型/lint 检查、recent commit 分析、6 个并行的聚焦探索代理。</li>
+<li><strong>Tools used:</strong> <code>Read</code>, <code>Grep</code>, <code>Glob</code>, <code>Bash</code> (git, npm, eslint, npm audit, wc, file), <code>Agent</code> (explore × 6).</li>
+<li><strong>What was not done:</strong> 未在真实 Obsidian 桌面/移动客户端做运行时测试；未做动态渗透测试；未对远程 LLM endpoint 做提示注入测试；未使用 profiler 采样真实用户场景。</li>
+<li>Confidence: 所有 Confirmed 发现均有代码/配置/输出证据；Suspected 发现已标注。</li>
+</ul>
+<hr>
+<p><em>Report generated by Kimi Code CLI on 2026-06-14.</em></p>
+  <div id="findings"></div>
+<div id="fix-order"></div>
+<div id="maintainability"></div>
+<div id="cost"></div>
+<div id="ai-safety"></div>
+<div id="fallback"></div>
+<div id="testing-authenticity"></div>
+<div id="frontend-state"></div>
+<div id="dependency-weight"></div>
+<div id="code-consistency"></div>
+<div id="comment-coverage"></div>
+</main>
+</div>
+</body>
+</html>
