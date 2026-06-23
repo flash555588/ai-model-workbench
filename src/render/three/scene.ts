@@ -83,6 +83,11 @@ import type {
   MeasurementScale,
   MeasurementUnit,
 } from "../preview/types";
+import {
+  createAnnotationViewportProvider,
+  formatAnnotationCameraStateKey,
+  projectNormalizedDevicePointToCanvas,
+} from "../preview/annotation-projection";
 import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import {
@@ -555,7 +560,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getAnnotationProvider(): AnnotationViewportProvider {
     const canvas = this.renderer.domElement;
-    return {
+    return createAnnotationViewportProvider({
       canvas,
       observeRender: (callback) => {
         this.renderObservers.add(callback);
@@ -566,7 +571,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       getCameraStateKey: () => this.getAnnotationCameraStateKey(),
       projectWorldPoint: (point, result) => this.projectAnnotationWorldPoint(point, result),
       isWorldPointOccluded: (point) => this.isAnnotationWorldPointOccluded(point),
-    };
+    });
   }
 
   exportModelInfo(modelPath?: string): string {
@@ -1768,15 +1773,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private getAnnotationCameraStateKey(): string {
-    return [
-      this.camera.position.x.toFixed(3),
-      this.camera.position.y.toFixed(3),
-      this.camera.position.z.toFixed(3),
-      this.controls.target.x.toFixed(2),
-      this.controls.target.y.toFixed(2),
-      this.controls.target.z.toFixed(2),
-      this.camera instanceof PerspectiveCamera ? this.camera.fov.toFixed(2) : this.camera.zoom.toFixed(3),
-    ].join("_");
+    return formatAnnotationCameraStateKey([
+      { value: this.camera.position.x, digits: 3 },
+      { value: this.camera.position.y, digits: 3 },
+      { value: this.camera.position.z, digits: 3 },
+      { value: this.controls.target.x, digits: 2 },
+      { value: this.controls.target.y, digits: 2 },
+      { value: this.controls.target.z, digits: 2 },
+      {
+        value: this.camera instanceof PerspectiveCamera ? this.camera.fov : this.camera.zoom,
+        digits: this.camera instanceof PerspectiveCamera ? 2 : 3,
+      },
+    ]);
   }
 
   private projectAnnotationWorldPoint(point: PreviewWorldPoint, result: PreviewProjectionResult): boolean {
@@ -1788,17 +1796,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.scene.updateMatrixWorld();
     this.camera.updateMatrixWorld();
     this.annotationProjection.set(point.x, point.y, point.z).project(this.camera);
-
-    if (!Number.isFinite(this.annotationProjection.x)
-      || !Number.isFinite(this.annotationProjection.y)
-      || !Number.isFinite(this.annotationProjection.z)) {
-      return false;
-    }
-
-    result.screenX = ((this.annotationProjection.x + 1) / 2) * canvas.clientWidth;
-    result.screenY = ((1 - this.annotationProjection.y) / 2) * canvas.clientHeight;
-    result.depth = (this.annotationProjection.z + 1) / 2;
-    return true;
+    return projectNormalizedDevicePointToCanvas(this.annotationProjection, canvas, result);
   }
 
   private isAnnotationWorldPointOccluded(point: PreviewWorldPoint): boolean {

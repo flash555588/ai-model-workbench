@@ -21,6 +21,10 @@ import { createLogger } from "../utils/log";
 import { buildLocalAnalysisResult, buildPartRecordsFromEvidence } from "./workbench/analysis-result";
 import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
+import {
+  attachModelPreviewCanvasShortcuts,
+  configureModelPreviewCanvas,
+} from "./inline/preview-canvas-accessibility";
 
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
@@ -162,6 +166,8 @@ export class DirectModelView extends FileView {
     const host = staging.createDiv({ cls: "ai3d-preview-host" });
     const canvas = staging.createEl("canvas");
     canvas.className = "ai3d-canvas-full";
+    configureModelPreviewCanvas(canvas, "direct-view", file.path);
+    attachModelPreviewCanvasShortcuts(canvas, () => this.preview);
     host.appendChild(canvas);
     // Semi-transparent overlay for annotation mode
     const modeOverlay = staging.createDiv();

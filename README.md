@@ -193,6 +193,8 @@ The bundled Babylon.js runtime contains generic loader utilities that are capabl
 
 Knowledge-note generation is local-only by default. If you configure an optional remote draft service, the plugin sends only the selected evidence payload to your configured `POST /draft-note` endpoint. The current client refuses raw model upload, and geometry summaries or preview image references must be enabled explicitly before they are included.
 
+Copied diagnostics reports are sanitized for public support use: draft service URLs, converter command paths, and vault-relative model/report/index paths are omitted or redacted while preserving renderer state, counts, and status summaries.
+
 Release assets are limited to the three files Obsidian downloads: `main.js`, `manifest.json`, and `styles.css`. GitHub Actions builds these files from source and publishes artifact attestations for provenance verification.
 
 ---
