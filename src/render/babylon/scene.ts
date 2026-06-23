@@ -59,6 +59,11 @@ import {
 import { createPreviewOrbitCameraFit } from "../preview/camera-fit";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import {
+  createAnnotationViewportProvider,
+  formatAnnotationCameraStateKey,
+  projectViewportPointToCanvas,
+} from "../preview/annotation-projection";
+import {
   createPreviewEvidence,
   createPreviewMaterialSummaryLabel,
   type PreviewGroupedPartCandidates,
@@ -1159,7 +1164,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private getAnnotationCameraStateKey(): string {
-    return `${this.camera.alpha.toFixed(3)}_${this.camera.beta.toFixed(3)}_${this.camera.radius.toFixed(3)}_${this.camera.target.x.toFixed(2)}_${this.camera.target.y.toFixed(2)}_${this.camera.target.z.toFixed(2)}`;
+    return formatAnnotationCameraStateKey([
+      { value: this.camera.alpha, digits: 3 },
+      { value: this.camera.beta, digits: 3 },
+      { value: this.camera.radius, digits: 3 },
+      { value: this.camera.target.x, digits: 2 },
+      { value: this.camera.target.y, digits: 2 },
+      { value: this.camera.target.z, digits: 2 },
+    ]);
   }
 
   private projectAnnotationWorldPoint(point: PreviewWorldPoint, result: PreviewProjectionResult): boolean {
@@ -1184,13 +1196,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.camera.viewport.toGlobal(rw, rh),
       BabylonModelPreview.annotationProjection,
     );
-
-    const scaleX = canvas.clientWidth / rw;
-    const scaleY = canvas.clientHeight / rh;
-    result.screenX = BabylonModelPreview.annotationProjection.x * scaleX;
-    result.screenY = BabylonModelPreview.annotationProjection.y * scaleY;
-    result.depth = BabylonModelPreview.annotationProjection.z;
-    return true;
+    return projectViewportPointToCanvas(
+      BabylonModelPreview.annotationProjection,
+      rw,
+      rh,
+      canvas,
+      result,
+    );
   }
 
   private isAnnotationWorldPointOccluded(point: PreviewWorldPoint): boolean {
@@ -1223,7 +1235,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!canvas) {
       throw new Error("Preview canvas is unavailable");
     }
-    return {
+    return createAnnotationViewportProvider({
       canvas,
       observeRender: (callback) => {
         const obs = this.scene.onAfterRenderCameraObservable.add((camera) => {
@@ -1238,7 +1250,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       getCameraStateKey: () => this.getAnnotationCameraStateKey(),
       projectWorldPoint: (point, result) => this.projectAnnotationWorldPoint(point, result),
       isWorldPointOccluded: (point) => this.isAnnotationWorldPointOccluded(point),
-    };
+    });
   }
 
   getCanvas(): HTMLCanvasElement | null {

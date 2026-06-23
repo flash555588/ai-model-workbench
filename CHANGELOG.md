@@ -9,6 +9,7 @@
 - UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
 - Stability: increase default conversion timeout from 120s to 300s so large STEP models can complete without timing out.
 - Security: sanitize remote draft output and model-derived metadata before writing generated notes.
+- Security: redact vault-relative model, report, index, and folder paths from copied diagnostics reports by default.
 - Security: validate converter command paths and reject shell metacharacters.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
 - Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.

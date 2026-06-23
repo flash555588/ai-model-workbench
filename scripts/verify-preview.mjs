@@ -312,6 +312,36 @@ async function canvasPixelStats(page) {
   });
 }
 
+async function verifyCanvasAccessibility(page) {
+  const canvas = page.locator("#preview-canvas");
+  const metadata = await canvas.evaluate((entry) => ({
+    role: entry.getAttribute("role"),
+    label: entry.getAttribute("aria-label"),
+    shortcuts: entry.getAttribute("aria-keyshortcuts"),
+    title: entry.getAttribute("title"),
+    tabIndex: entry.tabIndex,
+  }));
+
+  assert(metadata.role === "application", `Preview canvas role was unexpected: ${metadata.role ?? "null"}`);
+  assert(metadata.tabIndex === 0, `Preview canvas is not keyboard focusable: tabIndex=${metadata.tabIndex}`);
+  assert(
+    typeof metadata.label === "string" && metadata.label.includes("3D") && metadata.label.includes("Shortcuts:"),
+    `Preview canvas label was missing useful context: ${metadata.label ?? "null"}`,
+  );
+  assert(
+    typeof metadata.shortcuts === "string" && metadata.shortcuts.includes("R") && metadata.shortcuts.includes("W"),
+    `Preview canvas keyboard shortcuts were missing reset/wireframe keys: ${metadata.shortcuts ?? "null"}`,
+  );
+  assert(
+    typeof metadata.title === "string" && metadata.title.includes("reset view"),
+    `Preview canvas title did not expose shortcut hints: ${metadata.title ?? "null"}`,
+  );
+
+  await canvas.focus();
+  const focused = await page.evaluate(() => document.activeElement === document.querySelector("#preview-canvas"));
+  assert(focused, "Preview canvas did not receive keyboard focus");
+}
+
 async function readPreviewState(page) {
   try {
     return await page.evaluate(() => window.__ai3dPreviewVerify ?? null);
@@ -826,6 +856,7 @@ async function verify() {
     verifyGroupedPartsEvidence(state);
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
+    await verifyCanvasAccessibility(page);
     await page.waitForTimeout(500);
     const stats = await canvasPixelStats(page);
     assert(stats.nonBackgroundRatio > 0.01, `Canvas looks blank: ${JSON.stringify(stats)}`);

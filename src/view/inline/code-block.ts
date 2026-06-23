@@ -5,7 +5,7 @@ import { AnnotationManager } from "../../render/preview/annotations";
 import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
-import { supportsAnnotationPreview, supportsMeasurementPreview } from "../../render/preview/types";
+import { supportsAnnotationPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
@@ -22,6 +22,12 @@ import { formatT, t } from "../../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
 import { isMobile } from "../../utils/device";
 import { createLogger } from "../../utils/log";
+import {
+  attachGridPreviewCanvasShortcuts,
+  attachModelPreviewCanvasShortcuts,
+  configureGridPreviewCanvas,
+  configureModelPreviewCanvas,
+} from "./preview-canvas-accessibility";
 
 const log = createLogger("inline-code-block");
 
@@ -198,17 +204,7 @@ export function registerCodeBlockProcessor(
       }
 
       const canvas = host.createEl("canvas", { cls: "ai3d-canvas-full" });
-      canvas.tabIndex = 0;
-      canvas.addEventListener("keydown", (e) => {
-        if (destroyed || !preview) return;
-        const key = e.key.toLowerCase();
-        if (key === "r") { preview.resetView?.(); e.preventDefault(); }
-        else if (key === "w") { preview.toggleWireframe?.(); e.preventDefault(); }
-        else if (key === "g") { preview.toggleOrientationGizmo?.(); e.preventDefault(); }
-        else if (key === "b") { preview.toggleBoundingBox?.(); e.preventDefault(); }
-        else if (key === " ") { preview.toggleAnimation?.(); e.preventDefault(); }
-        else if (key === "m") { if (supportsMeasurementPreview(preview)) { preview.toggleMeasurement(); } e.preventDefault(); }
-      });
+      configureModelPreviewCanvas(canvas, "inline", modelPath);
       host.appendChild(canvas);
 
       // Add helper buttons
@@ -217,6 +213,7 @@ export function registerCodeBlockProcessor(
       let annotationVisible = true;
       let destroyed = false;
       let loaded = false;
+      attachModelPreviewCanvasShortcuts(canvas, () => destroyed ? null : preview);
 
       const toolbar: HelperToolbar = createHelperButtons(el, host, app, () => preview, () => modelPath, () => {
         if (destroyed) return;
@@ -495,13 +492,7 @@ export function registerGridCodeBlockProcessor(
       // Create grid container
       const gridHost = el.createDiv({ cls: "ai3d-grid-host" });
       const canvas = gridHost.createEl("canvas");
-      canvas.tabIndex = 0;
-      canvas.addEventListener("keydown", (e) => {
-        if (destroyed || !renderer) return;
-        const key = e.key.toLowerCase();
-        if (key === "r") { renderer.resetView?.(); e.preventDefault(); }
-        else if (key === "w") { renderer.toggleWireframe?.(); e.preventDefault(); }
-      });
+      configureGridPreviewCanvas(canvas);
       gridHost.appendChild(canvas);
 
       // Height controlled by CSS max-height only; rowHeight sets inline height (capped by CSS max-height)
@@ -513,6 +504,7 @@ export function registerGridCodeBlockProcessor(
       let renderer: PreviewGridRenderer | null = null;
       let destroyed = false;
       let loaded = false;
+      attachGridPreviewCanvasShortcuts(canvas, () => destroyed ? null : renderer);
 
       const gridToolbar: HelperToolbar = createHelperButtons(el, gridHost, app, () => renderer, () => helperSourcePath, () => {
         if (destroyed) return;
