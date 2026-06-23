@@ -677,9 +677,9 @@ If verification fails, the script saves a screenshot and a log with preview stat
 
 ### Obsidian Verification
 
-Run `npm run verify:obsidian` on macOS before release when Obsidian is installed. The script builds a temporary test vault under `/tmp/ai-model-workbench-verify-vault`, installs the packaged plugin, opens a note in Obsidian through a remote debugging port, trusts the temporary vault when prompted, confirms that GLB/STL preview canvases are loaded, checks converter feedback for an FBX route without FBX2glTF enabled, then opens the real GLB file view with Experimental Three workbench enabled and checks backend selection, focus/disassembly controls, panel explode controls, annotation mode, and knowledge-note generation.
+Run `npm run verify:obsidian` before release when Obsidian is installed and the host can launch it. The script builds a temporary test vault under the OS temp directory, installs the packaged plugin, opens a note in Obsidian through a remote debugging port, trusts the temporary vault when prompted, confirms that GLB/STL preview canvases are loaded, checks converter feedback for an FBX route without FBX2glTF enabled, then opens the real GLB file view with Experimental Three workbench enabled and checks backend selection, focus/disassembly controls, annotation mode, diagnostics command availability, and knowledge-note generation.
 
-Use `npm run verify:obsidian -- --clean` when you want the temporary vault removed after the run. On macOS, the clean path quits Obsidian and unregisters the temporary vault before deleting it so the developer console does not keep reporting stale `ENOENT` reads from `/tmp`.
+Use `npm run verify:obsidian -- --clean` when you want the temporary vault removed after the run. The clean path quits Obsidian and unregisters the temporary vault before deleting it so the developer console does not keep reporting stale vault reads.
 
 ### Knowledge Note Verification
 
@@ -697,7 +697,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.5.5`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.5.5` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.5.8`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.5.8` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 
