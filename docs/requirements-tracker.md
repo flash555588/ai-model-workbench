@@ -34,7 +34,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-005 | Registered part reuse feedback is visible in generated notes and direct workbench UI | P1 | Verified | `npm run verify:knowledge-index`, `npm run typecheck`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three` |
 | REQ-006 | Diagnostics reports expose support context without leaking draft service URLs, converter command paths, or vault-relative model/note paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
-| REQ-008 | Real Obsidian smoke verification covers install, rendering, knowledge generation, and diagnostics when the host can launch Obsidian | P1 | Accepted | `npm run verify:obsidian` |
+| REQ-008 | Real Obsidian smoke verification covers install, rendering, knowledge generation, and diagnostics when the host can launch Obsidian | P1 | Verified | `npm run verify:obsidian -- --clean` |
 
 ## Active Requirement Details
 
@@ -76,6 +76,19 @@ future agent notes can refer to the same requirement over time.
   - `npm run verify:knowledge-index`
   - `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three`
   - `npm run verify:preview:success` for full route coverage when changing broader preview behavior.
+
+### REQ-008: Real Obsidian Smoke Verification
+
+- Status: Verified
+- Priority: P1
+- User value: Release candidates should be proven inside the real Obsidian app, not only browser or Node shims.
+- Current behavior:
+  - The verifier installs the packaged plugin assets into a temporary vault.
+  - It opens a note with GLB, STL, and intentional FBX conversion-failure previews.
+  - It verifies rendered preview canvases, converter feedback, direct file workbench routing, control interactions, diagnostics command availability, and knowledge-note generation.
+  - `--clean` removes the temporary vault after the run.
+- Verification:
+  - `npm run verify:obsidian -- --clean`
 
 ## New Requirement Template
 

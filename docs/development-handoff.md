@@ -8,7 +8,7 @@ README, implementation, verification scripts, and release/security docs.
 
 AI Model Workbench is an Obsidian plugin that renders 3D model files inside a vault,
 adds 3D annotations/bookmarks, and generates linked knowledge notes from model evidence.
-The current package version is `0.5.5`.
+The current package version is `0.5.8`.
 
 Important runtime files:
 
@@ -171,8 +171,9 @@ npm run verify:preview -- --model "models/resource-fixtures/grouped-parts/groupe
 ## Tool And Environment Notes
 
 - Node/npm are used for all builds and verification scripts.
-- Obsidian app verification is macOS-oriented in the current script and uses a temporary
-  vault under `/tmp/ai-model-workbench-verify-vault`.
+- Obsidian app verification supports the local host platform when Obsidian can launch.
+  It uses a temporary vault under the OS temp directory and `--clean` removes it after
+  the run.
 - Converter features depend on local desktop tools and Python environments. Do not assume
   a converter exists because a command name is common.
 - Release publishing should rely on GitHub Actions `GITHUB_TOKEN`, not pasted PATs.
@@ -216,13 +217,13 @@ npm run verify:preview -- --model "models/resource-fixtures/grouped-parts/groupe
 2. Run `npm run build`.
 3. Run `npm run verify:release`.
 4. Scan for tokens as described in `SECURITY.md`.
-5. Publish through GitHub Actions with a tag such as `0.5.5` (no `v` prefix).
+5. Publish through GitHub Actions with a tag such as `0.5.8` (no `v` prefix).
 
 ## Current Follow-Up Direction
 
-Short-term product direction after `0.5.5`:
+Short-term product direction after `0.5.8`:
 
-- Tighten auto part registration and cross-model part reuse feedback.
+- Keep tightening auto part registration and cross-model part reuse feedback.
 - Keep improving direct workbench UX without prematurely moving all workbench routes.
 - Maintain Three.js as the single-model main path.
 - Keep `3dgrid` and production workbench conservative until workflow-level evidence says
