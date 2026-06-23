@@ -88,16 +88,36 @@ await writeFile(entryPath, `
     state,
     generatedAt: "2026-01-01T00:00:00.000Z",
   });
+  const fullPathReport = buildDiagnosticsReport({
+    manifest: {
+      id: "ai-model-workbench",
+      name: "AI Model Workbench",
+      version: "0.4.1",
+      minAppVersion: "1.5.0",
+      description: "Turn 3D models into linked knowledge assets.",
+      author: "flash",
+    },
+    state,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    includeVaultPaths: true,
+  });
 
   assert(report.includes("Plugin version: 0.4.1"), "Plugin version missing");
   assert(report.includes("Obsidian API version: 1.12.7"), "Obsidian API version missing");
   assert(report.includes("Current route: three"), "Route summary missing");
-  assert(report.includes("Knowledge index: set (Analysis/3D Reports/example Index.md)"), "Knowledge index status missing");
+  assert(report.includes("Path: <redacted .glb>"), "Current model path was not redacted");
+  assert(report.includes("Knowledge index: set (<redacted .md>)"), "Knowledge index status missing or unredacted");
+  assert(report.includes("Analysis sidecar: set (<redacted .json>)"), "Analysis sidecar status missing or unredacted");
+  assert(report.includes("Report folder: <redacted>"), "Report folder was not redacted");
   assert(report.includes("Last part notes: 2"), "Last generation part count missing");
   assert(report.includes("service configured"), "Remote service configured status missing");
   assert(!report.includes("secret.example.invalid"), "Diagnostics leaked service host");
   assert(!report.includes("token=leak"), "Diagnostics leaked service token");
   assert(!report.includes("/private/"), "Diagnostics leaked command path");
+  assert(!report.includes("models/example.glb"), "Diagnostics leaked current model path");
+  assert(!report.includes("Analysis/3D Reports"), "Diagnostics leaked report folder path");
+  assert(!report.includes("example Report.md"), "Diagnostics leaked report note name");
+  assert(fullPathReport.includes("Knowledge index: set (Analysis/3D Reports/example Index.md)"), "Full-path diagnostics mode did not include vault paths");
 
   console.log("Diagnostics verification passed");
 `, "utf8");

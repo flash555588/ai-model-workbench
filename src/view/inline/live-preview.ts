@@ -25,6 +25,10 @@ import { isMobile } from "../../utils/device";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
 import { t } from "../../i18n";
 import { createLogger } from "../../utils/log";
+import {
+  attachModelPreviewCanvasShortcuts,
+  configureModelPreviewCanvas,
+} from "./preview-canvas-accessibility";
 
 const log = createLogger("inline-live-preview");
 
@@ -93,6 +97,8 @@ class ModelEmbedWidget extends WidgetType {
     const canvas = createStagedEl("canvas", "ai3d-embed-canvas");
     const effectiveHeight = mobile ? Math.min(this.height, 220) : this.height;
     canvas.style.setProperty("--ai3d-embed-height", `${effectiveHeight}px`);
+    configureModelPreviewCanvas(canvas, "live-preview", this.modelPath);
+    attachModelPreviewCanvasShortcuts(canvas, () => this.destroyed ? null : this.preview);
     host.appendChild(canvas);
 
     const loading = createLoadingOverlay(host);
