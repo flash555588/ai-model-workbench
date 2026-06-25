@@ -285,6 +285,7 @@ future agent notes can refer to the same requirement over time.
   - `npm run typecheck`
   - `npm test`
   - `npm test -- --run src/view/direct-workbench-panel.test.ts`
+  - `npm test -- --run src/render/three/mesh-preview.test.ts`
   - `npm run verify:preview`
   - `npm run verify:preview:success`
 - Related files:
@@ -292,6 +293,7 @@ future agent notes can refer to the same requirement over time.
   - `src/view/direct-view-layout.ts`
   - `src/view/direct-workbench-panel.ts`
   - `src/render/three/scene.ts`
+  - `src/render/three/mesh-preview.ts`
   - `src/render/babylon/scene.ts`
   - `src/render/preview/types.ts`
 
