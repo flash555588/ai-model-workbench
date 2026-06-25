@@ -65,7 +65,10 @@ export function createPreviewPerspectiveCameraFit(
   options: PreviewPerspectiveCameraFitOptions = {},
 ): PreviewPerspectiveCameraFit {
   const metrics = getPreviewBoundsMetrics(bounds);
-  const distance = Math.max(metrics.maxSpan, 1) * (options.distanceMultiplier ?? 1.8);
+  const modelSpan = Math.max(metrics.maxSpan, metrics.radius, Number.EPSILON);
+  const distance = modelSpan * (options.distanceMultiplier ?? 1.8);
+  const near = Math.max(options.minNear ?? Math.max(modelSpan / 10000, 0.00001), modelSpan / (options.nearDivisor ?? 1000));
+  const far = Math.max(options.minFar ?? Math.max(modelSpan * (options.farMultiplier ?? 20), 1), distance + metrics.radius * 4);
   return {
     target: clonePreviewWorldPoint(metrics.center),
     position: addPreviewWorldPoints(metrics.center, {
@@ -73,7 +76,7 @@ export function createPreviewPerspectiveCameraFit(
       y: distance * (options.elevationFactor ?? 0.65),
       z: distance,
     }),
-    near: Math.max(options.minNear ?? 0.01, metrics.maxSpan / (options.nearDivisor ?? 100)),
-    far: Math.max(options.minFar ?? 100, metrics.maxSpan * (options.farMultiplier ?? 20)),
+    near,
+    far,
   };
 }

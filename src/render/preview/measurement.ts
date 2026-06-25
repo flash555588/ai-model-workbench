@@ -1,18 +1,6 @@
-import type { MeasurementScale, MeasurementUnit, PreviewWorldPoint } from "./types";
+import type { MeasurementReading, MeasurementRecord, MeasurementScale, MeasurementUnit, PreviewWorldPoint } from "./types";
 
-export interface MeasurementReading {
-  distance: number;
-  delta: PreviewWorldPoint;
-  absDelta: PreviewWorldPoint;
-  unit: MeasurementUnit;
-}
-
-export interface MeasurementRecord {
-  index: number;
-  start: PreviewWorldPoint;
-  end: PreviewWorldPoint;
-  reading: MeasurementReading;
-}
+export type { MeasurementReading, MeasurementRecord } from "./types";
 
 const UNIT_FACTORS_TO_METERS: Record<MeasurementUnit, number> = {
   um: 0.000001,
@@ -30,7 +18,8 @@ const UNIT_LABELS: Record<MeasurementUnit, string> = {
 
 export function normalizeMeasurementUnit(unit: string | undefined): MeasurementUnit {
   switch (unit) {
-    case "μm":
+    case "\u00b5m":
+    case "\u03bcm":
       return "um";
     case "um":
     case "mm":
@@ -89,12 +78,16 @@ function chooseDisplayUnit(value: number, unit: MeasurementUnit): MeasurementUni
   return "m";
 }
 
+function getMeasurementUnitLabel(unit: MeasurementUnit): string {
+  return unit === "um" ? "um" : UNIT_LABELS[unit];
+}
+
 export function formatMeasurementValue(value: number, unit: MeasurementUnit, autoUnit = true): string {
   const displayUnit = autoUnit ? chooseDisplayUnit(value, unit) : unit;
   const converted = value * UNIT_FACTORS_TO_METERS[unit] / UNIT_FACTORS_TO_METERS[displayUnit];
   const abs = Math.abs(converted);
   const decimals = abs >= 100 ? 1 : abs >= 10 ? 2 : 3;
-  return `${formatNumber(converted, decimals)} ${UNIT_LABELS[displayUnit]}`;
+  return `${formatNumber(converted, decimals)} ${getMeasurementUnitLabel(displayUnit)}`;
 }
 
 export function formatMeasurementAxisValue(value: number): string {
@@ -110,7 +103,7 @@ export function createMeasurementLabel(reading: MeasurementReading): { primary: 
       `X ${formatMeasurementAxisValue(reading.absDelta.x)}`,
       `Y ${formatMeasurementAxisValue(reading.absDelta.y)}`,
       `Z ${formatMeasurementAxisValue(reading.absDelta.z)}`,
-      UNIT_LABELS[reading.unit],
+      getMeasurementUnitLabel(reading.unit),
     ].join("  "),
   };
 }

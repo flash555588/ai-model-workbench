@@ -72,6 +72,14 @@ function parseExpectGroupParts() {
   return process.argv.includes("--expect-group-parts");
 }
 
+function parseExpectColorFidelity() {
+  return process.argv.includes("--expect-color-fidelity");
+}
+
+function parseExpectSmallParts() {
+  return process.argv.includes("--expect-small-parts");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
@@ -80,6 +88,8 @@ const verifyRouteOnly = parseRouteOnly();
 const verifyExpectedWarning = parseExpectWarning();
 const verifyExpectNoWarnings = parseExpectNoWarnings();
 const verifyExpectGroupParts = parseExpectGroupParts();
+const verifyExpectColorFidelity = parseExpectColorFidelity();
+const verifyExpectSmallParts = parseExpectSmallParts();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -282,6 +292,9 @@ async function canvasPixelStats(page) {
     const stepX = Math.max(1, Math.floor(width / 64));
     const stepY = Math.max(1, Math.floor(height / 64));
     let nonBackground = 0;
+    let redDominant = 0;
+    let greenDominant = 0;
+    let blueDominant = 0;
     let samples = 0;
     let min = 255;
     let max = 0;
@@ -298,6 +311,9 @@ async function canvasPixelStats(page) {
         max = Math.max(max, brightness);
         if (a > 0 && Math.abs(r - 32) + Math.abs(g - 36) + Math.abs(b - 46) > 18) {
           nonBackground += 1;
+          if (r > g * 1.25 && r > b * 1.25) redDominant += 1;
+          if (g > r * 1.2 && g > b * 1.2) greenDominant += 1;
+          if (b > r * 1.2 && b > g * 1.2) blueDominant += 1;
         }
         samples += 1;
       }
@@ -306,6 +322,9 @@ async function canvasPixelStats(page) {
     return {
       samples,
       nonBackground,
+      redDominant,
+      greenDominant,
+      blueDominant,
       nonBackgroundRatio: nonBackground / samples,
       contrast: max - min,
     };
@@ -358,6 +377,9 @@ const toolbarLabels = {
   axes: "Toggle orientation axes",
   boundingBox: "Toggle bounding box",
   resolution: "Change resolution",
+  measurement: "Toggle distance measurement",
+  copyMeasurements: "Copy measurements",
+  clearMeasurements: "Clear measurements",
 };
 
 async function getToolbarButton(page, label) {
@@ -426,6 +448,100 @@ async function pickSelectedPartInfo(page, box) {
   return { markdown: "", clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
 }
 
+async function readPickWorldPoint(page, clientX, clientY) {
+  return page.evaluate(({ clientX, clientY }) => new Promise((resolve) => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement) || typeof preview.onPick !== "function") {
+      resolve(null);
+      return;
+    }
+
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      release();
+      resolve(value);
+    };
+    const release = preview.onPick((result) => {
+      const point = preview.getPickWorldPoint?.(result);
+      settle(point ? { x: point.x, y: point.y, z: point.z } : null);
+    });
+
+    canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      clientX,
+      clientY,
+      isPrimary: true,
+      pointerId: 2,
+      pointerType: "mouse",
+    }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY,
+      isPrimary: true,
+      pointerId: 2,
+      pointerType: "mouse",
+    }));
+    window.setTimeout(() => settle(null), 250);
+  }), { clientX, clientY });
+}
+
+function worldPointDistance(left, right) {
+  return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
+}
+
+function clampClickToBox(box, clientX, clientY) {
+  return {
+    clientX: Math.min(Math.max(clientX, box.x + 8), box.x + box.width - 8),
+    clientY: Math.min(Math.max(clientY, box.y + 8), box.y + box.height - 8),
+  };
+}
+
+async function findMeasurementClickPair(page, box, firstPick) {
+  const candidates = [
+    { clientX: firstPick.clientX, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX + 64, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX - 64, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX, clientY: firstPick.clientY + 64 },
+    { clientX: firstPick.clientX, clientY: firstPick.clientY - 64 },
+    { clientX: firstPick.clientX + 48, clientY: firstPick.clientY + 48 },
+    { clientX: firstPick.clientX - 48, clientY: firstPick.clientY + 48 },
+    { clientX: firstPick.clientX + 48, clientY: firstPick.clientY - 48 },
+    { clientX: firstPick.clientX - 48, clientY: firstPick.clientY - 48 },
+    { clientX: box.x + box.width * 0.5, clientY: box.y + box.height * 0.5 },
+    { clientX: box.x + box.width * 0.56, clientY: box.y + box.height * 0.5 },
+    { clientX: box.x + box.width * 0.44, clientY: box.y + box.height * 0.5 },
+    { clientX: box.x + box.width * 0.5, clientY: box.y + box.height * 0.56 },
+    { clientX: box.x + box.width * 0.5, clientY: box.y + box.height * 0.44 },
+  ].map((entry) => clampClickToBox(box, entry.clientX, entry.clientY));
+
+  let first = null;
+  for (const candidate of candidates) {
+    const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
+    if (point) {
+      first = { ...candidate, point };
+      break;
+    }
+  }
+  assert(first, "Could not find a first pick point for measurement verification");
+
+  for (const candidate of candidates) {
+    const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
+    if (point && worldPointDistance(point, first.point) > 0.0001) {
+      return { first, second: { ...candidate, point } };
+    }
+  }
+
+  throw new Error("Could not find two distinct pick points for measurement verification");
+}
+
 async function verifyHelperToolbar(page) {
   await page.waitForSelector(".ai3d-helper-toolbar", { timeout: 5000 });
 
@@ -455,6 +571,89 @@ async function verifyHelperToolbar(page) {
     !!beforeText && !!afterText && beforeText !== afterText,
     `Resolution toolbar button did not cycle value: before=${beforeText ?? "null"}, after=${afterText ?? "null"}`,
   );
+}
+
+async function verifyMeasurementTool(page, box, firstPick) {
+  const clickPair = await findMeasurementClickPair(page, box, firstPick);
+  const measureBtn = await getToolbarButton(page, toolbarLabels.measurement);
+  await measureBtn.click();
+  await page.waitForTimeout(100);
+
+  const active = await page.evaluate(() => window.__ai3dPreview?.isMeasurementActive?.() ?? false);
+  assert(active === true, "Measurement mode did not turn on");
+  assert(
+    await measureBtn.evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
+    "Measurement toolbar button did not show active state",
+  );
+
+  await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY);
+  await page.waitForTimeout(100);
+  await dispatchCanvasClick(page, clickPair.second.clientX, clickPair.second.clientY);
+  await page.waitForTimeout(120);
+  const records = await page.evaluate(() => window.__ai3dPreview?.getMeasurementRecords?.() ?? []);
+
+  assert(records.length === 1, `Expected one measurement record, got ${JSON.stringify(records)}`);
+  assert(records[0].reading.distance > 0, `Measurement distance was not positive: ${JSON.stringify(records[0])}`);
+  assert(
+    records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
+    `Measurement axis deltas were empty: ${JSON.stringify(records[0])}`,
+  );
+
+  const calibrated = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    preview?.setMeasurementUnit?.("cm");
+    preview?.setMeasurementScale?.({ x: 2, y: 2, z: 2 });
+    return {
+      unit: preview?.getMeasurementUnit?.(),
+      records: preview?.getMeasurementRecords?.() ?? [],
+      markdown: preview?.exportMeasurements?.() ?? "",
+    };
+  });
+  assert(calibrated.unit === "cm", `Measurement unit did not update: ${JSON.stringify(calibrated)}`);
+  assert(calibrated.records[0]?.reading.unit === "cm", `Measurement record unit did not update: ${JSON.stringify(calibrated.records)}`);
+  assert(calibrated.markdown.includes("## Measurements"), "Measurement Markdown export missing heading");
+  assert(calibrated.markdown.includes("Delta X"), "Measurement Markdown export missing delta columns");
+  assert(calibrated.markdown.includes("cm"), `Measurement Markdown export missing calibrated unit: ${calibrated.markdown}`);
+
+  await measureBtn.click();
+  await page.waitForTimeout(100);
+  const toggledOff = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+  }));
+  assert(toggledOff.active === false, `Measurement mode did not turn off: ${JSON.stringify(toggledOff)}`);
+  assert(toggledOff.records.length === 1, "Completed measurements were cleared when measurement mode toggled off");
+
+  const copyBtn = await getToolbarButton(page, toolbarLabels.copyMeasurements);
+  await copyBtn.click();
+  await page.waitForTimeout(100);
+  const clipboardText = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
+  assert(clipboardText.includes("## Measurements") && clipboardText.includes("cm"), `Copied measurements were unexpected: ${clipboardText}`);
+
+  const clearBtn = await getToolbarButton(page, toolbarLabels.clearMeasurements);
+  await clearBtn.click();
+  await page.waitForTimeout(100);
+  const cleared = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+    markdown: window.__ai3dPreview?.exportMeasurements?.() ?? "not-empty",
+  }));
+  assert(cleared.active === false, "Clearing measurements unexpectedly enabled measurement mode");
+  assert(cleared.records.length === 0, `Clear measurements left records behind: ${JSON.stringify(cleared.records)}`);
+  assert(cleared.markdown === "", `Clear measurements left Markdown behind: ${cleared.markdown}`);
+
+  await measureBtn.click();
+  await page.waitForTimeout(100);
+  await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY);
+  await page.waitForTimeout(100);
+  await measureBtn.click();
+  await page.waitForTimeout(100);
+  const pendingCancelled = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+  }));
+  assert(pendingCancelled.active === false, "Measurement mode stayed active after cancelling a pending point");
+  assert(pendingCancelled.records.length === 0, "Cancelling a pending measurement created a record");
 }
 
 async function verifyReadonlyPinMode(page, state) {
@@ -592,6 +791,78 @@ async function verifyThreePerformanceBudgetSnapshot(page, route, performanceSnap
   assert(
     performanceSnapshot?.disposalAudit?.reason,
     `Three disposal audit is missing: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.renderedFrameCount === "number" && performanceSnapshot.renderedFrameCount > 0,
+    `Three performance snapshot is missing rendered frame count: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.idleFrameSkipCount === "number" && performanceSnapshot.idleFrameSkipCount >= 0,
+    `Three performance snapshot is missing idle frame count: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.averageRenderMs === "number" && performanceSnapshot.averageRenderMs >= 0,
+    `Three performance snapshot is missing average frame timing: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.p95RenderMs === "number" && performanceSnapshot.p95RenderMs >= 0,
+    `Three performance snapshot is missing p95 frame timing: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.maxRenderMs === "number" && performanceSnapshot.maxRenderMs >= 0,
+    `Three performance snapshot is missing max frame timing: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  assert(
+    typeof performanceSnapshot?.adaptiveScaleChangeCount === "number" && performanceSnapshot.adaptiveScaleChangeCount >= 0,
+    `Three performance snapshot is missing adaptive scale changes: ${JSON.stringify(performanceSnapshot)}`,
+  );
+  const quality = performanceSnapshot?.qualitySnapshot;
+  assert(quality?.backend === "three", `Three quality snapshot is missing: ${JSON.stringify(performanceSnapshot)}`);
+  assert(
+    quality.supportedFormats?.includes("glb") && quality.supportedFormats?.includes("obj"),
+    `Three quality snapshot missing direct formats: ${JSON.stringify(quality)}`,
+  );
+  assert(
+    quality.colorPipeline?.outputColorSpace === "srgb" && quality.colorPipeline?.toneMapping === "NoToneMapping",
+    `Three color pipeline drifted: ${JSON.stringify(quality?.colorPipeline)}`,
+  );
+  assert(
+    typeof quality.camera?.nearFarRatio === "number" && quality.camera.nearFarRatio > 1,
+    `Three quality snapshot missing camera precision data: ${JSON.stringify(quality)}`,
+  );
+  assert(
+    typeof quality.performance?.renderedFrameCount === "number" && quality.performance.renderedFrameCount > 0,
+    `Three quality snapshot missing rendered frame count: ${JSON.stringify(quality)}`,
+  );
+  assert(
+    typeof quality.performance?.averageRenderMs === "number" && quality.performance.averageRenderMs >= 0,
+    `Three quality snapshot missing average frame timing: ${JSON.stringify(quality)}`,
+  );
+}
+
+function verifyColorFidelity(stats) {
+  if (!verifyExpectColorFidelity) return;
+  assert(stats.redDominant > 4, `Color fixture did not expose enough red-dominant pixels: ${JSON.stringify(stats)}`);
+  assert(stats.greenDominant > 4, `Color fixture did not expose enough green-dominant pixels: ${JSON.stringify(stats)}`);
+  assert(stats.blueDominant > 4, `Color fixture did not expose enough blue-dominant pixels: ${JSON.stringify(stats)}`);
+}
+
+function verifySmallPartsQuality(state) {
+  if (!verifyExpectSmallParts) return;
+  const quality = state?.qualitySnapshot;
+  const parts = Array.isArray(state?.evidence?.parts) ? state.evidence.parts : [];
+  assert(state?.summary?.meshCount >= 7, `Small-parts fixture lost meshes: ${JSON.stringify(state?.summary)}`);
+  assert(
+    quality?.geometry?.smallPartCount >= 5,
+    `Three quality snapshot did not detect small parts: ${JSON.stringify(quality)}`,
+  );
+  assert(
+    quality.geometry.smallestPartSpan > 0 && quality.geometry.smallestPartSpan < quality.geometry.modelSpan * 0.05,
+    `Smallest-part precision looks wrong: ${JSON.stringify(quality.geometry)}`,
+  );
+  assert(
+    parts.some((part) => String(part?.name ?? "").includes("tiny_screw")),
+    `Small part evidence did not include tiny screw meshes: ${JSON.stringify(parts)}`,
   );
 }
 
@@ -829,6 +1100,9 @@ async function verify() {
       params.set("model", modelRef);
     }
     const targetUrl = params.size > 0 ? `${url}?${params.toString()}` : url;
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+      origin: new URL(targetUrl).origin,
+    });
     await page.goto(targetUrl, { waitUntil: "commit" });
     await page.waitForFunction(() => !!window.__ai3dPreviewVerify && window.__ai3dPreviewVerify.status !== "loading", null, {
       timeout: 15000,
@@ -854,6 +1128,7 @@ async function verify() {
       assert(warnings.length === 0, `Expected no resource warnings, got ${JSON.stringify(warnings)}`);
     }
     verifyGroupedPartsEvidence(state);
+    verifySmallPartsQuality(state);
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     await verifyCanvasAccessibility(page);
@@ -861,6 +1136,7 @@ async function verify() {
     const stats = await canvasPixelStats(page);
     assert(stats.nonBackgroundRatio > 0.01, `Canvas looks blank: ${JSON.stringify(stats)}`);
     assert(stats.contrast > 12, `Canvas has too little contrast: ${JSON.stringify(stats)}`);
+    verifyColorFidelity(stats);
     const performanceSnapshot = await page.evaluate(() => window.__ai3dPreview?.getPerformanceSnapshot?.() ?? null);
     assert(
       performanceSnapshot?.backend === state.route?.backend,
@@ -875,6 +1151,7 @@ async function verify() {
         rendererRollout: verifyRollout,
         route: state.route,
         summary: state.summary,
+        qualitySnapshot: state.qualitySnapshot,
         pixelStats: stats,
         performance: performanceSnapshot,
       }, null, 2));
@@ -904,6 +1181,7 @@ async function verify() {
         clientX: selectedPartPick.clientX,
         clientY: selectedPartPick.clientY,
       });
+      await verifyMeasurementTool(page, box, selectedPartPick);
     }
 
     await verifyHelperToolbar(page);

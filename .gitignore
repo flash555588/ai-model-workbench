@@ -8,3 +8,5 @@ test-annotation.md
 .venv/
 _obsidian_test_vault/
 _tmp_obsidian_check.png
+/audit-report-ai-model-workbench-*
+/*.gif

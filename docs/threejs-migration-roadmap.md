@@ -381,3 +381,22 @@ workbench 当前依赖的不只是“显示模型”，还包括：
 简而言之：
 
 先把 Three.js 做成主干，再决定 Babylon 要缩到多小，而不是一开始就要求它彻底消失。
+## 2026-06 Three.js Fidelity Update
+
+The next Three.js step is visual-fidelity parity for the existing direct-format
+path, not a broad Babylon.js replacement. Three.js remains the primary
+single-model path for GLB/GLTF/STL/PLY/OBJ, while Babylon.js remains the
+capability backend for `3dgrid`, conservative workbench routes, SPLAT, and
+rollback behavior.
+
+Current focus:
+
+- expose a route capability profile and Three.js quality snapshot;
+- preserve color intent for direct formats, including STL/PLY vertex colors and
+  OBJ color textures;
+- improve tiny-model camera precision and small-part visibility;
+- track smoothness with rendered-frame counts, idle skips, frame timing, and
+  adaptive pixel-ratio changes;
+- add color-fidelity and small-parts preview fixtures to regression checks.
+
+Tracked as `REQ-015` in `docs/requirements-tracker.md`.

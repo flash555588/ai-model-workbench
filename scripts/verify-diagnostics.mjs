@@ -101,15 +101,81 @@ await writeFile(entryPath, `
     generatedAt: "2026-01-01T00:00:00.000Z",
     includeVaultPaths: true,
   });
+  const failedState: PluginState = {
+    ...state,
+    lastKnowledgeGeneration: {
+      ...state.lastKnowledgeGeneration!,
+      status: "failed",
+      warningCount: 2,
+    },
+  };
+  const pendingState: PluginState = {
+    ...state,
+    lastKnowledgeGeneration: {
+      ...state.lastKnowledgeGeneration!,
+      status: "pending",
+      warningCount: 0,
+    },
+  };
+  const warningState: PluginState = {
+    ...state,
+    lastKnowledgeGeneration: {
+      ...state.lastKnowledgeGeneration!,
+      status: "success",
+      warningCount: 2,
+    },
+  };
+  const failedReport = buildDiagnosticsReport({
+    manifest: {
+      id: "ai-model-workbench",
+      name: "AI Model Workbench",
+      version: "0.4.1",
+      minAppVersion: "1.5.0",
+      description: "Turn 3D models into linked knowledge assets.",
+      author: "flash",
+    },
+    state: failedState,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const pendingReport = buildDiagnosticsReport({
+    manifest: {
+      id: "ai-model-workbench",
+      name: "AI Model Workbench",
+      version: "0.4.1",
+      minAppVersion: "1.5.0",
+      description: "Turn 3D models into linked knowledge assets.",
+      author: "flash",
+    },
+    state: pendingState,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const warningReport = buildDiagnosticsReport({
+    manifest: {
+      id: "ai-model-workbench",
+      name: "AI Model Workbench",
+      version: "0.4.1",
+      minAppVersion: "1.5.0",
+      description: "Turn 3D models into linked knowledge assets.",
+      author: "flash",
+    },
+    state: warningState,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
 
   assert(report.includes("Plugin version: 0.4.1"), "Plugin version missing");
   assert(report.includes("Obsidian API version: 1.12.7"), "Obsidian API version missing");
   assert(report.includes("Current route: three"), "Route summary missing");
+  assert(report.includes("Route capability profile: three; formats=glb/gltf/stl/ply/obj"), "Route capability profile missing");
+  assert(report.includes("Route color pipeline: sRGB output, no tone mapping"), "Route color pipeline missing");
   assert(report.includes("Path: <redacted .glb>"), "Current model path was not redacted");
   assert(report.includes("Knowledge index: set (<redacted .md>)"), "Knowledge index status missing or unredacted");
   assert(report.includes("Analysis sidecar: set (<redacted .json>)"), "Analysis sidecar status missing or unredacted");
   assert(report.includes("Report folder: <redacted>"), "Report folder was not redacted");
   assert(report.includes("Last part notes: 2"), "Last generation part count missing");
+  assert(report.includes("Last generation attention: none"), "Last generation attention missing");
+  assert(failedReport.includes("Last generation attention: failed; inspect console details and rerun after fixing the issue"), "Failed generation attention missing");
+  assert(pendingReport.includes("Last generation attention: pending or interrupted; rerun generation to replace the marker"), "Pending generation attention missing");
+  assert(warningReport.includes("Last generation attention: completed with warnings"), "Warning generation attention missing");
   assert(report.includes("service configured"), "Remote service configured status missing");
   assert(!report.includes("secret.example.invalid"), "Diagnostics leaked service host");
   assert(!report.includes("token=leak"), "Diagnostics leaked service token");
@@ -117,6 +183,11 @@ await writeFile(entryPath, `
   assert(!report.includes("models/example.glb"), "Diagnostics leaked current model path");
   assert(!report.includes("Analysis/3D Reports"), "Diagnostics leaked report folder path");
   assert(!report.includes("example Report.md"), "Diagnostics leaked report note name");
+  assert(!failedReport.includes("secret.example.invalid"), "Failed diagnostics leaked service host");
+  assert(!failedReport.includes("/private/"), "Failed diagnostics leaked command path");
+  assert(!failedReport.includes("models/example.glb"), "Failed diagnostics leaked model path");
+  assert(!pendingReport.includes("secret.example.invalid"), "Pending diagnostics leaked service host");
+  assert(!warningReport.includes("secret.example.invalid"), "Warning diagnostics leaked service host");
   assert(fullPathReport.includes("Knowledge index: set (Analysis/3D Reports/example Index.md)"), "Full-path diagnostics mode did not include vault paths");
 
   console.log("Diagnostics verification passed");

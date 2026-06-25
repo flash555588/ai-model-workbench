@@ -3,6 +3,7 @@ import {
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading,
+  formatMeasurementValue,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
 } from "./measurement";
@@ -14,8 +15,15 @@ describe("measurement helpers", () => {
 
   it("normalizes unsupported units to millimeters", () => {
     expect(normalizeMeasurementUnit("μm")).toBe("um");
+    expect(normalizeMeasurementUnit("\u00b5m")).toBe("um");
+    expect(normalizeMeasurementUnit("\u03bcm")).toBe("um");
     expect(normalizeMeasurementUnit("cm")).toBe("cm");
     expect(normalizeMeasurementUnit("inch")).toBe("mm");
+  });
+
+  it("formats micrometer values with an ascii unit label", () => {
+    expect(formatMeasurementValue(0.0004, "mm")).toBe("0.4 um");
+    expect(formatMeasurementValue(12, "um", false)).toBe("12 um");
   });
 
   it("creates distance and axis-delta labels from calibrated scale", () => {

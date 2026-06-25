@@ -104,6 +104,24 @@ const cases = [
       "OBJ material texture not found",
     ],
   },
+  {
+    label: "Three color fidelity fixture",
+    args: [
+      "--model",
+      join(rootDir, "models", "quality-fixtures", "three-color-fidelity.glb"),
+      "--expect-color-fidelity",
+      "--route-only",
+    ],
+  },
+  {
+    label: "Three small-parts precision fixture",
+    args: [
+      "--model",
+      join(rootDir, "models", "quality-fixtures", "three-small-parts.glb"),
+      "--expect-small-parts",
+      "--route-only",
+    ],
+  },
   // GLB alternate path (confirms path resolution works)
   {
     label: "GLB alternate path (Three.js)",

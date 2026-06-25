@@ -421,7 +421,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     this.loadedMeshes = [];
     this.loadedTransformNodes = [];
-    this.clearMeasurements();
+    this.disposeMeasurementOverlays(true);
     this.disassembly?.dispose();
     this.disassembly = null;
     this.clearFocusedMesh();
@@ -880,7 +880,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   toggleMeasurement(): boolean {
     this.measurementActive = !this.measurementActive;
     if (!this.measurementActive) {
-      this.clearMeasurements();
+      this.cancelPendingMeasurement();
     }
     return this.measurementActive;
   }
@@ -890,18 +890,21 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   clearMeasurements(): void {
-    this.measurementActive = false;
-    this.pendingPoint = null;
-    this.pendingMarker = null;
-    this.hoveredMarkerIndex = -1;
-    this.removePreviewLine();
+    this.disposeMeasurementOverlays(false);
+  }
+
+  private disposeMeasurementOverlays(deactivate: boolean): void {
+    if (deactivate) {
+      this.measurementActive = false;
+    }
+    this.cancelPendingMeasurement(false);
     for (const segment of this.measurementSegments) {
-      segment.line.dispose();
-      segment.label.dispose();
+      segment.line.dispose(false, true);
+      segment.label.dispose(false, true);
     }
     this.measurementSegments = [];
     for (const marker of this.measurementMarkers) {
-      marker.dispose();
+      marker.dispose(false, true);
     }
     this.measurementMarkers = [];
   }
@@ -934,6 +937,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
       y: bounds.max.y - bounds.min.y,
       z: bounds.max.z - bounds.min.z,
     };
+  }
+
+  getMeasurementRecords(): MeasurementRecord[] {
+    return this.createMeasurementRecords();
   }
 
   exportMeasurements(): string {
@@ -1310,7 +1317,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.gizmo = null;
     this.disassembly?.dispose();
     this.disassembly = null;
-    this.clearMeasurements();
+    this.disposeMeasurementOverlays(true);
     this.clearFocusedMesh();
     this.originalMeshVisibility.clear();
     this.bboxMesh?.dispose();
@@ -1547,6 +1554,36 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!bounds) return 0.02;
     const maxSpan = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 0.001);
     return maxSpan * 0.015;
+  }
+
+  private cancelPendingMeasurement(markDirty = true): void {
+    const pendingMarker = this.pendingMarker;
+    const pendingPoint = this.pendingPoint?.clone() ?? null;
+    this.pendingPoint = null;
+    this.pendingMarker = null;
+    this.hoveredMarkerIndex = -1;
+    this.removePreviewLine();
+
+    if (pendingMarker && pendingPoint && !this.isMeasurementPointUsed(pendingPoint)) {
+      const index = this.measurementMarkers.indexOf(pendingMarker);
+      if (index >= 0) {
+        this.measurementMarkers.splice(index, 1);
+      }
+      pendingMarker.dispose(false, true);
+    } else if (pendingMarker) {
+      pendingMarker.scaling.setAll(1);
+      (pendingMarker.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
+      (pendingMarker.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+    }
+
+    if (markDirty) {
+      this.scene.render();
+    }
+  }
+
+  private isMeasurementPointUsed(point: Vector3): boolean {
+    return this.measurementSegments.some((segment) =>
+      Vector3.Distance(segment.start, point) < 0.0001 || Vector3.Distance(segment.end, point) < 0.0001);
   }
 
   private findNearestMarkerIndex(point: Vector3): number {

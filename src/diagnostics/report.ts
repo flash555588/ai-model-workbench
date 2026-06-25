@@ -2,6 +2,7 @@ import { apiVersion } from "obsidian";
 import type { PluginManifest } from "obsidian";
 import type { PluginState } from "../domain/models";
 import { listSupportedModelExtensions } from "../io/formats/registry";
+import { describePreviewRouteCapabilities, formatPreviewCapabilityProfile } from "../render/preview/capabilities";
 import { resolvePreviewRoute } from "../render/preview/routing";
 import { isMobile } from "../utils/device";
 
@@ -62,6 +63,23 @@ function getCurrentProfile(state: PluginState) {
   return path ? state.modelAssetProfiles[path] : undefined;
 }
 
+function formatKnowledgeGenerationAttention(state: PluginState): string {
+  const last = state.lastKnowledgeGeneration;
+  if (!last) {
+    return "none";
+  }
+  if (last.status === "pending") {
+    return "pending or interrupted; rerun generation to replace the marker";
+  }
+  if (last.status === "failed") {
+    return "failed; inspect console details and rerun after fixing the issue";
+  }
+  if (last.warningCount > 0) {
+    return "completed with warnings";
+  }
+  return "none";
+}
+
 export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): string {
   const { manifest, state } = options;
   const settings = state.settings;
@@ -77,6 +95,7 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
         useThreeRenderer: settings.useThreeRenderer,
       })
     : null;
+  const routeCapabilityProfile = route ? describePreviewRouteCapabilities(route) : null;
   const last = state.lastKnowledgeGeneration;
 
   return [
@@ -98,6 +117,8 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
     `- Preview rollout: ${settings.previewRendererRollout}`,
     `- Experimental Three workbench: ${formatValue(settings.experimentalThreeWorkbench)}`,
     `- Current route: ${route ? `${route.backend} (${route.reason})` : "no current model"}`,
+    `- Route capability profile: ${routeCapabilityProfile ? formatPreviewCapabilityProfile(routeCapabilityProfile) : "no current model"}`,
+    `- Route color pipeline: ${routeCapabilityProfile?.colorPipeline ?? "no current model"}`,
     `- Render quality: ${settings.renderQuality}`,
     `- Render scale: ${settings.renderScale}`,
     "",
@@ -118,6 +139,7 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
     `- Part notes folder: ${formatPathValue(settings.partFolder, includeVaultPaths, "empty")}`,
     `- Snapshot folder: ${formatPathValue(settings.previewFolder, includeVaultPaths, "empty")}`,
     `- Last generation: ${last ? `${last.status} at ${last.generatedAt}` : "none"}`,
+    `- Last generation attention: ${formatKnowledgeGenerationAttention(state)}`,
     `- Last generated model: ${formatPathValue(last?.modelPath, includeVaultPaths, "none")}`,
     `- Last report: ${formatPathStatus(last?.reportNotePath, includeVaultPaths)}`,
     `- Last index: ${formatPathStatus(last?.knowledgeIndexPath, includeVaultPaths)}`,

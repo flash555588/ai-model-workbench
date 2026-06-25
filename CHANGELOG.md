@@ -2,15 +2,21 @@
 
 ## Unreleased
 
+- Rendering: add a Three.js capability profile and quality snapshot for direct-format visual fidelity diagnostics.
+- Rendering: improve Three.js STL/PLY/OBJ color handling, adaptive PLY point-cloud sizing, and tiny-model camera precision.
+- Performance: add Three.js smoothness metrics and enter interactive pixel-ratio throttling on pointer, wheel, and orbit input before the next frame renders.
+- Testing: add Three.js color-fidelity and small-parts fixtures to the preview success suite.
 - Performance: preserve original STEP/OCCT material colors while reducing GLB size by trying the OCCT glTF writer before the existing XDE component fallback.
 - Performance: reuse existing `.ai3d-converted.*` files only when they are newer than the source model, avoiding stale geometry while skipping unnecessary conversions.
 - Refactor: move FreeCAD/CadQuery conversion Python into bundled script templates while keeping TypeScript responsible for invocation and output validation.
 - Routing: align production direct file view with the default Three.js edit-preview path while keeping converted workbench inputs on the conservative Babylon.js route.
 - UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
+- UI: keep completed ruler measurements visible when leaving measurement mode, cancel unfinished endpoints cleanly, and verify copy/clear/export behavior in the preview harness.
 - Stability: increase default conversion timeout from 120s to 300s so large STEP models can complete without timing out.
 - Security: sanitize remote draft output and model-derived metadata before writing generated notes.
 - Security: redact vault-relative model, report, index, and folder paths from copied diagnostics reports by default.
 - Security: validate converter command paths and reject shell metacharacters.
+- Diagnostics: surface whether the last knowledge generation needs attention for pending, failed, or warning-completed runs.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
 - Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.
 - Stability: bound optional remote draft requests with a timeout so local knowledge-note generation can continue when a draft service hangs.
@@ -23,6 +29,7 @@
 - Testing: cover knowledge-note generation markers for success, partial-write failure, and stale pending recovery warnings.
 - Testing: verify remote-draft timeout behavior in unit tests and the remote-draft verification script.
 - Testing: cover converted asset cache normalization and FreeCAD converter script generation/output validation.
+- Testing: cover renderer capability guards so toolbar controls only appear for callable preview methods.
 - Build: remove unused `@babylonjs/gui`, `@babylonjs/materials`, and `@babylonjs/serializers` dependencies.
 
 ## 0.5.8

@@ -64,6 +64,66 @@ export interface ModelPreview {
   setRenderQuality?(quality: "low" | "medium" | "high", renderScale?: number): void;
   setRenderScale?(scale: number): number;
   getPerformanceSnapshot?(): ModelPreviewPerformanceSnapshot;
+  getQualitySnapshot?(): PreviewQualitySnapshot;
+}
+
+export type PreviewCapabilityId =
+  | "annotation"
+  | "animation"
+  | "measurement"
+  | "disassembly"
+  | "focus-selection"
+  | "wireframe"
+  | "orientation-gizmo"
+  | "bounding-box"
+  | "render-scale"
+  | "workbench";
+
+export interface PreviewCapabilityProfile {
+  backend: "three" | "babylon";
+  supportedFormats: readonly string[];
+  fallbackRole: string;
+  capabilities: readonly PreviewCapabilityId[];
+  colorPipeline: string;
+  fidelityNotes: readonly string[];
+}
+
+export interface PreviewQualitySnapshot {
+  backend: "three" | "babylon";
+  supportedFormats: readonly string[];
+  colorPipeline: {
+    outputColorSpace: string;
+    toneMapping: string;
+    textureCount: number;
+    colorTextureCount: number;
+    srgbColorTextureCount: number;
+  };
+  geometry: {
+    meshCount: number;
+    pointCloudCount: number;
+    smallPartCount: number;
+    smallestPartSpan: number | null;
+    modelSpan: number | null;
+  };
+  camera: {
+    near: number;
+    far: number;
+    nearFarRatio: number;
+  };
+  performance: {
+    renderScale: number;
+    pixelRatio?: number;
+    frameBudgetPixelRatioScale?: number;
+    frameBudgetObserverStride?: number;
+    viewportVisible?: boolean;
+    renderedFrameCount?: number;
+    idleFrameSkipCount?: number;
+    slowFrameCount?: number;
+    averageRenderMs?: number;
+    p95RenderMs?: number;
+    maxRenderMs?: number;
+    adaptiveScaleChangeCount?: number;
+  };
 }
 
 export interface ModelPreviewPerformanceSnapshot {
@@ -76,6 +136,13 @@ export interface ModelPreviewPerformanceSnapshot {
   frameBudgetObserverStride?: number;
   frameBudgetShadowDeferred?: boolean;
   lastFrameDurationMs?: number;
+  averageRenderMs?: number;
+  p95RenderMs?: number;
+  maxRenderMs?: number;
+  renderedFrameCount?: number;
+  slowFrameCount?: number;
+  idleFrameSkipCount?: number;
+  adaptiveScaleChangeCount?: number;
   viewportVisible?: boolean;
   disposalAudit?: {
     reason: "initial" | "model-switch" | "destroy";
@@ -90,6 +157,7 @@ export interface ModelPreviewPerformanceSnapshot {
   renderObserverCount?: number;
   renderObserverSettleFrames?: number;
   meshCount?: number;
+  qualitySnapshot?: PreviewQualitySnapshot;
 }
 
 export interface AnnotationPreview extends ModelPreview {
@@ -109,6 +177,20 @@ export interface MeasurementScale {
 
 export type MeasurementUnit = "um" | "mm" | "cm" | "m";
 
+export interface MeasurementReading {
+  distance: number;
+  delta: PreviewWorldPoint;
+  absDelta: PreviewWorldPoint;
+  unit: MeasurementUnit;
+}
+
+export interface MeasurementRecord {
+  index: number;
+  start: PreviewWorldPoint;
+  end: PreviewWorldPoint;
+  reading: MeasurementReading;
+}
+
 export interface MeasurementPreview {
   toggleMeasurement(): boolean;
   isMeasurementActive(): boolean;
@@ -118,6 +200,7 @@ export interface MeasurementPreview {
   setMeasurementUnit(unit: MeasurementUnit): void;
   getMeasurementUnit(): MeasurementUnit;
   getMeasurementBounds(): { x: number; y: number; z: number } | null;
+  getMeasurementRecords(): MeasurementRecord[];
   updateMeasurementLabels(): void;
   exportMeasurements(): string;
 }
@@ -183,7 +266,9 @@ export interface PreviewFactoryOptions {
 }
 
 function hasMethod(value: unknown, name: string): boolean {
-  return !!value && typeof value === "object" && name in value;
+  return !!value
+    && typeof value === "object"
+    && typeof (value as Record<string, unknown>)[name] === "function";
 }
 
 export function supportsAnnotationPreview(preview: unknown): preview is AnnotationPreview {
@@ -203,6 +288,7 @@ export function supportsMeasurementPreview(preview: unknown): preview is Measure
     && hasMethod(preview, "setMeasurementUnit")
     && hasMethod(preview, "getMeasurementUnit")
     && hasMethod(preview, "getMeasurementBounds")
+    && hasMethod(preview, "getMeasurementRecords")
     && hasMethod(preview, "updateMeasurementLabels")
     && hasMethod(preview, "exportMeasurements");
 }

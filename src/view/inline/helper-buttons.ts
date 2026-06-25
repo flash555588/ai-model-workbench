@@ -202,8 +202,10 @@ export function createHelperButtons(
     const preview = getPreview();
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
+    const measurementPreview = preview && supportsMeasurementPreview(preview) ? preview : null;
     setTogglePressed(focusBtn, !!focusPreview?.isFocusSelectionEnabled());
     setTogglePressed(disassembleBtn, !!disassemblyPreview?.isDisassemblyEnabled());
+    setTogglePressed(measureBtn, !!measurementPreview?.isMeasurementActive());
     if (preview && supportsOrientationGizmoPreview(preview)) {
       setTogglePressed(gizmoBtn, !!preview.isOrientationGizmoEnabled?.());
     }
@@ -440,7 +442,7 @@ export function createHelperButtons(
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     preview.clearMeasurements();
-    setTogglePressed(measureBtn, false);
+    setTogglePressed(measureBtn, preview.isMeasurementActive());
     showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
   });
 
@@ -634,8 +636,10 @@ export function createHelperButtons(
 
   const unitRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
   const unitSelect = unitRow.createEl("select", { cls: "ai3d-calibrate-select" });
-  for (const u of [{ v: "um", l: "μm" }, { v: "mm", l: "mm" }, { v: "cm", l: "cm" }, { v: "m", l: "m" }]) {
-    unitSelect.createEl("option", { text: u.l, value: u.v });
+  for (const unit of ["um", "mm", "cm", "m"] as const) {
+    const option = unitSelect.createEl("option");
+    option.value = unit;
+    option.textContent = unit;
   }
   unitSelect.value = "mm";
 

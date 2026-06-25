@@ -4,9 +4,13 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
+import { Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
+import {
+  getAdaptivePointSize,
+  prepareThreeMaterialForColorAccuracy,
+} from "./material-quality";
 
 const IMAGE_MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
@@ -141,7 +145,9 @@ export async function loadThreeGLTF(
 export async function loadThreeSTL(data: ArrayBuffer): Promise<Object3D> {
   const loader = new STLLoader();
   const geometry = loader.parse(data);
-  const material = new MeshStandardMaterial({ color: 0xcccccc });
+  const material = geometry.hasAttribute("color")
+    ? new MeshStandardMaterial({ color: 0xffffff, vertexColors: true })
+    : new MeshStandardMaterial({ color: 0xcccccc });
   const mesh = new Mesh(geometry, material);
   mesh.name = getPortableBasename("") || "stl-model";
   return mesh;
@@ -154,25 +160,39 @@ export async function loadThreeSTL(data: ArrayBuffer): Promise<Object3D> {
 export async function loadThreePLY(data: ArrayBuffer): Promise<Object3D> {
   const loader = new PLYLoader();
   const geometry = loader.parse(data);
+  const hasFaces = !!geometry.index || geometry.hasAttribute("normal");
 
   if (geometry.hasAttribute("color")) {
-    // Vertex-colored mesh or point cloud
-    if (geometry.index) {
+    if (hasFaces) {
+      if (!geometry.hasAttribute("normal")) geometry.computeVertexNormals();
       const material = new MeshStandardMaterial({ vertexColors: true });
       return new Mesh(geometry, material);
     }
-    // Point cloud (no faces)
-    const material = new PointsMaterial({ size: 0.02, vertexColors: true });
+    const material = new PointsMaterial({ size: getAdaptivePointSize(geometry), vertexColors: true });
     return new Points(geometry, material);
   }
 
-  // No vertex color
-  if (geometry.index) {
+  if (hasFaces) {
+    if (!geometry.hasAttribute("normal")) geometry.computeVertexNormals();
     const material = new MeshStandardMaterial({ color: 0xcccccc });
     return new Mesh(geometry, material);
   }
-  const material = new PointsMaterial({ size: 0.02, color: 0xcccccc });
+  const material = new PointsMaterial({ size: getAdaptivePointSize(geometry), color: 0xcccccc });
   return new Points(geometry, material);
+}
+
+function materialList(material: Material | Material[] | undefined | null): Material[] {
+  if (!material) return [];
+  return Array.isArray(material) ? material : [material];
+}
+
+function prepareObjectMaterials(object: Object3D): void {
+  object.traverse((entry) => {
+    if (!(entry instanceof Mesh)) return;
+    for (const material of materialList(entry.material)) {
+      prepareThreeMaterialForColorAccuracy(material, 1);
+    }
+  });
 }
 
 /**
@@ -254,7 +274,9 @@ export async function loadThreeOBJ(
   if (materials) {
     objLoader.setMaterials(materials);
   }
-  return { object: objLoader.parse(objText), warnings };
+  const object = objLoader.parse(objText);
+  prepareObjectMaterials(object);
+  return { object, warnings };
 }
 
 /** Check if a format extension is supported by the Three.js path. */

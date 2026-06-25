@@ -35,6 +35,13 @@ future agent notes can refer to the same requirement over time.
 | REQ-006 | Diagnostics reports expose support context without leaking draft service URLs, converter command paths, or vault-relative model/note paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
 | REQ-008 | Real Obsidian smoke verification covers install, rendering, knowledge generation, and diagnostics when the host can launch Obsidian | P1 | Verified | `npm run verify:obsidian -- --clean` |
+| REQ-009 | Direct view preserves preview, annotation, measurement, and knowledge actions across Three/Babylon routes | P0 | In Progress | `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
+| REQ-010 | Measurement records are calibrated, persistent during mode changes, copyable as Markdown, and covered in preview verification | P1 | In Progress | `npm test -- --run src/render/preview/measurement.test.ts`, `npm run verify:preview:success` |
+| REQ-011 | Renderer capability contracts are tested for Three.js and Babylon.js so toolbar actions cannot silently drift | P1 | Verified | `npm test -- --run src/render/preview/types.test.ts`, `npm run typecheck`, `npm run verify:preview:success` |
+| REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Accepted | `npm run verify:diagnostics`, converter unit tests |
+| REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | In Progress | `npm run verify:knowledge-index`, knowledge-note unit tests |
+| REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Accepted | `npm run typecheck`, `npm test`, `npm run verify:preview` |
+| REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release` |
 
 ## Active Requirement Details
 
@@ -89,6 +96,237 @@ future agent notes can refer to the same requirement over time.
   - `--clean` removes the temporary vault after the run.
 - Verification:
   - `npm run verify:obsidian -- --clean`
+
+### REQ-009: Direct View Workbench Reliability
+
+- Status: In Progress
+- Priority: P0
+- User value: Direct file view should be the dependable place to inspect a model, add annotations, take measurements, generate knowledge notes, and inspect registered part reuse without caring which renderer backend was selected.
+- Scope:
+  - Direct file view layout, loading, failure, fallback, and teardown behavior.
+  - Direct view annotation mode and mobile scroll/interact mode.
+  - Direct view measurement toolbar actions.
+  - Direct workbench sidebar knowledge status and registered part match rows.
+  - Route correctness for Three.js direct formats and Babylon.js conservative paths.
+- Out of scope:
+  - Removing Babylon.js.
+  - Moving `3dgrid` to Three.js.
+  - Broad production workbench migration beyond the guarded Experimental Three workbench route.
+- Acceptance criteria:
+  - Direct GLB/GLTF/STL/PLY/OBJ paths load through Three.js when settings allow.
+  - Converted STEP/FBX/3MF/DAE paths keep conservative fallback behavior.
+  - Failed converter paths show clear UI feedback and do not leave dead canvases.
+  - Annotation add/edit/delete still updates `modelAssetProfiles`.
+  - Registered matches refresh after knowledge note generation.
+  - Mobile direct view keeps scroll/interact mode understandable and reversible.
+- Verification:
+  - `npm run typecheck`
+  - `npm test`
+  - `npm run verify:preview`
+  - `npm run verify:preview:success`
+  - `npm run verify:obsidian -- --clean`
+- Related files:
+  - `docs/0.6.0-plus-upgrade-plan.md`
+  - `src/view/direct-view.ts`
+  - `src/view/direct-view-routing.ts`
+  - `src/render/preview/routing.ts`
+  - `src/view/inline/helper-buttons.ts`
+
+### REQ-010: Measurement Workflow Completion
+
+- Status: In Progress
+- Priority: P1
+- User value: Users should be able to measure model distances repeatedly, calibrate units, keep completed records visible, and copy measurements into Markdown notes.
+- Scope:
+  - Shared measurement math, unit normalization, labels, and Markdown export.
+  - Three.js and Babylon.js measurement behavior.
+  - Toolbar actions for measure, clear, copy, and calibration.
+  - Preview harness coverage for completed and cancelled measurements.
+- Out of scope:
+  - Persisting measurements in `data.json`.
+  - CAD-grade tolerancing or dimension constraints.
+- Acceptance criteria:
+  - `supportsMeasurementPreview()` returns true only when the full measurement contract is available.
+  - Three.js and Babylon.js produce equivalent reading/export formats.
+  - Completed measurements remain visible when measurement mode is turned off.
+  - Unfinished endpoints cancel cleanly.
+  - Copy/export behavior handles empty records without throwing.
+  - Measurement labels update after camera movement and resize.
+- Verification:
+  - `npm run typecheck`
+  - `npm test -- --run src/render/preview/measurement.test.ts`
+  - `npm run verify:preview`
+  - `npm run verify:preview:success`
+- Related files:
+  - `src/render/preview/measurement.ts`
+  - `src/render/preview/types.ts`
+  - `src/render/three/scene.ts`
+  - `src/render/babylon/scene.ts`
+  - `src/view/inline/helper-buttons.ts`
+
+### REQ-011: Renderer Capability Contract Coverage
+
+- Status: Verified
+- Priority: P1
+- User value: Toolbar actions should only appear when the selected renderer truly supports them, and Three.js/Babylon.js capability drift should be caught before release.
+- Scope:
+  - Capability guards in `src/render/preview/types.ts`.
+  - Preview factory and route decisions that choose renderer backends.
+  - Harness or unit coverage for toolbar-visible capabilities.
+- Out of scope:
+  - Changing route policy without updating `docs/preview-routing-matrix.md`.
+  - Making every renderer implement every optional capability.
+- Acceptance criteria:
+  - Capability checks cover every toolbar action that can be shown.
+  - Three.js and Babylon.js preview objects satisfy the expected direct-view capability set.
+  - Missing optional methods hide their controls instead of throwing.
+  - Route changes update both code and route docs.
+- Verification:
+  - `npm run typecheck`
+  - `npm test`
+  - `npm test -- --run src/render/preview/types.test.ts`
+  - `npm run verify:preview:success`
+- Related files:
+  - `src/render/preview/types.ts`
+  - `src/render/preview/factory.ts`
+  - `src/render/preview/selection.ts`
+  - `src/view/inline/helper-buttons.ts`
+  - `docs/preview-routing-matrix.md`
+
+### REQ-012: Converter Diagnostics And Safety
+
+- Status: Accepted
+- Priority: P1
+- User value: When conversion fails, users should see an actionable explanation without exposing private local command paths in copied diagnostics.
+- Scope:
+  - Converter discovery, error classification, timeout handling, and diagnostics.
+  - Cache reuse decisions for existing `.ai3d-converted.glb` files.
+  - Sanitized support reports.
+- Out of scope:
+  - Bundling heavy converter binaries.
+  - Mobile conversion support.
+- Acceptance criteria:
+  - Missing converter UI tells the user which converter id is required.
+  - Timeout does not block preview indefinitely.
+  - Existing `.ai3d-converted.glb` is reused only when newer than source.
+  - Unsafe converter command paths are rejected before execution.
+  - Diagnostics omit draft service URL and converter command paths.
+  - Diagnostics redact vault-relative paths unless explicitly requested.
+- Verification:
+  - `npm run typecheck`
+  - `npm test -- --run src/io/conversion/manager.test.ts`
+  - `npm test -- --run src/io/cache/converted-asset-cache.test.ts`
+  - `npm run verify:diagnostics`
+- Related files:
+  - `src/io/conversion/errors.ts`
+  - `src/io/conversion/command-discovery.ts`
+  - `src/io/conversion/conversion-service.ts`
+  - `src/io/cache/converted-asset-cache.ts`
+  - `src/diagnostics/report.ts`
+
+### REQ-013: Knowledge Generation State Consistency
+
+- Status: In Progress
+- Priority: P0
+- User value: Knowledge-note generation should leave understandable state whether it succeeds fully, partially writes artifacts, or fails.
+- Scope:
+  - Pending, failed, and success state transitions.
+  - Report, analysis sidecar, knowledge index, preview snapshot, and part note writes.
+  - Local draft and optional remote draft behavior.
+  - Preservation of user-written index content outside managed markers.
+- Out of scope:
+  - Raw model upload to remote services.
+  - Replacing Markdown artifacts with a database.
+- Acceptance criteria:
+  - `lastKnowledgeGeneration` is set to `pending` before artifact writes.
+  - Failed sidecar/report/index writes set `failed` with warning count.
+  - Success updates profile paths and registered parts from the final analysis object.
+  - Stale pending generation is surfaced in the next run.
+  - Remote draft cannot include raw model bytes.
+  - Geometry and preview references are stripped unless explicitly enabled.
+  - User-written index notes survive managed-section refreshes.
+- Verification:
+  - `npm run typecheck`
+  - `npm test -- --run src/view/workbench/knowledge-note.test.ts`
+  - `npm test -- --run src/view/workbench/remote-draft.test.ts`
+  - `npm run verify:knowledge-index`
+  - `npm run verify:remote-draft`
+- Related files:
+  - `src/view/workbench/knowledge-note.ts`
+  - `src/view/workbench/analysis-result.ts`
+  - `src/view/workbench/remote-draft.ts`
+  - `src/store/plugin-store.ts`
+
+### REQ-014: Coordinator Class Decomposition
+
+- Status: Accepted
+- Priority: P2
+- User value: The project should become easier to change safely by shrinking the largest coordinator classes without changing behavior.
+- Scope:
+  - `DirectModelView` layout/sidebar/loading/annotation extraction.
+  - Three.js scene facade extraction.
+  - Babylon.js scene facade extraction.
+  - Shared measurement, evidence, selection, and disposal helpers where practical.
+- Out of scope:
+  - Behavior changes hidden inside refactors.
+  - Renderer route policy changes.
+  - New frameworks or build systems.
+- Acceptance criteria:
+  - `createThreeModelPreview()` and `createBabylonModelPreview()` keep the same exported signatures.
+  - `ModelPreview`, `AnnotationPreview`, and `WorkbenchPreview` behavior remains unchanged.
+  - Direct view route behavior remains unchanged unless intentionally documented.
+  - Disposal audit still reports model-switch and destroy cleanup.
+  - Refactor commits are separated from feature commits.
+- Verification:
+  - `npm run typecheck`
+  - `npm test`
+  - `npm run verify:preview`
+  - `npm run verify:preview:success`
+- Related files:
+  - `src/view/direct-view.ts`
+  - `src/render/three/scene.ts`
+  - `src/render/babylon/scene.ts`
+  - `src/render/preview/types.ts`
+
+### REQ-015: Three.js Capability Tree And Visual Fidelity
+
+- Status: Verified
+- Priority: P1
+- User value: Three.js should feel like the high-quality single-model viewing path, not just a lighter fallback, for common direct formats.
+- Scope:
+  - GLB/GLTF/STL/PLY/OBJ direct-format rendering quality.
+  - Preview capability profiles and Three.js quality snapshots.
+  - Color pipeline, texture color-space handling, point-cloud sizing, camera precision, small-part visibility, and interaction smoothness.
+  - Diagnostics and preview verification for quality regressions.
+- Out of scope:
+  - Removing Babylon.js.
+  - Moving `3dgrid` to Three.js.
+  - Broad production workbench migration.
+  - Remote model processing or upload.
+- Acceptance criteria:
+  - Three.js exposes a quality snapshot with supported formats, color pipeline, geometry/small-part stats, camera precision, and performance budget data.
+  - Three.js exposes rendered frame count, idle skip count, average/p95/max render timings, slow-frame count, and adaptive scale changes.
+  - Pointer, wheel, and orbit interactions enter the interactive pixel-ratio path before the next frame renders.
+  - Diagnostics explain the active route capability profile.
+  - STL and PLY vertex colors are preserved on the Three.js path.
+  - PLY point clouds use model-scale-aware point sizes.
+  - OBJ color textures use sRGB without forcing non-color maps into sRGB.
+  - Tiny model camera fit uses the real model span instead of a unit-size floor.
+  - Color, small-part, and smoothness snapshot checks are covered by the preview success suite.
+- Verification:
+  - `npm run typecheck`
+  - `npm test`
+  - `npm run verify:preview`
+  - `npm run verify:preview:success`
+  - `npm run verify:diagnostics`
+  - `npm run build`
+  - `npm run verify:release`
+- Related files:
+  - `src/render/preview/capabilities.ts`
+  - `src/render/preview/types.ts`
+  - `src/render/three/loaders.ts`
+  - `src/render/three/scene.ts`
+  - `scripts/verify-preview.mjs`
 
 ## New Requirement Template
 

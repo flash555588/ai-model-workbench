@@ -12,6 +12,8 @@ Use this page to choose the right document before changing code.
 ## Product And Architecture Specs
 
 - `preview-routing-matrix.md` - canonical Three/Babylon routing contract and smoke tests.
+- `0.6.0-plus-upgrade-plan.md` - staged upgrade plan for the `0.6.0+`
+  reliability, workflow, and maintainability releases.
 - `requirements-tracker.md` - stable product requirements, statuses, acceptance
   criteria, and verification mapping.
 - `threejs-migration-roadmap.md` - Three.js migration history, target state, and reopen
@@ -41,6 +43,7 @@ Use this page to choose the right document before changing code.
 | If you are changing... | Read first |
 |------------------------|------------|
 | Renderer route, rollout, annotation preview | `preview-routing-matrix.md` |
+| 0.6.0+ release planning or upgrade sequencing | `0.6.0-plus-upgrade-plan.md` |
 | Product scope, requirement status, release gates | `requirements-tracker.md` |
 | Three.js migration or workbench route policy | `workbench-3dgrid-feasibility-note.md` |
 | `3dgrid` behavior or presets | `workbench-3dgrid-feasibility-note.md`, `demo.md` |

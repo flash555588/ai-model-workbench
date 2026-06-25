@@ -25,6 +25,12 @@ declare global {
     setText(text: string): void;
   }
 
+  interface Document {
+    createDiv(options?: DomCreateInput): HTMLDivElement;
+    createEl<K extends keyof HTMLElementTagNameMap>(tag: K, options?: DomCreateInput): HTMLElementTagNameMap[K];
+    createSvg<K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K];
+  }
+
   interface Window {
     __ai3dPreview?: ModelPreview;
     __ai3dPreviewVerify?: {
@@ -33,6 +39,7 @@ declare global {
       rendererRollout?: "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
       summary?: unknown;
       route?: unknown;
+      qualitySnapshot?: unknown;
       evidence?: unknown;
       pinCount?: number;
       pinLabels?: string[];
@@ -81,6 +88,10 @@ function installObsidianDomShims(): void {
   globals.createEl = (tag, options) => applyDomCreateOptions(document.createElement(tag), options);
   globals.createSvg = ((tag: keyof SVGElementTagNameMap) =>
     document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof globals.createSvg;
+  document.createDiv = (options) => applyDomCreateOptions(document.createElement("div"), options);
+  document.createEl = (tag, options) => applyDomCreateOptions(document.createElement(tag), options);
+  document.createSvg = ((tag: keyof SVGElementTagNameMap) =>
+    document.createElementNS("http://www.w3.org/2000/svg", tag)) as Document["createSvg"];
 
   const proto = HTMLElement.prototype as HTMLElement & {
     createDiv?: (options?: DomCreateInput) => HTMLDivElement;
@@ -408,7 +419,15 @@ async function runBasicPreview(
   const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
   attachHelperToolbar(host, preview);
   window.__ai3dPreview = preview;
-  setVerifyState({ status: "ready", mode: "basic", rendererRollout, summary, route, evidence: preview.getModelEvidence?.() ?? null });
+  setVerifyState({
+    status: "ready",
+    mode: "basic",
+    rendererRollout,
+    summary,
+    route,
+    qualitySnapshot: preview.getQualitySnapshot?.() ?? null,
+    evidence: preview.getModelEvidence?.() ?? null,
+  });
 }
 
 async function runDirectEditPreview(
@@ -453,6 +472,7 @@ async function runDirectEditPreview(
     rendererRollout,
     summary,
     route,
+    qualitySnapshot: preview.getQualitySnapshot?.() ?? null,
     evidence: preview.getModelEvidence?.() ?? null,
     pinCount: 0,
     pinLabels: [],
@@ -515,6 +535,7 @@ async function runReadonlyPinPreview(
     rendererRollout,
     summary,
     route,
+    qualitySnapshot: preview.getQualitySnapshot?.() ?? null,
     evidence: preview.getModelEvidence?.() ?? null,
     pinCount: initialPins.length,
     pinLabels: initialPins.map((pin) => pin.label),
@@ -575,6 +596,7 @@ async function runWorkbenchPreview(
     rendererRollout,
     summary,
     route,
+    qualitySnapshot: preview.getQualitySnapshot?.() ?? null,
     evidence: preview.getModelEvidence?.() ?? null,
     pinCount: initialPins.length,
     pinLabels: initialPins.map((pin) => pin.label),

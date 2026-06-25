@@ -99,6 +99,7 @@ Spec docs:
 | `README.md` / `README.zh-CN.md` | User-facing capability, install, verification, release overview |
 | `CHANGELOG.md` | Release-facing behavior changes and current unreleased work |
 | `AGENTS.md` | Agent tool setup and repository working rules |
+| `docs/0.6.0-plus-upgrade-plan.md` | `0.6.0+` reliability, workflow, maintainability, and release sequencing |
 | `docs/requirements-tracker.md` | Stable product requirements, acceptance criteria, and verification mapping |
 | `docs/preview-routing-matrix.md` | Any renderer route or rollout change |
 | `docs/workbench-3dgrid-feasibility-note.md` | Workbench or `3dgrid` migration decisions |
