@@ -28,7 +28,7 @@ future agent notes can refer to the same requirement over time.
 | ID | Requirement | Priority | Status | Verification |
 |----|-------------|----------|--------|--------------|
 | REQ-001 | Single-model previews use Three.js by default while Babylon remains fallback/capability backend | P0 | Verified | `npm run verify:preview`, `npm run verify:preview:success` |
-| REQ-002 | `3dgrid` and conservative workbench routes remain on Babylon until workflow evidence justifies migration | P0 | Accepted | `docs/preview-routing-matrix.md`, `npm run verify:preview` |
+| REQ-002 | `3dgrid` and conservative workbench routes remain on Babylon until workflow evidence justifies migration | P0 | Verified | `docs/preview-routing-matrix.md`, `npm test -- --run src/render/preview/routing.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-003 | Knowledge generation remains local-first and records report, sidecar, index, preview evidence, and part notes | P0 | Verified | `npm run verify:knowledge-index` |
 | REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
 | REQ-005 | Registered part reuse feedback is visible in generated notes and direct workbench UI | P1 | Verified | `npm run verify:knowledge-index`, `npm run typecheck`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three` |
