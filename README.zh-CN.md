@@ -596,29 +596,28 @@ src/
 
 ### 模型导入管线
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │  1. 格式检测                                                │
 │     └─ getFormatCapability(ext) → { family, strategy }      │
 │                                                             │
-│  2. 路由决策                                                │
+│  2. 来源准备                                                │
 │     ├─ strategy: "direct" → prepareDirectLoad()             │
 │     └─ strategy: "convert" → convertForPreview()            │
 │                                                             │
-│  3. 数据加载                                                │
-│     ├─ readBinaryPath() → ArrayBuffer                       │
-│     └─ [如已转换] → 读取转换后的 .glb                       │
+│  3. 预览路由决策                                            │
+│     ├─ GLB/GLTF/STL/PLY/OBJ 单模型 → Three.js               │
+│     └─ 3dgrid、保守 workbench、fallback → Babylon           │
 │                                                             │
-│  4. Babylon 渲染                                            │
-│     ├─ GLB/GLTF/OBJ → SceneLoader.ImportMeshAsync()        │
-│     ├─ STL → loadSTLBuffer()（直接解析）                    │
-│     └─ PLY → loadPLYBuffer()（直接解析）                    │
+│  4. 渲染器加载                                              │
+│     ├─ Three.js → loadThreeGLTF/STL/PLY/OBJ                 │
+│     └─ Babylon.js → SceneLoader 或直接 STL/PLY buffers      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 为什么 STL/PLY 使用直接缓冲区加载
+### 为什么 STL/PLY fallback 使用直接缓冲区加载
 
-Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `SceneLoader.ImportMeshAsync()` 加载时，接收到的是 data URL 字符串而非 ArrayBuffer。内置加载器（GLTF、OBJ）不受影响。
+Three.js 是 STL 和 PLY 单模型预览的默认路径；Babylon.js 仍然负责 `3dgrid`、保守 workbench 和 fallback 路线。Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `SceneLoader.ImportMeshAsync()` 加载时，接收到的是 data URL 字符串而非 ArrayBuffer。内置加载器（GLTF、OBJ）不受影响。
 
 **解决方案**：STL 和 PLY 解析器直接使用原始 ArrayBuffer 调用，完全绕过 SceneLoader。
 

@@ -587,29 +587,28 @@ src/
 
 ### Model Import Pipeline
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │  1. Format Detection                                        │
 │     └─ getFormatCapability(ext) → { family, strategy }      │
 │                                                             │
-│  2. Route Decision                                          │
+│  2. Source Preparation                                      │
 │     ├─ strategy: "direct" → prepareDirectLoad()             │
 │     └─ strategy: "convert" → convertForPreview()            │
 │                                                             │
-│  3. Data Loading                                            │
-│     ├─ readBinaryPath() → ArrayBuffer                       │
-│     └─ [if converted] → read converted .glb                 │
+│  3. Preview Route Decision                                  │
+│     ├─ GLB/GLTF/STL/PLY/OBJ single-model → Three.js         │
+│     └─ 3dgrid, conservative workbench, fallback → Babylon   │
 │                                                             │
-│  4. Babylon Rendering                                       │
-│     ├─ GLB/GLTF/OBJ → SceneLoader.ImportMeshAsync()        │
-│     ├─ STL → loadSTLBuffer() (direct parse)                 │
-│     └─ PLY → loadPLYBuffer() (direct parse)                 │
+│  4. Renderer Loading                                        │
+│     ├─ Three.js → loadThreeGLTF/STL/PLY/OBJ                 │
+│     └─ Babylon.js → SceneLoader or direct STL/PLY buffers   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Why Direct Buffer Loading for STL/PLY
+### Why Direct Buffer Loading for STL/PLY Fallbacks
 
-Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL strings instead of ArrayBuffer when loading via `SceneLoader.ImportMeshAsync()`. Built-in loaders (GLTF and OBJ) are unaffected.
+Three.js is the default single-model path for STL and PLY, while Babylon.js still backs `3dgrid`, conservative workbench, and fallback routes. Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL strings instead of ArrayBuffer when loading via `SceneLoader.ImportMeshAsync()`. Built-in loaders (GLTF and OBJ) are unaffected.
 
 **Workaround**: STL and PLY parsers are called directly with the raw ArrayBuffer, bypassing SceneLoader entirely.
 
