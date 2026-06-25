@@ -10,6 +10,7 @@
 - Performance: preserve original STEP/OCCT material colors while reducing GLB size by trying the OCCT glTF writer before the existing XDE component fallback.
 - Performance: reuse existing `.ai3d-converted.*` files only when they are newer than the source model, avoiding stale geometry while skipping unnecessary conversions.
 - Refactor: move FreeCAD/CadQuery conversion Python into bundled script templates while keeping TypeScript responsible for invocation and output validation.
+- Refactor: extract direct-view layout and workbench overview helpers from `DirectModelView` without changing route behavior.
 - Routing: align production direct file view with the default Three.js edit-preview path while keeping converted workbench inputs on the conservative Babylon.js route.
 - UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
 - UI: keep completed ruler measurements visible when leaving measurement mode, cancel unfinished endpoints cleanly, and verify copy/clear/export behavior in the preview harness.

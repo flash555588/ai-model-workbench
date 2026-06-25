@@ -20,33 +20,15 @@ import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
 import { buildLocalAnalysisResult, buildPartRecordsFromEvidence } from "./workbench/analysis-result";
 import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
+import { createDirectViewLayout } from "./direct-view-layout";
+import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
-import {
-  attachModelPreviewCanvasShortcuts,
-  configureModelPreviewCanvas,
-} from "./inline/preview-canvas-accessibility";
 
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
 
 import { createDefaultProfile } from "../store/plugin-store";
-
-function formatCount(value: number | undefined): string {
-  return Math.round(value ?? 0).toLocaleString();
-}
-
-function formatBounds(summary: ModelPreviewSummary): string {
-  return [
-    summary.boundingSize.x,
-    summary.boundingSize.y,
-    summary.boundingSize.z,
-  ].map((value) => value.toFixed(2)).join(" x ");
-}
-
-function formatBackendName(backend: string): string {
-  return backend === "three" ? "Three.js" : "Babylon.js";
-}
 
 function isMissingExternalModelResourceError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Missing external model resource:");
@@ -154,26 +136,23 @@ export class DirectModelView extends FileView {
     this.preview?.destroy();
     this.preview = null;
     this.ps.setCurrentModel(file.path, null);
-    // === Workspace layout with draggable resize ===
-    const workspace = this.contentEl.createDiv({ cls: "ai3d-workspace" });
-    // Top track: main preview + sidebar
-    const topTrack = workspace.createDiv({ cls: "ai3d-workspace-track-top" });
-    const mainArea = topTrack.createDiv({ cls: "ai3d-workspace-main" });
-    const hHandle = topTrack.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-h" });
-    const sidebar = topTrack.createDiv({ cls: "ai3d-workspace-sidebar" });
-    // Use a detached staging container to avoid "Only one element on document" error.
-    const staging = createDiv();
-    const host = staging.createDiv({ cls: "ai3d-preview-host" });
-    const canvas = staging.createEl("canvas");
-    canvas.className = "ai3d-canvas-full";
-    configureModelPreviewCanvas(canvas, "direct-view", file.path);
-    attachModelPreviewCanvasShortcuts(canvas, () => this.preview);
-    host.appendChild(canvas);
-    // Semi-transparent overlay for annotation mode
-    const modeOverlay = staging.createDiv();
-    modeOverlay.className = "ai3d-annot-mode-overlay is-hidden";
-    host.appendChild(modeOverlay);
-    mainArea.appendChild(host);
+    const {
+      workspace,
+      topTrack,
+      mainArea,
+      hHandle,
+      host,
+      canvas,
+      modeOverlay,
+      sidebarContent,
+      vHandle,
+      workbenchPanel,
+    } = createDirectViewLayout({
+      contentEl: this.contentEl,
+      filePath: file.path,
+      mobile,
+      getPreview: () => this.preview,
+    });
     let toolbar: ReturnType<typeof createHelperButtons> | null = null;
     const setAnnotationMode = (active: boolean) => {
       this.annotationMode = active;
@@ -212,20 +191,9 @@ export class DirectModelView extends FileView {
         }
       },
     );
-    // Sidebar content area for knowledge + matches
-    const sidebarContent = sidebar.createDiv({ cls: "ai3d-sidebar-content" });
     this.sidebarContent = sidebarContent;
-    // Vertical resize handle + bottom panel
-    const vHandle = workspace.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-v" });
-    const workbenchPanel = workspace.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
     this.workbenchPanel = workbenchPanel;
     this.setupResizeHandles(hHandle, vHandle, topTrack, workspace);
-    if (mobile) {
-      mainArea.createDiv({
-        cls: "ai3d-mobile-mode-hint ai3d-mobile-mode-hint--inline",
-        text: t("directView.mobileHint"),
-      });
-    }
     const loading = createLoadingOverlay(host);
     try {
       const settings = this.getSettings();
@@ -370,33 +338,12 @@ export class DirectModelView extends FileView {
     route: { backend: string; reason: string },
     modelPath: string,
   ): void {
-    panel.empty();
-    panel.removeClass("is-hidden");
-    panel.dataset.ai3dBackend = route.backend;
-    panel.dataset.ai3dRouteReason = route.reason;
-    const overview = panel.createDiv({ cls: "ai3d-direct-workbench-overview" });
-    const status = overview.createDiv({ cls: "ai3d-direct-workbench-status" });
-    const backendLine = status.createDiv({ cls: "ai3d-direct-workbench-line" });
-    backendLine.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.backendLabel") });
-    backendLine.createSpan({ cls: "ai3d-direct-workbench-value", text: formatBackendName(route.backend) });
-    const routeLine = status.createDiv({ cls: "ai3d-direct-workbench-line ai3d-direct-workbench-route" });
-    routeLine.createSpan({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.routeLabel") });
-    routeLine.createSpan({ cls: "ai3d-direct-workbench-value", text: route.reason });
-    const metrics = overview.createDiv({ cls: "ai3d-direct-workbench-metrics" });
-    this.renderMetric(metrics, t("workbench.meshesLabel"), formatCount(summary.meshCount));
-    this.renderMetric(
-      metrics,
-      t("directWorkbench.partCandidatesLabel"),
-      formatCount(this.ps.store.getState().modelAssetProfiles[modelPath]?.registeredParts?.length),
-    );
-    this.renderMetric(
-      metrics,
-      summary.splatCount !== undefined ? t("workbench.splatsLabel") : t("workbench.trianglesLabel"),
-      formatCount(summary.splatCount ?? summary.triangleCount),
-    );
-    this.renderMetric(metrics, t("workbench.materialsLabel"), formatCount(summary.materialCount));
-    this.renderMetric(metrics, t("workbench.boundingSizeLabel"), formatBounds(summary));
-    this.renderMetric(metrics, t("directWorkbench.performanceLabel"), summary.performanceTier ?? "light");
+    renderDirectWorkbenchOverview({
+      panel,
+      summary,
+      route,
+      registeredPartCount: this.ps.store.getState().modelAssetProfiles[modelPath]?.registeredParts?.length,
+    });
   }
   private renderSidebarContent(modelPath: string, summary: ModelPreviewSummary): void {
     if (!this.sidebarContent) return;
@@ -455,12 +402,6 @@ export class DirectModelView extends FileView {
       workspace.style.gridTemplateRows = `1fr 4px ${bottomHeight}px`;
     }, () => {});
   }
-  private renderMetric(parent: HTMLElement, label: string, value: string): void {
-    const metric = parent.createDiv({ cls: "ai3d-direct-workbench-metric" });
-    metric.createSpan({ cls: "ai3d-direct-workbench-label", text: label });
-    metric.createSpan({ cls: "ai3d-direct-workbench-value", text: value });
-  }
-
   private renderKnowledgeControls(parent: HTMLElement, modelPath: string): void {
     const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
     const control = parent.createDiv({ cls: "ai3d-direct-workbench-control ai3d-direct-workbench-knowledge" });
