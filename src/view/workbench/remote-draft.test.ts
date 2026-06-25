@@ -21,7 +21,7 @@ interface RequestUrlResponse {
 }
 
 const requestUrlMock = vi.hoisted(() => {
-  vi.stubGlobal("activeWindow", { setTimeout, clearTimeout });
+  vi.stubGlobal("window", { setTimeout, clearTimeout });
   return vi.fn<(request: RequestUrlCall) => Promise<RequestUrlResponse>>();
 });
 

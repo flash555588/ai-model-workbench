@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, beforeAll, describe, it, expect, vi } from "vitest";
 import { ConversionManager, ConversionTimeoutError } from "./manager";
 import type { ConversionRequest, ConversionResult, ModelConverter } from "./types";
 
@@ -26,6 +26,14 @@ const successResult: ConversionResult = {
 };
 
 describe("ConversionManager", () => {
+  beforeAll(() => {
+    vi.stubGlobal("window", { setTimeout, clearTimeout });
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("converts a supported file", async () => {
     const manager = new ConversionManager();
     manager.registerConverter(createMockConverter(0, successResult));

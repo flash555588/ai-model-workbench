@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.1 - 2026-06-25
+
+- Review: use `window.setTimeout()` and `window.clearTimeout()` in timeout helpers and preview verification to satisfy Obsidian source review guidance.
+
 ## 0.6.0 - 2026-06-25
 
 - Rendering: add a Three.js capability profile and quality snapshot for direct-format visual fidelity diagnostics.

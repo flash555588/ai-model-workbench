@@ -36,6 +36,7 @@ Use this page to choose the right document before changing code.
 - `../README.md` - user-facing install, format support, verification, and release notes.
 - `../README.zh-CN.md` - Simplified Chinese user-facing docs.
 - `../CHANGELOG.md` - current unreleased and release history.
+- `release-notes/0.6.1.md` - GitHub release notes for the `0.6.1` source-review patch.
 - `release-notes/0.6.0.md` - GitHub release notes for the `0.6.0` capability-tree release.
 - `../.github/workflows/release.yml` - release asset publishing workflow.
 

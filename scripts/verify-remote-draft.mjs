@@ -158,7 +158,7 @@ await esbuild.build({
   platform: "node",
   format: "esm",
   outfile: bundlePath,
-  banner: { js: "globalThis.activeWindow = globalThis;" },
+  banner: { js: "globalThis.window = globalThis; globalThis.activeWindow = globalThis;" },
   logLevel: "silent",
   plugins: [
     {

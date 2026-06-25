@@ -145,7 +145,7 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number {
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, endpoint: string): Promise<T> {
   let timeoutId: number | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = activeWindow.setTimeout(() => {
+    timeoutId = window.setTimeout(() => {
       reject(new RemoteDraftTimeoutError(timeoutMs, endpoint));
     }, timeoutMs);
   });
@@ -154,7 +154,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, endpoint: 
     return await Promise.race([promise, timeout]);
   } finally {
     if (timeoutId !== null) {
-      activeWindow.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
     }
   }
 }

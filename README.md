@@ -48,7 +48,7 @@ https://community.obsidian.md/plugins/ai-model-workbench
 
 ## Current Release
 
-`0.6.0` upgrades the Three.js direct-format path into the main high-fidelity single-model viewer while keeping Babylon.js for `3dgrid`, conservative workbench/fallback behavior, and future local-only SPLAT restoration.
+`0.6.1` is a source-review patch for the `0.6.0` Three.js capability-tree release. It keeps the `0.6.0` rendering, measurement, diagnostics, and knowledge-workflow upgrades, and updates the remote draft timeout helper to follow Obsidian review guidance.
 
 Release highlights:
 
@@ -59,7 +59,7 @@ Release highlights:
 - Calibrated measurement records with Markdown export
 - More reliable knowledge-generation state, diagnostics, conversion cache handling, and release gates
 
-See [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) and [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+See [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md), [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full release notes.
 
 ---
 
@@ -714,7 +714,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.6.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.6.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.6.1`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.6.1` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

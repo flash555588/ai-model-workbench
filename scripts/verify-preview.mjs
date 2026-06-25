@@ -919,7 +919,7 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
     const missingMethods = methods.filter((method) => typeof preview[method] !== "function");
     const before = canvas.toDataURL("image/png");
     preview.focusWorldPoint?.({ x: 0.8, y: 0.8, z: 0.8 });
-    await new Promise((resolve) => activeWindow.setTimeout(resolve, 450));
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
     const focused = canvas.toDataURL("image/png");
     const snapshot = preview.captureSnapshot?.() ?? "";
     const evidence = preview.getModelEvidence?.() ?? null;
