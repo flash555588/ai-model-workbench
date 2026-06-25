@@ -39,7 +39,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-010 | Measurement records are calibrated, persistent during mode changes, copyable as Markdown, and covered in preview verification | P1 | Verified | `npm run typecheck`, `npm test -- --run src/render/preview/measurement.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-011 | Renderer capability contracts are tested for Three.js and Babylon.js so toolbar actions cannot silently drift | P1 | Verified | `npm test -- --run src/render/preview/types.test.ts`, `npm run typecheck`, `npm run verify:preview:success` |
 | REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Accepted | `npm run verify:diagnostics`, converter unit tests |
-| REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | In Progress | `npm run verify:knowledge-index`, knowledge-note unit tests |
+| REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | Verified | `npm run typecheck`, `npm test -- --run src/view/workbench/knowledge-note.test.ts src/view/workbench/remote-draft.test.ts`, `npm run verify:knowledge-index`, `npm run verify:remote-draft` |
 | REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Accepted | `npm run typecheck`, `npm test`, `npm run verify:preview` |
 | REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release` |
 
@@ -226,7 +226,7 @@ future agent notes can refer to the same requirement over time.
 
 ### REQ-013: Knowledge Generation State Consistency
 
-- Status: In Progress
+- Status: Verified
 - Priority: P0
 - User value: Knowledge-note generation should leave understandable state whether it succeeds fully, partially writes artifacts, or fails.
 - Scope:
