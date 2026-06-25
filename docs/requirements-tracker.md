@@ -40,7 +40,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-011 | Renderer capability contracts are tested for Three.js and Babylon.js so toolbar actions cannot silently drift | P1 | Verified | `npm test -- --run src/render/preview/types.test.ts`, `npm run typecheck`, `npm run verify:preview:success` |
 | REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Verified | `npm run typecheck`, `npm test -- --run src/io/conversion/command-discovery.test.ts src/io/conversion/manager.test.ts src/io/cache/converted-asset-cache.test.ts src/io/conversion/adapters/freecad-converter.test.ts src/io/conversion/adapters/freecad-script-builder.test.ts src/diagnostics/report.test.ts`, `npm run verify:diagnostics` |
 | REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | Verified | `npm run typecheck`, `npm test -- --run src/view/workbench/knowledge-note.test.ts src/view/workbench/remote-draft.test.ts`, `npm run verify:knowledge-index`, `npm run verify:remote-draft` |
-| REQ-014 | Large coordinator classes are split without changing route behavior | P2 | In Progress | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success` |
+| REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run build`, `npm run verify:release` |
 | REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release` |
 
 ## Active Requirement Details
@@ -263,7 +263,7 @@ future agent notes can refer to the same requirement over time.
 
 ### REQ-014: Coordinator Class Decomposition
 
-- Status: In Progress
+- Status: Verified
 - Priority: P2
 - User value: The project should become easier to change safely by shrinking the largest coordinator classes without changing behavior.
 - Scope:
@@ -289,6 +289,8 @@ future agent notes can refer to the same requirement over time.
   - `npm test -- --run src/render/babylon/mesh-preview.test.ts`
   - `npm run verify:preview`
   - `npm run verify:preview:success`
+  - `npm run build`
+  - `npm run verify:release`
 - Related files:
   - `src/view/direct-view.ts`
   - `src/view/direct-view-layout.ts`
