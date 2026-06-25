@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ThreeSmoothnessTracker } from "./smoothness";
+import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothness";
 
 describe("Three smoothness tracker", () => {
   it("tracks render frame timing and slow frames", () => {
@@ -26,5 +26,37 @@ describe("Three smoothness tracker", () => {
       idleFrameSkipCount: 2,
       adaptiveScaleChangeCount: 1,
     });
+  });
+});
+
+describe("Three render loop activity", () => {
+  const idleActivity = {
+    cameraMoved: false,
+    animating: false,
+    renderDirty: false,
+    renderObserverCount: 0,
+    renderObserverSettleFrames: 0,
+  };
+
+  it("lets an idle settled preview sleep", () => {
+    expect(shouldContinueThreeRenderLoop(idleActivity)).toBe(false);
+  });
+
+  it("keeps the loop alive for active camera, animation, dirty, or observer-settle work", () => {
+    expect(shouldContinueThreeRenderLoop({ ...idleActivity, cameraMoved: true })).toBe(true);
+    expect(shouldContinueThreeRenderLoop({ ...idleActivity, animating: true })).toBe(true);
+    expect(shouldContinueThreeRenderLoop({ ...idleActivity, renderDirty: true })).toBe(true);
+    expect(shouldContinueThreeRenderLoop({
+      ...idleActivity,
+      renderObserverCount: 1,
+      renderObserverSettleFrames: 3,
+    })).toBe(true);
+  });
+
+  it("does not keep the loop awake for observer settle frames when nobody observes renders", () => {
+    expect(shouldContinueThreeRenderLoop({
+      ...idleActivity,
+      renderObserverSettleFrames: 3,
+    })).toBe(false);
   });
 });

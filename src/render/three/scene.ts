@@ -103,7 +103,7 @@ import {
   prepareThreeMaterialForColorAccuracy,
   type ThreeTextureAudit,
 } from "./material-quality";
-import { ThreeSmoothnessTracker } from "./smoothness";
+import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothness";
 import {
   createThreeGroupedPartCandidates,
   createThreeMeshInfoBreakdown,
@@ -219,7 +219,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private renderScale = 1;
   private interactivePixelRatioActive = false;
   private interactionPixelRatioDeadline = 0;
-  private renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+  private renderObserverSettleFrames = 0;
   private frameBudgetPixelRatioScale = 1;
   private frameBudgetSlowStreak = 0;
   private frameBudgetFastStreak = 0;
@@ -539,8 +539,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
       canvas,
       observeRender: (callback) => {
         this.renderObservers.add(callback);
+        this.setRenderObserverSettleFrames();
+        this.markDirty();
         return {
-          remove: () => this.renderObservers.delete(callback),
+          remove: () => {
+            this.renderObservers.delete(callback);
+            if (this.renderObservers.size === 0) {
+              this.setRenderObserverSettleFrames(0);
+            }
+          },
         };
       },
       getCameraStateKey: () => this.getAnnotationCameraStateKey(),
@@ -1014,8 +1021,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.renderHandle = 0;
         return;
       }
-      this.renderHandle = window.requestAnimationFrame(tick);
-      this.renderNow(performance.now());
+      const keepRunning = this.renderNow(performance.now());
+      this.renderHandle = keepRunning ? window.requestAnimationFrame(tick) : 0;
     };
     this.renderHandle = window.requestAnimationFrame(tick);
   }
@@ -1035,9 +1042,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.startRenderLoop();
   };
 
-  private renderNow(now: number): void {
+  private renderNow(now: number): boolean {
     const canvas = this.renderer.domElement;
-    if (!this.viewportVisible || !canvas.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
+    if (!this.viewportVisible || !canvas.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) {
+      return false;
+    }
 
     const deltaSeconds = Math.max(0, (now - this.clock.last) / 1000);
     this.clock.last = now;
@@ -1056,10 +1065,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.renderObserverSettleFrames--;
         this.notifyRenderObservers();
       }
-      return;
+      return this.shouldContinueRenderLoop(cameraMoved, animating);
     }
     this.renderDirty = false;
-    this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+    this.setRenderObserverSettleFrames();
 
     this.bboxHelper?.update();
     this.selectionHelper?.update();
@@ -1073,6 +1082,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.smoothness.recordRenderedFrame(frameDurationMs, FRAME_BUDGET_SLOW_MS);
     this.updateFrameBudget(frameDurationMs);
     this.notifyRenderObservers();
+    return this.shouldContinueRenderLoop(cameraMoved, animating);
+  }
+
+  private shouldContinueRenderLoop(cameraMoved: boolean, animating: boolean): boolean {
+    return shouldContinueThreeRenderLoop({
+      cameraMoved,
+      animating,
+      renderDirty: this.renderDirty,
+      renderObserverCount: this.renderObservers.size,
+      renderObserverSettleFrames: this.renderObserverSettleFrames,
+    });
   }
 
   private notifyRenderObservers(): void {
@@ -1164,10 +1184,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
           FRAME_BUDGET_MAX_OBSERVER_STRIDE,
           this.frameBudgetObserverStride + 1,
         );
-        this.renderObserverSettleFrames = Math.max(
+        this.setRenderObserverSettleFrames(Math.max(
           RENDER_OBSERVER_SETTLE_MIN_FRAMES,
           Math.floor(RENDER_OBSERVER_SETTLE_FRAMES / this.frameBudgetObserverStride),
-        );
+        ));
         this.smoothness.recordAdaptiveScaleChange();
         this.resizeRenderer();
       }
@@ -1181,7 +1201,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.frameBudgetPixelRatioScale * FRAME_BUDGET_PIXEL_RATIO_RECOVERY_STEP,
       );
       this.frameBudgetObserverStride = Math.max(1, this.frameBudgetObserverStride - 1);
-      this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+      this.setRenderObserverSettleFrames();
       this.smoothness.recordAdaptiveScaleChange();
       this.resizeRenderer();
     }
@@ -1194,10 +1214,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.frameBudgetFastStreak = 0;
     this.frameBudgetObserverStride = 1;
     this.frameBudgetObserverCursor = 0;
-    this.renderObserverSettleFrames = RENDER_OBSERVER_SETTLE_FRAMES;
+    this.setRenderObserverSettleFrames();
     if (changed) {
       this.markDirty();
     }
+  }
+
+  private setRenderObserverSettleFrames(frames = RENDER_OBSERVER_SETTLE_FRAMES): void {
+    this.renderObserverSettleFrames = this.renderObservers.size > 0 ? frames : 0;
   }
 
   private shouldDeferShadowRefresh(): boolean {

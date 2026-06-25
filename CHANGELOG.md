@@ -5,6 +5,7 @@
 - Rendering: add a Three.js capability profile and quality snapshot for direct-format visual fidelity diagnostics.
 - Rendering: improve Three.js STL/PLY/OBJ color handling, adaptive PLY point-cloud sizing, and tiny-model camera precision.
 - Performance: add Three.js smoothness metrics and enter interactive pixel-ratio throttling on pointer, wheel, and orbit input before the next frame renders.
+- Performance: let settled Three.js previews sleep their render loop until interaction, animation, or observer work resumes.
 - Docs: align README import pipeline diagrams with the Three.js default route and Babylon fallback paths.
 - Testing: add Three.js color-fidelity and small-parts fixtures to the preview success suite.
 - Testing: cover preview routing policy so conservative workbench and `3dgrid` paths stay on Babylon.js.
