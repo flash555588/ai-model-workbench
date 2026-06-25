@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-06-25
+
 - Rendering: add a Three.js capability profile and quality snapshot for direct-format visual fidelity diagnostics.
 - Rendering: improve Three.js STL/PLY/OBJ color handling, adaptive PLY point-cloud sizing, and tiny-model camera precision.
 - Performance: add Three.js smoothness metrics and enter interactive pixel-ratio throttling on pointer, wheel, and orbit input before the next frame renders.

@@ -13,6 +13,7 @@
 ## 目录
 
 - [功能特性](#功能特性)
+- [当前版本](#当前版本)
 - [平台支持矩阵](#平台支持矩阵)
 - [快速入门](#快速入门)
 - [安装](#安装)
@@ -42,6 +43,23 @@
 - **国际化**：英文和简体中文，自动检测系统语言
 - **桌面端支持**：Windows、macOS、Linux 上的 Obsidian Desktop
 - **移动端支持**：iOS、iPadOS、Android 支持直读格式和简化后的工作台布局
+
+---
+
+## 当前版本
+
+`0.6.0` 将 Three.js 直读格式路径升级为高质量单模型查看主链，同时保留 Babylon.js 负责 `3dgrid`、保守 workbench/fallback 行为，以及未来纯本地 SPLAT 恢复工作。
+
+发布亮点：
+
+- Three.js 能力画像和质量快照，用于路由诊断
+- GLB/GLTF 保留 PBR 语义，STL/PLY 保留顶点色，OBJ/MTL 只对颜色贴图应用 sRGB
+- 相机精度、拾取阈值和测量标记会根据极小/超大模型尺度自适应
+- 动态帧预算、交互时像素比降档、静止后渲染循环休眠
+- 带单位校准和 Markdown 导出的测量记录
+- 更可靠的知识生成状态、诊断、转换缓存和发布验证门禁
+
+完整发布日志见 [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -110,9 +128,9 @@ npm run build
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `main.js` | ~3.8 MB | 插件运行时 bundle |
+| `main.js` | ~3.9 MB | 插件运行时 bundle |
 | `manifest.json` | ~1 KB | Obsidian 插件清单 |
-| `styles.css` | ~5 KB | 插件样式 |
+| `styles.css` | ~40 KB | 插件样式 |
 
 直接渲染在桌面端和移动端都可用。CAD、FBX、3MF、DAE 的本地转换工具只适用于桌面系统。
 
@@ -705,7 +723,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.5.5`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.5.5`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.6.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.6.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

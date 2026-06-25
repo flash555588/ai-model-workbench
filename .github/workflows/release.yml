@@ -54,7 +54,15 @@ jobs:
       - name: Prepare release notes
         run: |
           mkdir -p .tmp
-          node scripts/verify-release-assets.mjs --format markdown > .tmp/release-notes.md
+          VERSION="$(node -p "require('./manifest.json').version")"
+          NOTES="docs/release-notes/${VERSION}.md"
+          if [[ -f "${NOTES}" ]]; then
+            cat "${NOTES}" > .tmp/release-notes.md
+            printf "\n\n---\n\n" >> .tmp/release-notes.md
+          else
+            printf "# AI Model Workbench ${VERSION}\n\n" > .tmp/release-notes.md
+          fi
+          node scripts/verify-release-assets.mjs --format markdown >> .tmp/release-notes.md
 
       - name: Attest release assets
         uses: actions/attest@v4

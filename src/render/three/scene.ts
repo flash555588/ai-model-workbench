@@ -109,13 +109,9 @@ import {
   createThreeMeshInfoBreakdown,
   createThreeModelPreviewSummary,
   createThreePartPreviewSummary,
-  describeThreeMaterial as describeMaterial,
   getThreeMaterialList as materialList,
   getThreeMeshMaterialNames,
-  getThreeObjectDisplayName as getObjectDisplayName,
   getThreeObjectPreviewBounds as getObjectPreviewBounds,
-  getThreeTriangleCount as triangleCountForMesh,
-  getThreeVertexCount as vertexCountForMesh,
   isThreeMesh as isMesh,
 } from "./mesh-preview";
 

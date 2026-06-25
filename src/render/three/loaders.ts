@@ -4,7 +4,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
+import { BufferGeometry, Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import {
@@ -189,7 +189,8 @@ function materialList(material: Material | Material[] | undefined | null): Mater
 function prepareObjectMaterials(object: Object3D): void {
   object.traverse((entry) => {
     if (!(entry instanceof Mesh)) return;
-    for (const material of materialList(entry.material)) {
+    const mesh = entry as Mesh<BufferGeometry, Material | Material[]>;
+    for (const material of materialList(mesh.material)) {
       prepareThreeMaterialForColorAccuracy(material, 1);
     }
   });

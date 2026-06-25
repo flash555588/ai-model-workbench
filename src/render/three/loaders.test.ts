@@ -10,7 +10,7 @@ let loadThreePLY: typeof import("./loaders").loadThreePLY;
 let loadThreeSTL: typeof import("./loaders").loadThreeSTL;
 
 beforeAll(async () => {
-  (globalThis as unknown as Record<string, unknown>).activeWindow = {};
+  vi.stubGlobal("activeWindow", {});
   const loaders = await import("./loaders");
   loadThreePLY = loaders.loadThreePLY;
   loadThreeSTL = loaders.loadThreeSTL;

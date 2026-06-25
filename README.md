@@ -13,6 +13,7 @@ https://community.obsidian.md/plugins/ai-model-workbench
 ## Table of Contents
 
 - [Features](#features)
+- [Current Release](#current-release)
 - [Platform Support Matrix](#platform-support-matrix)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
@@ -42,6 +43,23 @@ https://community.obsidian.md/plugins/ai-model-workbench
 - **i18n**: English and Simplified Chinese with auto-detect system locale
 - **Desktop support**: Obsidian Desktop on Windows, macOS, and Linux
 - **Mobile support**: iOS, iPadOS, and Android support direct formats, inline previews, and direct file view
+
+---
+
+## Current Release
+
+`0.6.0` upgrades the Three.js direct-format path into the main high-fidelity single-model viewer while keeping Babylon.js for `3dgrid`, conservative workbench/fallback behavior, and future local-only SPLAT restoration.
+
+Release highlights:
+
+- Three.js capability profiles and quality snapshots for route diagnostics
+- GLB/GLTF PBR preservation, STL/PLY vertex colors, OBJ/MTL color-texture sRGB handling
+- Camera precision, raycast thresholds, and measurement markers scaled to tiny and large models
+- Dynamic frame-budget tracking, interactive pixel-ratio throttling, and idle render-loop sleep
+- Calibrated measurement records with Markdown export
+- More reliable knowledge-generation state, diagnostics, conversion cache handling, and release gates
+
+See [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) and [CHANGELOG.md](CHANGELOG.md) for the full release notes.
 
 ---
 
@@ -109,9 +127,9 @@ All install methods place the same three files in that folder:
 
 | File | Size | Description |
 |------|------|-------------|
-| `main.js` | ~3.8 MB | Plugin runtime bundle |
+| `main.js` | ~3.9 MB | Plugin runtime bundle |
 | `manifest.json` | ~1 KB | Obsidian plugin manifest |
-| `styles.css` | ~10 KB | Plugin styles |
+| `styles.css` | ~40 KB | Plugin styles |
 
 Direct rendering works on desktop and mobile. Local converter tools for CAD, FBX, 3MF, and DAE require desktop OS access.
 
@@ -696,7 +714,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.5.8`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.5.8` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.6.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.6.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 
