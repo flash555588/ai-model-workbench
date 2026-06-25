@@ -6,6 +6,7 @@
 - Rendering: improve Three.js STL/PLY/OBJ color handling, adaptive PLY point-cloud sizing, and tiny-model camera precision.
 - Performance: add Three.js smoothness metrics and enter interactive pixel-ratio throttling on pointer, wheel, and orbit input before the next frame renders.
 - Testing: add Three.js color-fidelity and small-parts fixtures to the preview success suite.
+- Testing: make Obsidian smoke verification scroll each inline preview canvas into view before sampling pixels so offscreen render pausing does not cause false failures.
 - Performance: preserve original STEP/OCCT material colors while reducing GLB size by trying the OCCT glTF writer before the existing XDE component fallback.
 - Performance: reuse existing `.ai3d-converted.*` files only when they are newer than the source model, avoiding stale geometry while skipping unnecessary conversions.
 - Refactor: move FreeCAD/CadQuery conversion Python into bundled script templates while keeping TypeScript responsible for invocation and output validation.

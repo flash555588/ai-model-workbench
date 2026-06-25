@@ -35,7 +35,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-006 | Diagnostics reports expose support context without leaking draft service URLs, converter command paths, or vault-relative model/note paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
 | REQ-008 | Real Obsidian smoke verification covers install, rendering, knowledge generation, and diagnostics when the host can launch Obsidian | P1 | Verified | `npm run verify:obsidian -- --clean` |
-| REQ-009 | Direct view preserves preview, annotation, measurement, and knowledge actions across Three/Babylon routes | P0 | In Progress | `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
+| REQ-009 | Direct view preserves preview, annotation, measurement, and knowledge actions across Three/Babylon routes | P0 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
 | REQ-010 | Measurement records are calibrated, persistent during mode changes, copyable as Markdown, and covered in preview verification | P1 | Verified | `npm run typecheck`, `npm test -- --run src/render/preview/measurement.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-011 | Renderer capability contracts are tested for Three.js and Babylon.js so toolbar actions cannot silently drift | P1 | Verified | `npm test -- --run src/render/preview/types.test.ts`, `npm run typecheck`, `npm run verify:preview:success` |
 | REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Accepted | `npm run verify:diagnostics`, converter unit tests |
@@ -99,7 +99,7 @@ future agent notes can refer to the same requirement over time.
 
 ### REQ-009: Direct View Workbench Reliability
 
-- Status: In Progress
+- Status: Verified
 - Priority: P0
 - User value: Direct file view should be the dependable place to inspect a model, add annotations, take measurements, generate knowledge notes, and inspect registered part reuse without caring which renderer backend was selected.
 - Scope:

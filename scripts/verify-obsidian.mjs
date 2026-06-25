@@ -433,32 +433,6 @@ async function verifyPage() {
     await page.waitForTimeout(1500);
 
     const result = await page.evaluate(() => {
-      function canvasStats(canvas) {
-        const sample = document.createElement("canvas");
-        sample.width = 64;
-        sample.height = 64;
-        const context = sample.getContext("2d");
-        context.drawImage(canvas, 0, 0, 64, 64);
-        const data = context.getImageData(0, 0, 64, 64).data;
-        let nonEmpty = 0;
-        let min = 255;
-        let max = 0;
-        for (let index = 0; index < data.length; index += 4) {
-          const value = Math.max(data[index], data[index + 1], data[index + 2]);
-          if (data[index + 3] > 0 && value > 8) {
-            nonEmpty++;
-          }
-          min = Math.min(min, data[index], data[index + 1], data[index + 2]);
-          max = Math.max(max, data[index], data[index + 1], data[index + 2]);
-        }
-        return {
-          width: canvas.width,
-          height: canvas.height,
-          nonEmptyRatio: nonEmpty / 4096,
-          contrast: max - min,
-        };
-      }
-
       return {
         title: document.title,
         activeFile: window.app?.workspace?.getActiveFile?.()?.path ?? null,
@@ -468,9 +442,10 @@ async function verifyPage() {
         helperToolbarCount: document.querySelectorAll(".ai3d-helper-toolbar").length,
         loadFeedback: Array.from(document.querySelectorAll(".ai3d-load-feedback")).map((el) => (el.textContent ?? "").trim()),
         ai3dErrors: Array.from(document.querySelectorAll(".ai3d-error")).map((el) => (el.textContent ?? "").trim()),
-        canvases: Array.from(document.querySelectorAll(".ai3d-preview-host canvas")).map(canvasStats),
+        canvases: [],
       };
     });
+    result.canvases = await collectPreviewCanvasStats(page);
 
     assert(result.pluginEnabled, "Plugin is not enabled in Obsidian");
     assert(result.pluginLoaded, "Plugin is not loaded in Obsidian");
@@ -482,7 +457,10 @@ async function verifyPage() {
     assert(result.ai3dErrors.length === 0, `Plugin rendered errors: ${result.ai3dErrors.join("; ")}`);
     assert(result.canvases.length >= 2, `Expected at least 2 preview canvases, got ${result.canvases.length}`);
     const renderedCanvases = result.canvases.filter((canvas) => canvas.nonEmptyRatio > 0.05 && canvas.contrast > 20);
-    assert(renderedCanvases.length >= 2, `Expected at least 2 rendered canvases, got ${renderedCanvases.length}`);
+    assert(
+      renderedCanvases.length >= 2,
+      `Expected at least 2 rendered canvases, got ${renderedCanvases.length}: ${JSON.stringify(result.canvases)}`,
+    );
     for (const [index, canvas] of result.canvases.entries()) {
       assert(canvas.width > 0 && canvas.height > 0, `Canvas ${index} has invalid size`);
     }
@@ -493,6 +471,57 @@ async function verifyPage() {
   } finally {
     await browser.close();
   }
+}
+
+async function collectPreviewCanvasStats(page) {
+  await page.evaluate(() => {
+    window.__ai3dVerifyCanvasStats = (canvas) => {
+      const sample = document.createElement("canvas");
+      sample.width = 64;
+      sample.height = 64;
+      const context = sample.getContext("2d");
+      context.drawImage(canvas, 0, 0, 64, 64);
+      const data = context.getImageData(0, 0, 64, 64).data;
+      let nonEmpty = 0;
+      let min = 255;
+      let max = 0;
+      for (let sampleIndex = 0; sampleIndex < data.length; sampleIndex += 4) {
+        const value = Math.max(data[sampleIndex], data[sampleIndex + 1], data[sampleIndex + 2]);
+        if (data[sampleIndex + 3] > 0 && value > 8) {
+          nonEmpty++;
+        }
+        min = Math.min(min, data[sampleIndex], data[sampleIndex + 1], data[sampleIndex + 2]);
+        max = Math.max(max, data[sampleIndex], data[sampleIndex + 1], data[sampleIndex + 2]);
+      }
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        nonEmptyRatio: nonEmpty / 4096,
+        contrast: max - min,
+      };
+    };
+  });
+  const count = await page.locator(".ai3d-preview-host canvas").count();
+  const canvases = [];
+  for (let index = 0; index < count; index++) {
+    await page.evaluate((canvasIndex) => {
+      const canvas = document.querySelectorAll(".ai3d-preview-host canvas")[canvasIndex];
+      canvas?.scrollIntoView({ block: "center", inline: "center" });
+    }, index);
+    await page.waitForTimeout(500);
+    await page.waitForFunction((canvasIndex) => {
+      const canvas = document.querySelectorAll(".ai3d-preview-host canvas")[canvasIndex];
+      if (!(canvas instanceof HTMLCanvasElement) || canvas.width <= 0 || canvas.height <= 0) return false;
+      const stats = window.__ai3dVerifyCanvasStats(canvas);
+      return stats.nonEmptyRatio > 0.05 && stats.contrast > 20;
+    }, index, { timeout: 10_000 }).catch(() => undefined);
+    canvases.push(await page.evaluate((canvasIndex) => {
+      const canvas = document.querySelectorAll(".ai3d-preview-host canvas")[canvasIndex];
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      return window.__ai3dVerifyCanvasStats(canvas);
+    }, index));
+  }
+  return canvases.filter(Boolean);
 }
 
 async function verifyDirectWorkbench(page) {
