@@ -220,11 +220,21 @@ function normalizeCommandValue(value?: string): string | undefined {
   return trimmed;
 }
 
-const COMMAND_REJECTED_CHARS = /[;|&<>$`\r\n\t{}()[\]\\]/;
+const COMMAND_REJECTED_CHARS = /[;|&<>$`\r\n\t]/;
 
 function validateCommandExecutable(command: string): { ok: true } | { ok: false; reason: string } {
   if (COMMAND_REJECTED_CHARS.test(command)) {
     return { ok: false, reason: "Command contains unsafe shell metacharacters." };
+  }
+  return { ok: true };
+}
+
+function validateCommandInvocation(executable: string, args: readonly string[]): { ok: true } | { ok: false; reason: string } {
+  for (const part of [executable, ...args]) {
+    const validation = validateCommandExecutable(part);
+    if (!validation.ok) {
+      return validation;
+    }
   }
   return { ok: true };
 }
@@ -558,7 +568,7 @@ async function inspectCommandReference(
 ): Promise<ConverterCommandStatus> {
   const parsed = parseCommandValue(command);
 
-  const validation = validateCommandExecutable(parsed.executable);
+  const validation = validateCommandInvocation(parsed.executable, parsed.args);
   if (!validation.ok) {
     return {
       id: spec.id,
@@ -728,6 +738,9 @@ export async function resolveConverterInvocation(
   configuredCommand?: string,
 ): Promise<ResolvedConverterInvocation> {
   const status = await inspectConverterCommand(id, configuredCommand);
+  if (!status.available && status.detail === "Command contains unsafe shell metacharacters.") {
+    throw new Error(`Refusing to resolve converter command '${id}': ${status.detail}`);
+  }
   return {
     command: status.resolvedPath ?? status.executable,
     args: [...status.args],

@@ -38,7 +38,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-009 | Direct view preserves preview, annotation, measurement, and knowledge actions across Three/Babylon routes | P0 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
 | REQ-010 | Measurement records are calibrated, persistent during mode changes, copyable as Markdown, and covered in preview verification | P1 | Verified | `npm run typecheck`, `npm test -- --run src/render/preview/measurement.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-011 | Renderer capability contracts are tested for Three.js and Babylon.js so toolbar actions cannot silently drift | P1 | Verified | `npm test -- --run src/render/preview/types.test.ts`, `npm run typecheck`, `npm run verify:preview:success` |
-| REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Accepted | `npm run verify:diagnostics`, converter unit tests |
+| REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Verified | `npm run typecheck`, `npm test -- --run src/io/conversion/command-discovery.test.ts src/io/conversion/manager.test.ts src/io/cache/converted-asset-cache.test.ts src/io/conversion/adapters/freecad-converter.test.ts src/io/conversion/adapters/freecad-script-builder.test.ts src/diagnostics/report.test.ts`, `npm run verify:diagnostics` |
 | REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | Verified | `npm run typecheck`, `npm test -- --run src/view/workbench/knowledge-note.test.ts src/view/workbench/remote-draft.test.ts`, `npm run verify:knowledge-index`, `npm run verify:remote-draft` |
 | REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Accepted | `npm run typecheck`, `npm test`, `npm run verify:preview` |
 | REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release` |
@@ -195,7 +195,7 @@ future agent notes can refer to the same requirement over time.
 
 ### REQ-012: Converter Diagnostics And Safety
 
-- Status: Accepted
+- Status: Verified
 - Priority: P1
 - User value: When conversion fails, users should see an actionable explanation without exposing private local command paths in copied diagnostics.
 - Scope:
@@ -214,8 +214,12 @@ future agent notes can refer to the same requirement over time.
   - Diagnostics redact vault-relative paths unless explicitly requested.
 - Verification:
   - `npm run typecheck`
+  - `npm test -- --run src/io/conversion/command-discovery.test.ts`
   - `npm test -- --run src/io/conversion/manager.test.ts`
   - `npm test -- --run src/io/cache/converted-asset-cache.test.ts`
+  - `npm test -- --run src/io/conversion/adapters/freecad-converter.test.ts`
+  - `npm test -- --run src/io/conversion/adapters/freecad-script-builder.test.ts`
+  - `npm test -- --run src/diagnostics/report.test.ts`
   - `npm run verify:diagnostics`
 - Related files:
   - `src/io/conversion/errors.ts`

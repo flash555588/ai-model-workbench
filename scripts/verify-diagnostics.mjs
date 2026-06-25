@@ -35,7 +35,7 @@ await writeFile(entryPath, `
       freecadCommand: "/private/freecad",
       obj2gltfCommand: "/private/obj2gltf",
       fbx2gltfCommand: "/private/fbx2gltf",
-      assimpCommand: "/private/python",
+      assimpCommand: "/private/python && echo leak",
       freecadcmdCommand: "/private/freecadcmd",
     },
     currentModelPath: "models/example.glb",
@@ -176,10 +176,15 @@ await writeFile(entryPath, `
   assert(failedReport.includes("Last generation attention: failed; inspect console details and rerun after fixing the issue"), "Failed generation attention missing");
   assert(pendingReport.includes("Last generation attention: pending or interrupted; rerun generation to replace the marker"), "Pending generation attention missing");
   assert(warningReport.includes("Last generation attention: completed with warnings"), "Warning generation attention missing");
+  assert(report.includes("Converter command status: Python/CadQuery: disabled, command configured, path redacted"), "Converter command status missing");
+  assert(report.includes("Python/trimesh: disabled, command configured, unsafe command rejected"), "Unsafe converter command status missing");
+  assert(report.includes("Conversion timeout: 300000ms outer budget"), "Conversion timeout budget missing");
+  assert(report.includes("unsafe configured commands are rejected before execution"), "Converter safety summary missing");
   assert(report.includes("service configured"), "Remote service configured status missing");
   assert(!report.includes("secret.example.invalid"), "Diagnostics leaked service host");
   assert(!report.includes("token=leak"), "Diagnostics leaked service token");
   assert(!report.includes("/private/"), "Diagnostics leaked command path");
+  assert(!report.includes("echo leak"), "Diagnostics leaked unsafe command text");
   assert(!report.includes("models/example.glb"), "Diagnostics leaked current model path");
   assert(!report.includes("Analysis/3D Reports"), "Diagnostics leaked report folder path");
   assert(!report.includes("example Report.md"), "Diagnostics leaked report note name");

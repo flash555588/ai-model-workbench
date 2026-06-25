@@ -17,7 +17,9 @@
 - Security: sanitize remote draft output and model-derived metadata before writing generated notes.
 - Security: redact vault-relative model, report, index, and folder paths from copied diagnostics reports by default.
 - Security: validate converter command paths and reject shell metacharacters.
+- Security: reject unsafe configured converter command invocations before adapter execution while allowing normal quoted Windows paths.
 - Diagnostics: surface whether the last knowledge generation needs attention for pending, failed, or warning-completed runs.
+- Diagnostics: summarize converter enabled/configured/unsafe status and conversion cache policy without exposing local command paths.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
 - Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.
 - Stability: bound optional remote draft requests with a timeout so local knowledge-note generation can continue when a draft service hangs.

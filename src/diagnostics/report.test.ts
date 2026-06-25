@@ -61,4 +61,46 @@ describe("diagnostics report", () => {
     expect(report).toContain("Route color pipeline: sRGB output, no tone mapping");
     expect(report).toContain("Path: <redacted .glb>");
   });
+
+  it("summarizes converter diagnostics without leaking command paths", () => {
+    const state = createState();
+    state.settings = {
+      ...state.settings,
+      enabledConverterIds: ["fbx2gltf"],
+      fbx2gltfCommand: "C:\\private\\FBX2glTF.exe",
+      assimpCommand: "python && echo leak",
+    };
+    state.convertedAssetRecords = [{
+      cacheVersion: 1,
+      converterId: "fbx2gltf",
+      converterCacheKey: "fbx2gltf:C:\\private\\FBX2glTF.exe",
+      sourcePath: "models/example.fbx",
+      sourceExt: "fbx",
+      targetExt: "glb",
+      outputPath: "models/example.ai3d-converted.glb",
+      outputExt: "glb",
+      warnings: ["Using cached conversion output."],
+      createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
+    }];
+
+    const report = buildDiagnosticsReport({
+      manifest: {
+        id: "ai-model-workbench",
+        name: "AI Model Workbench",
+        version: "0.5.8",
+        minAppVersion: "1.5.0",
+        description: "",
+        author: "",
+      },
+      state,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(report).toContain("FBX2glTF: enabled, command configured, path redacted");
+    expect(report).toContain("Python/trimesh: disabled, command configured, unsafe command rejected");
+    expect(report).toContain("Conversion cache status: 1 record(s) for 1 source(s)");
+    expect(report).toContain("unsafe configured commands are rejected before execution");
+    expect(report).not.toContain("C:\\private");
+    expect(report).not.toContain("python && echo leak");
+  });
 });

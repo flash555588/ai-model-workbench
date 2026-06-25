@@ -1,6 +1,6 @@
 import { apiVersion } from "obsidian";
 import type { PluginManifest } from "obsidian";
-import type { PluginState } from "../domain/models";
+import type { PluginSettings, PluginState } from "../domain/models";
 import { listSupportedModelExtensions } from "../io/formats/registry";
 import { describePreviewRouteCapabilities, formatPreviewCapabilityProfile } from "../render/preview/capabilities";
 import { resolvePreviewRoute } from "../render/preview/routing";
@@ -80,6 +80,51 @@ function formatKnowledgeGenerationAttention(state: PluginState): string {
   return "none";
 }
 
+const CONVERTER_DIAGNOSTIC_SPECS: Array<{
+  id: string;
+  label: string;
+  settingsKey: keyof Pick<
+    PluginSettings,
+    "freecadCommand" | "obj2gltfCommand" | "fbx2gltfCommand" | "assimpCommand" | "freecadcmdCommand"
+  >;
+}> = [
+  { id: "freecad", label: "Python/CadQuery", settingsKey: "freecadCommand" },
+  { id: "obj2gltf", label: "obj2gltf", settingsKey: "obj2gltfCommand" },
+  { id: "fbx2gltf", label: "FBX2glTF", settingsKey: "fbx2gltfCommand" },
+  { id: "assimp", label: "Python/trimesh", settingsKey: "assimpCommand" },
+  { id: "freecadcmd", label: "FreeCADCmd", settingsKey: "freecadcmdCommand" },
+];
+
+const UNSAFE_COMMAND_CHARS = /[;|&<>$`\r\n\t]/;
+const CONVERSION_TIMEOUT_MS = 300_000;
+
+function formatConverterCommandDiagnostics(settings: PluginSettings): string {
+  const enabled = new Set(settings.enabledConverterIds);
+  return CONVERTER_DIAGNOSTIC_SPECS.map((spec) => {
+    const command = settings[spec.settingsKey].trim();
+    const commandStatus = command.length === 0
+      ? "command not configured"
+      : UNSAFE_COMMAND_CHARS.test(command)
+        ? "command configured, unsafe command rejected"
+        : "command configured, path redacted";
+    return `${spec.label}: ${enabled.has(spec.id) ? "enabled" : "disabled"}, ${commandStatus}`;
+  }).join("; ");
+}
+
+function formatConversionCacheDiagnostics(state: PluginState): string {
+  const records = state.convertedAssetRecords;
+  if (records.length === 0) {
+    return "none";
+  }
+  const sourceCount = new Set(records.map((record) => `${record.sourcePath}:${record.sourceExt}:${record.targetExt}`)).size;
+  const warningCount = records.filter((record) => record.warnings.length > 0).length;
+  return [
+    `${records.length} record(s) for ${sourceCount} source(s)`,
+    "validated before reuse for cache version, converter identity, output presence, and source freshness",
+    warningCount > 0 ? `${warningCount} record(s) carry warning text` : "",
+  ].filter(Boolean).join("; ");
+}
+
 export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): string {
   const { manifest, state } = options;
   const settings = state.settings;
@@ -151,6 +196,10 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
     "",
     `- Enabled converters: ${settings.enabledConverterIds.length ? settings.enabledConverterIds.join(", ") : "none"}`,
     `- Cached conversions: ${state.convertedAssetRecords.length}`,
+    `- Converter command status: ${formatConverterCommandDiagnostics(settings)}`,
+    `- Conversion cache status: ${formatConversionCacheDiagnostics(state)}`,
+    `- Conversion timeout: ${CONVERSION_TIMEOUT_MS}ms outer budget`,
+    "- Converter safety: missing converters report their converter id; unsafe configured commands are rejected before execution; command paths are redacted.",
     `- Supported direct/model extensions: ${listSupportedModelExtensions().join(", ")}`,
     "",
     "## Notes",
