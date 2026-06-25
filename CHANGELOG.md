@@ -24,6 +24,7 @@
 - Security: reject unsafe configured converter command invocations before adapter execution while allowing normal quoted Windows paths.
 - Diagnostics: surface whether the last knowledge generation needs attention for pending, failed, or warning-completed runs.
 - Diagnostics: summarize converter enabled/configured/unsafe status and conversion cache policy without exposing local command paths.
+- Docs: synchronize the `0.6.0+` upgrade plan with the verified requirements baseline.
 - Stability: flush pending plugin store state on unload and log previously swallowed folder-creation errors.
 - Stability: mark knowledge-note generation as pending before vault writes, then success or failed after required artifacts finish.
 - Stability: bound optional remote draft requests with a timeout so local knowledge-note generation can continue when a draft service hangs.
