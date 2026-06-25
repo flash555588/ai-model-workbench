@@ -42,12 +42,13 @@ import { getPortableBasename, getPortableDirname, getPortableStem, joinPortableP
 import { OrientationGizmo } from "./orientation-gizmo";
 import { createBabylonDisassemblyController } from "./disassembly";
 import {
+  collectBabylonGltfComponentMetadata,
+  createBabylonGroupedPartCandidates,
+  createBabylonMeshInfoBreakdown,
   createBabylonModelPreviewSummary,
   createBabylonPartPreviewSummary,
-  getBabylonMeshesPreviewBounds,
   getBabylonRenderableMeshes,
   getBabylonRenderablePreviewBounds,
-  getBabylonTriangleCount,
   getBabylonVertexCount,
 } from "./mesh-preview";
 import {
@@ -63,11 +64,7 @@ import {
   formatAnnotationCameraStateKey,
   projectViewportPointToCanvas,
 } from "../preview/annotation-projection";
-import {
-  createPreviewEvidence,
-  createPreviewMaterialSummaryLabel,
-  type PreviewGroupedPartCandidates,
-} from "../preview/evidence";
+import { createPreviewEvidence } from "../preview/evidence";
 import {
   createPreviewLineOfSight,
   isPreviewHitOccluded,
@@ -77,8 +74,6 @@ import {
   createPreviewModelInfoMarkdown,
   createPreviewPartInfoMarkdown,
 } from "../preview/report";
-import { createPreviewPartSummary } from "../preview/summary";
-import { extractPreviewComponentIdentity, type PreviewComponentIdentity } from "../preview/component-identity";
 import type {
   AnnotationViewportProvider,
   PreviewAxis,
@@ -113,85 +108,6 @@ function isShadowLight(light: Light): light is IShadowLight {
 
 function isGaussianSplattingMesh(mesh: AbstractMesh): boolean {
   return mesh.getClassName() === "GaussianSplattingMesh";
-}
-
-function getBabylonNodeDisplayName(node: { name?: string; metadata?: unknown }, fallback: string): string {
-  const identity = extractPreviewComponentIdentity(node.metadata, { name: node.name });
-  return identity.displayName?.trim() || node.name || fallback;
-}
-
-function getBabylonComponentPath(node: { name?: string; parent?: unknown; metadata?: unknown }): string {
-  const names: string[] = [];
-  let current: unknown = node;
-  while (current && typeof current === "object" && "name" in current) {
-    const currentNode = current as { name?: string; parent?: unknown; metadata?: unknown };
-    const name = getBabylonNodeDisplayName(currentNode, "node");
-    if (name.trim()) names.push(name);
-    current = currentNode.parent;
-  }
-  return names.reverse().join("/");
-}
-
-function getPartDisplayName(identity: PreviewComponentIdentity, fallback: string): string {
-  return identity.displayName?.trim() || identity.partNumber || identity.componentId || fallback;
-}
-
-function parseGltfJson(data: ArrayBuffer, extLower: string): Record<string, unknown> | null {
-  try {
-    if (extLower === "gltf") {
-      return JSON.parse(new TextDecoder().decode(new Uint8Array(data))) as Record<string, unknown>;
-    }
-    if (extLower !== "glb") {
-      return null;
-    }
-    const view = new DataView(data);
-    if (view.byteLength < 20 || view.getUint32(0, true) !== 0x46546c67) {
-      return null;
-    }
-    const jsonChunkLength = view.getUint32(12, true);
-    const jsonChunkType = view.getUint32(16, true);
-    if (jsonChunkType !== 0x4e4f534a || 20 + jsonChunkLength > view.byteLength) {
-      return null;
-    }
-    const jsonBytes = new Uint8Array(data, 20, jsonChunkLength);
-    return JSON.parse(new TextDecoder().decode(jsonBytes)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function collectGltfComponentMetadata(data: ArrayBuffer, extLower: string): Map<string, unknown> {
-  const json = parseGltfJson(data, extLower);
-  const metadata = new Map<string, unknown>();
-  if (!json) return metadata;
-
-  const nodes = Array.isArray(json.nodes) ? json.nodes : [];
-  for (const node of nodes) {
-    if (!node || typeof node !== "object") continue;
-    const record = node as Record<string, unknown>;
-    const name = typeof record.name === "string" ? record.name : "";
-    if (name && record.extras) {
-      metadata.set(`node:${name}`, record.extras);
-    }
-  }
-
-  const meshes = Array.isArray(json.meshes) ? json.meshes : [];
-  for (const mesh of meshes) {
-    if (!mesh || typeof mesh !== "object") continue;
-    const record = mesh as Record<string, unknown>;
-    const name = typeof record.name === "string" ? record.name : "";
-    if (name && record.extras) {
-      metadata.set(`mesh:${name}`, record.extras);
-    }
-  }
-
-  return metadata;
-}
-
-function mergeMetadataFallback(primary: unknown, fallback: unknown): unknown {
-  if (fallback === undefined) return primary;
-  if (primary === undefined || primary === null) return fallback;
-  return { metadata: primary, extras: fallback };
 }
 
 function isBabylonMesh(value: unknown): value is AbstractMesh {
@@ -430,7 +346,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const extLower = ext.toLowerCase().replace(".", "");
     this.loadedExt = extLower;
     this.resourceWarnings = [];
-    this.gltfComponentMetadata = collectGltfComponentMetadata(data, extLower);
+    this.gltfComponentMetadata = collectBabylonGltfComponentMetadata(data, extLower);
     const scene = this.scene;
 
     // Map extension to Babylon SceneLoader file extension
@@ -594,7 +510,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }, () => !this.focusSelectionEnabled);
     this.ensureDisassemblyController();
 
-    return this.computeSummary(this.rootMesh);
+    return this.createModelSummary(this.rootMesh);
   }
 
   // ── Config application ───────────────────────────────────────────
@@ -1090,20 +1006,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   exportModelInfo(modelPath?: string): string {
     if (!this.rootMesh) return "";
-    const summary = this.computeSummary(this.rootMesh);
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
     const isSplat = isGaussianSplattingMesh(this.rootMesh);
+    const summary = this.createModelSummary(this.rootMesh);
     const name = modelPath ? getPortableBasename(modelPath) || summary.rootName : summary.rootName;
     return createPreviewModelInfoMarkdown({
       title: name,
       format: this.loadedExt.toUpperCase(),
       summary,
-      meshBreakdown: renderableMeshes.map((mesh) => ({
-        name: mesh.name,
-        triangleCount: isSplat ? null : getBabylonTriangleCount(mesh),
-        vertexCount: getBabylonVertexCount(mesh),
-        materialName: mesh.material?.name ?? null,
-      })),
+      meshBreakdown: renderableMeshes.map((mesh) => createBabylonMeshInfoBreakdown(mesh, { isSplat })),
       materialNames: renderableMeshes.map((mesh) => mesh.material?.name),
     });
   }
@@ -1111,12 +1022,16 @@ export class BabylonModelPreview implements WorkbenchPreview {
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootMesh) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
-    const groupedPartCandidates = this.computeComponentPartSummaries(renderableMeshes);
+    const groupedPartCandidates = createBabylonGroupedPartCandidates(
+      renderableMeshes,
+      this.loadedTransformNodes,
+      this.gltfComponentMetadata,
+    );
     return createPreviewEvidence({
-      summary: this.computeSummary(this.rootMesh),
+      summary: this.createModelSummary(this.rootMesh),
       renderableMeshes,
       groupedPartCandidates,
-      createMeshPart: (mesh) => this.computePartSummary(mesh),
+      createMeshPart: (mesh) => createBabylonPartPreviewSummary(mesh, this.gltfComponentMetadata),
       getMeshMaterialNames: (mesh) => [mesh.material?.name],
       resourceWarnings: this.resourceWarnings,
     });
@@ -1126,7 +1041,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const mesh = this.focusedMesh ?? this._lastPickResult.mesh;
     const renderable = mesh ? this.findRenderableMesh(mesh) : null;
     if (!renderable || renderable.isDisposed()) return null;
-    return this.computePartSummary(renderable);
+    return createBabylonPartPreviewSummary(renderable, this.gltfComponentMetadata);
   }
 
   exportSelectedPartInfo(): string {
@@ -1457,97 +1372,6 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return null;
   }
 
-  private computePartSummary(mesh: AbstractMesh): ModelPartSummary {
-    const name = mesh.name || `mesh-${mesh.uniqueId}`;
-    const metadata = mergeMetadataFallback(
-      mesh.metadata,
-      this.gltfComponentMetadata.get(`node:${name}`) ?? this.gltfComponentMetadata.get(`mesh:${name}`),
-    );
-    const identity = extractPreviewComponentIdentity(metadata, {
-      name,
-      path: getBabylonComponentPath(mesh),
-    });
-    return {
-      ...createBabylonPartPreviewSummary(mesh),
-      name: getPartDisplayName(identity, name),
-      source: identity.hasExplicitIdentity ? "component" : "mesh",
-      meshNames: [name],
-      childCount: 1,
-      componentId: identity.componentId,
-      occurrenceId: identity.occurrenceId,
-      partNumber: identity.partNumber,
-      componentPath: identity.componentPath,
-    };
-  }
-
-  private computeComponentPartSummaries(
-    renderableMeshes: readonly AbstractMesh[],
-  ): PreviewGroupedPartCandidates<AbstractMesh> {
-    const renderableSet = new Set(renderableMeshes);
-    const parts: ModelPartSummary[] = [];
-    const groupedMeshes = new Set<AbstractMesh>();
-    const candidates: Array<{
-      node: TransformNode;
-      childMeshes: AbstractMesh[];
-      identity: PreviewComponentIdentity;
-    }> = [];
-    for (const node of this.loadedTransformNodes) {
-      const childMeshes = node.getChildMeshes(false).filter((mesh) => renderableSet.has(mesh));
-      const nodeName = getBabylonNodeDisplayName(node, `component-${node.uniqueId}`);
-      const metadata = mergeMetadataFallback(node.metadata, this.gltfComponentMetadata.get(`node:${nodeName}`));
-      const identity = extractPreviewComponentIdentity(metadata, {
-        name: getBabylonNodeDisplayName(node, `component-${node.uniqueId}`),
-        path: getBabylonComponentPath(node),
-      });
-      if (childMeshes.length < 1 || childMeshes.length === renderableMeshes.length) {
-        continue;
-      }
-      if (!identity.hasExplicitIdentity && (!node.name.trim() || childMeshes.length < 2)) {
-        continue;
-      }
-      candidates.push({ node, childMeshes, identity });
-    }
-
-    candidates
-      .sort((left, right) => left.childMeshes.length - right.childMeshes.length)
-      .forEach(({ node, childMeshes, identity }) => {
-        const availableMeshes = childMeshes.filter((mesh) => !groupedMeshes.has(mesh));
-        if (availableMeshes.length < 1) return;
-        if (!identity.hasExplicitIdentity && availableMeshes.length < 2) return;
-        for (const mesh of availableMeshes) {
-          groupedMeshes.add(mesh);
-        }
-        const bounds = getBabylonMeshesPreviewBounds(availableMeshes);
-        if (!bounds) return;
-        const materialNames = new Set<string>();
-        let triangleCount = 0;
-        let vertexCount = 0;
-        for (const mesh of availableMeshes) {
-          triangleCount += getBabylonTriangleCount(mesh);
-          vertexCount += getBabylonVertexCount(mesh);
-          if (mesh.material?.name) {
-            materialNames.add(mesh.material.name);
-          }
-        }
-        parts.push(createPreviewPartSummary({
-          name: getPartDisplayName(identity, getBabylonNodeDisplayName(node, `component-${node.uniqueId}`)),
-          triangleCount,
-          vertexCount,
-          materialName: createPreviewMaterialSummaryLabel(materialNames),
-          boundingSize: getPreviewBoundsSize(bounds),
-          center: getPreviewBoundsCenter(bounds),
-          source: identity.hasExplicitIdentity ? "component" : "group",
-          meshNames: availableMeshes.map((mesh) => mesh.name || `mesh-${mesh.uniqueId}`),
-          childCount: availableMeshes.length,
-          componentId: identity.componentId,
-          occurrenceId: identity.occurrenceId,
-          partNumber: identity.partNumber,
-          componentPath: identity.componentPath,
-        }));
-      });
-    return { parts, groupedMeshes };
-  }
-
   private getMeasurementMarkerSize(): number {
     if (!this.rootMesh) return 0.02;
     const bounds = this.getRenderableBounds(this.rootMesh);
@@ -1762,7 +1586,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return { x: point.x, y: point.y, z: point.z };
   }
 
-  private computeSummary(root: Mesh): ModelPreviewSummary {
+  private createModelSummary(root: Mesh): ModelPreviewSummary {
     const allMeshes = this.getRenderableMeshes(root);
     const isSplat = isGaussianSplattingMesh(root);
     const vertexCount = allMeshes.reduce((total, mesh) => total + getBabylonVertexCount(mesh), 0);

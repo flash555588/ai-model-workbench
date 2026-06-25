@@ -12,6 +12,7 @@
 - Refactor: move FreeCAD/CadQuery conversion Python into bundled script templates while keeping TypeScript responsible for invocation and output validation.
 - Refactor: extract direct-view layout and workbench overview helpers from `DirectModelView` without changing route behavior.
 - Refactor: extract Three.js mesh, part, and model summary helpers from the scene coordinator without changing renderer routing.
+- Refactor: extract Babylon.js metadata, part grouping, and mesh summary helpers from the scene coordinator without changing fallback routing.
 - Routing: align production direct file view with the default Three.js edit-preview path while keeping converted workbench inputs on the conservative Babylon.js route.
 - UI: improve ruler measurements with calibrated units, per-axis deltas, Markdown copy export, and shared Three.js/Babylon.js formatting.
 - UI: keep completed ruler measurements visible when leaving measurement mode, cancel unfinished endpoints cleanly, and verify copy/clear/export behavior in the preview harness.
