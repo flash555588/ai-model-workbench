@@ -3,6 +3,13 @@ import type { ModelAssetFormat, ModelAssetProfile, ModelLoadStrategy, PartRecord
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 import { compactPersistedNumberTuple, isCompactPersistedNumber } from "../utils/compact-number";
+import {
+  areRegisteredPartObservationsPersistedCompact,
+  compactRegisteredPartForPersistence,
+  MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS,
+  MAX_PERSISTED_REGISTERED_PART_MESH_REFS,
+  MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS,
+} from "../utils/registered-part-persistence";
 
 export interface PluginStore {
   store: Store<PluginState>;
@@ -38,9 +45,6 @@ const INITIAL_STATE: PluginState = {
 };
 
 const MAX_REGISTERED_PARTS_PER_PROFILE = 256;
-const MAX_REGISTERED_PART_MESH_REFS = 16;
-const MAX_REGISTERED_PART_MATERIAL_REFS = 32;
-const MAX_REGISTERED_PART_OBSERVATIONS = 16;
 const NORMALIZED_STATE_SAVE_DELAY_MS = 50;
 
 export function createPluginStore(plugin: Plugin): PluginStore {
@@ -299,9 +303,9 @@ function isReusableRegisteredPart(entry: unknown): entry is PartRecord {
     isNormalizedOptionalString(record.partNumber) &&
     isNormalizedOptionalString(record.componentPath) &&
     isNormalizedOptionalString(record.category) &&
-    isNormalizedStringArray(record.meshRefs, MAX_REGISTERED_PART_MESH_REFS) &&
+    isNormalizedStringArray(record.meshRefs, MAX_PERSISTED_REGISTERED_PART_MESH_REFS) &&
     isNormalizedOptionalCount(record.childCount) &&
-    isNormalizedStringArray(record.materialRefs, MAX_REGISTERED_PART_MATERIAL_REFS) &&
+    isNormalizedStringArray(record.materialRefs, MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS) &&
     (record.bbox === undefined || isNormalizedNumberTuple(record.bbox)) &&
     (record.center === undefined || isNormalizedNumberTuple(record.center)) &&
     isNormalizedOptionalCount(record.triangleCount) &&
@@ -311,7 +315,8 @@ function isReusableRegisteredPart(entry: unknown): entry is PartRecord {
     isNormalizedModelAssetFormat(record.effectiveFormat) &&
     isNormalizedModelLoadStrategy(record.loadStrategy) &&
     Number.isFinite(record.confidence) && Number(record.confidence) >= 0 && Number(record.confidence) <= 1 &&
-    isNormalizedStringArray(record.observations, MAX_REGISTERED_PART_OBSERVATIONS) &&
+    isNormalizedStringArray(record.observations, MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS) &&
+    areRegisteredPartObservationsPersistedCompact(record as PartRecord) &&
     isNormalizedStringArray(record.inferredFunctions) &&
     isNormalizedStringArray(record.knowledgeTags) &&
     isNormalizedOptionalString(record.notePath) &&
@@ -383,9 +388,9 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
       changed = true;
     }
     if (
-      (Array.isArray(record.meshRefs) && record.meshRefs.length > MAX_REGISTERED_PART_MESH_REFS) ||
-      (Array.isArray(record.materialRefs) && record.materialRefs.length > MAX_REGISTERED_PART_MATERIAL_REFS) ||
-      (Array.isArray(record.observations) && record.observations.length > MAX_REGISTERED_PART_OBSERVATIONS) ||
+      (Array.isArray(record.meshRefs) && record.meshRefs.length > MAX_PERSISTED_REGISTERED_PART_MESH_REFS) ||
+      (Array.isArray(record.materialRefs) && record.materialRefs.length > MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS) ||
+      (Array.isArray(record.observations) && record.observations.length > MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS) ||
       (record.bbox !== undefined && !isNormalizedNumberTuple(record.bbox)) ||
       (record.center !== undefined && !isNormalizedNumberTuple(record.center))
     ) {
@@ -398,7 +403,7 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
     const key = `${assetId}:${partId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    parts.push({
+    const normalizedPart = {
       partId,
       assetId,
       parentPartId: typeof record.parentPartId === "string" ? record.parentPartId : undefined,
@@ -409,9 +414,9 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
       partNumber: typeof record.partNumber === "string" ? record.partNumber : undefined,
       componentPath: typeof record.componentPath === "string" ? record.componentPath : undefined,
       category: typeof record.category === "string" ? record.category : undefined,
-      meshRefs: normalizeStringArray(record.meshRefs, MAX_REGISTERED_PART_MESH_REFS),
+      meshRefs: normalizeStringArray(record.meshRefs, MAX_PERSISTED_REGISTERED_PART_MESH_REFS),
       childCount: Number.isFinite(record.childCount) ? Math.max(0, Math.floor(Number(record.childCount))) : undefined,
-      materialRefs: normalizeStringArray(record.materialRefs, MAX_REGISTERED_PART_MATERIAL_REFS),
+      materialRefs: normalizeStringArray(record.materialRefs, MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS),
       bbox: normalizeNumberTuple(record.bbox),
       center: normalizeNumberTuple(record.center),
       triangleCount: Number.isFinite(record.triangleCount) ? Math.max(0, Math.floor(Number(record.triangleCount))) : undefined,
@@ -421,13 +426,18 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
       effectiveFormat: normalizeModelAssetFormat(record.effectiveFormat),
       loadStrategy: normalizeModelLoadStrategy(record.loadStrategy),
       confidence: Number.isFinite(record.confidence) ? Math.max(0, Math.min(1, Number(record.confidence))) : 0.5,
-      observations: normalizeStringArray(record.observations, MAX_REGISTERED_PART_OBSERVATIONS),
+      observations: normalizeStringArray(record.observations, MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS),
       inferredFunctions: normalizeStringArray(record.inferredFunctions),
       knowledgeTags: normalizeStringArray(record.knowledgeTags),
       notePath: typeof record.notePath === "string" ? record.notePath : undefined,
       registeredMatches: undefined,
       reviewed: record.reviewed === true,
-    });
+    };
+    const compactedPart = compactRegisteredPartForPersistence(normalizedPart);
+    if (!areRegisteredPartObservationsPersistedCompact(normalizedPart)) {
+      changed = true;
+    }
+    parts.push(compactedPart);
   }
 
   const limitedParts = limitRegisteredParts(parts);

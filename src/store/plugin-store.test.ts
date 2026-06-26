@@ -282,8 +282,9 @@ describe("createPluginStore persistence", () => {
             source: "component",
             meshRefs: ["board"],
             materialRefs: ["Plastic"],
+            materialName: null,
             confidence: 0.82,
-            observations: ["Component ID: board."],
+            observations: [],
             inferredFunctions: [],
             knowledgeTags: [],
             reviewed: false,
@@ -542,5 +543,135 @@ describe("createPluginStore persistence", () => {
     const persistedPart = normalizedSaves[0].modelAssetProfiles["models/board.glb"]?.registeredParts?.[0];
     expect(persistedPart?.bbox).toEqual([0.022, 0.0164, 0.001501]);
     expect(persistedPart?.center).toEqual([0.0496571, 0.0330201, 0.00233666]);
+  });
+
+  it("strips derived automatic registered part observations during load", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.step": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "part-1",
+            assetId: "models/board.step",
+            name: "U1",
+            source: "component",
+            componentId: "U1",
+            componentPath: "__root__/Board/U1",
+            meshRefs: ["U1-body"],
+            materialRefs: ["Plastic"],
+            bbox: [0.022, 0.0164, 0.001501],
+            center: [0.0496571, 0.0330201, 0.00233666],
+            triangleCount: 120,
+            vertexCount: 64,
+            materialName: "Plastic",
+            sourceFormat: "step",
+            effectiveFormat: "glb",
+            loadStrategy: "convert",
+            confidence: 0.82,
+            observations: [
+              "Registered from model component metadata with 1 child mesh.",
+              "Component ID: U1.",
+              "Component path: __root__/Board/U1.",
+              "Format lineage: STEP -> GLB (convert).",
+              "120 triangles and 64 vertexs.",
+              "Bounding size 0.022 x 0.016 x 0.002.",
+              "Uses material \"Plastic\".",
+              "Custom inspection note.",
+            ],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            reviewed: false,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const part = pluginStore.store.getState().modelAssetProfiles["models/board.step"]?.registeredParts?.[0];
+    expect(part?.observations).toEqual(["Custom inspection note."]);
+    expect(part).toMatchObject({
+      componentId: "U1",
+      componentPath: "__root__/Board/U1",
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+      triangleCount: 120,
+      vertexCount: 64,
+      materialName: "Plastic",
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    const persistedPart = normalizedSaves[0].modelAssetProfiles["models/board.step"]?.registeredParts?.[0];
+    expect(persistedPart?.observations).toEqual(["Custom inspection note."]);
+  });
+
+  it("keeps reviewed registered part observations during compaction", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/reviewed.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "part-1",
+            assetId: "models/reviewed.glb",
+            name: "Reviewed U1",
+            source: "component",
+            meshRefs: ["U1-body"],
+            materialRefs: [],
+            confidence: 0.82,
+            observations: [
+              "Component ID: U1.",
+              "Custom reviewed note.",
+            ],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            reviewed: true,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin, saveData } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const part = pluginStore.store.getState().modelAssetProfiles["models/reviewed.glb"]?.registeredParts?.[0];
+    expect(part?.observations).toEqual([
+      "Component ID: U1.",
+      "Custom reviewed note.",
+    ]);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).not.toHaveBeenCalled();
   });
 });

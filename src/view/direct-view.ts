@@ -17,6 +17,7 @@ import { formatT, t } from "../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "./model-load-feedback";
 import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
+import { compactRegisteredPartForPersistence } from "../utils/registered-part-persistence";
 import { buildLocalAnalysisResult, buildPartRecordsFromEvidence, inferModelAssetFormat } from "./workbench/analysis-result";
 import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
 import { createDirectViewLayout } from "./direct-view-layout";
@@ -65,6 +66,7 @@ function mergeAutoRegisteredPart(previous: PartRecord | undefined, next: PartRec
     ...next,
     notePath: previous.notePath,
     reviewed: previous.reviewed,
+    observations: previous.reviewed || previous.notePath ? previous.observations : next.observations,
     inferredFunctions: previous.inferredFunctions.length > 0 ? previous.inferredFunctions : next.inferredFunctions,
     knowledgeTags: previous.knowledgeTags.length > 0 ? previous.knowledgeTags : next.knowledgeTags,
   };
@@ -530,7 +532,7 @@ export class DirectModelView extends FileView {
     );
     const registeredParts = limitAutoRegisteredParts(
       nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part)),
-    );
+    ).map(compactRegisteredPartForPersistence);
     if (areRegisteredPartListsEquivalent(existingProfile.registeredParts, registeredParts)) {
       return;
     }

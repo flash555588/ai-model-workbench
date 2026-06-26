@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from "../../domain/constants";
 import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, ModelEvidence, PartRecord, PluginState } from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createDefaultProfile } from "../../store/plugin-store";
-import { collectRegisteredPartsFromProfiles, generateKnowledgeNote } from "./knowledge-note";
+import { collectRegisteredPartsFromProfiles, generateKnowledgeNote, stripTransientRegisteredPartData } from "./knowledge-note";
 
 const noticeMessages = vi.hoisted((): string[] => []);
 
@@ -431,5 +431,67 @@ describe("collectRegisteredPartsFromProfiles", () => {
     expect(parts).toHaveLength(8);
     expect(parts.some((part) => part.partId === "reviewed")).toBe(true);
     expect(parts.some((part) => part.partId === "component")).toBe(true);
+  });
+});
+
+describe("stripTransientRegisteredPartData", () => {
+  function createPart(partial: Partial<PartRecord> = {}): PartRecord {
+    return {
+      partId: "part-1",
+      assetId: "models/board.step",
+      name: "U1",
+      source: "component",
+      meshRefs: ["U1-body"],
+      materialRefs: ["Plastic"],
+      confidence: 0.82,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: false,
+      ...partial,
+    };
+  }
+
+  it("removes derived automatic observations while keeping structured identity", () => {
+    const part = createPart({
+      componentId: "U1",
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+      observations: [
+        "Registered from model component metadata with 1 child mesh.",
+        "Component ID: U1.",
+        "Format lineage: STEP -> GLB (convert).",
+        "120 triangles and 64 vertexs.",
+        "Bounding size 0.022 x 0.016 x 0.002.",
+        "Uses material \"Plastic\".",
+        "Keep this custom note.",
+      ],
+    });
+
+    const stripped = stripTransientRegisteredPartData(part);
+
+    expect(stripped.observations).toEqual(["Keep this custom note."]);
+    expect(stripped).toMatchObject({
+      componentId: "U1",
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+    });
+  });
+
+  it("preserves reviewed observations", () => {
+    const part = createPart({
+      reviewed: true,
+      observations: [
+        "Component ID: U1.",
+        "Keep this reviewed note.",
+      ],
+    });
+
+    expect(stripTransientRegisteredPartData(part).observations).toEqual([
+      "Component ID: U1.",
+      "Keep this reviewed note.",
+    ]);
   });
 });

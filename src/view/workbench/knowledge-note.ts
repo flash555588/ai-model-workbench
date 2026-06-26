@@ -18,6 +18,12 @@ import { escapeHtml } from "../../utils/escape-html";
 import { createLogger } from "../../utils/log";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
 import { compactPersistedNumberTuple } from "../../utils/compact-number";
+import {
+  compactRegisteredPartForPersistence,
+  MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS,
+  MAX_PERSISTED_REGISTERED_PART_MESH_REFS,
+  MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS,
+} from "../../utils/registered-part-persistence";
 
 const log = createLogger("knowledge-note");
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
@@ -25,9 +31,6 @@ import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
 
 const MAX_GENERATED_PART_NOTES = 8;
 const DEFAULT_PROFILE_REGISTERED_PART_LIMIT = 256;
-const MAX_PERSISTED_PART_MESH_REFS = 16;
-const MAX_PERSISTED_PART_MATERIAL_REFS = 32;
-const MAX_PERSISTED_PART_OBSERVATIONS = 16;
 const INDEX_MANAGED_START = "<!-- AI3D_INDEX_START -->";
 const INDEX_MANAGED_END = "<!-- AI3D_INDEX_END -->";
 
@@ -908,9 +911,9 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     partNumber: typeof value.partNumber === "string" ? value.partNumber : undefined,
     componentPath: typeof value.componentPath === "string" ? value.componentPath : undefined,
     category: typeof value.category === "string" ? value.category : undefined,
-    meshRefs: normalizeStringArray(value.meshRefs, MAX_PERSISTED_PART_MESH_REFS),
+    meshRefs: normalizeStringArray(value.meshRefs, MAX_PERSISTED_REGISTERED_PART_MESH_REFS),
     childCount: Number.isFinite(value.childCount) ? Number(value.childCount) : undefined,
-    materialRefs: normalizeStringArray(value.materialRefs, MAX_PERSISTED_PART_MATERIAL_REFS),
+    materialRefs: normalizeStringArray(value.materialRefs, MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS),
     bbox: normalizeNumberTuple(value.bbox),
     center: normalizeNumberTuple(value.center),
     triangleCount: Number.isFinite(value.triangleCount) ? Number(value.triangleCount) : undefined,
@@ -920,7 +923,7 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     effectiveFormat: normalizeModelAssetFormat(value.effectiveFormat),
     loadStrategy: normalizeModelLoadStrategy(value.loadStrategy),
     confidence: Number.isFinite(value.confidence) ? Number(value.confidence) : 0.5,
-    observations: normalizeStringArray(value.observations, MAX_PERSISTED_PART_OBSERVATIONS),
+    observations: normalizeStringArray(value.observations, MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS),
     inferredFunctions: normalizeStringArray(value.inferredFunctions),
     knowledgeTags: normalizeStringArray(value.knowledgeTags),
     notePath: typeof value.notePath === "string" ? value.notePath : undefined,
@@ -954,13 +957,7 @@ function sortRegisteredPartsForReuse(parts: readonly PartRecord[]): PartRecord[]
 }
 
 export function stripTransientRegisteredPartData(part: PartRecord): PartRecord {
-  return {
-    ...part,
-    meshRefs: part.meshRefs.slice(0, MAX_PERSISTED_PART_MESH_REFS),
-    materialRefs: part.materialRefs.slice(0, MAX_PERSISTED_PART_MATERIAL_REFS),
-    observations: part.observations.slice(0, MAX_PERSISTED_PART_OBSERVATIONS),
-    registeredMatches: undefined,
-  };
+  return compactRegisteredPartForPersistence(part);
 }
 
 export async function collectRegisteredPartsFromProfiles(
