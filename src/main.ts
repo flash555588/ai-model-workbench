@@ -5,8 +5,7 @@ import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/fo
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
 import { LazyDirectModelView } from "./view/lazy-direct-view";
 import { DIRECT_VIEW_TYPE } from "./view/direct-view-type";
-import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
-import { AI3DSettingTab } from "./settings";
+import { LazyAI3DSettingTab } from "./lazy-setting-tab";
 import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
 
@@ -94,7 +93,7 @@ export default class AI3DModelWorkbench extends Plugin {
       callback: withErrorNotice(() => this.copyDiagnosticsReport(), "copy diagnostics"),
     });
 
-    this.addSettingTab(new AI3DSettingTab(this.app, this));
+    this.addSettingTab(new LazyAI3DSettingTab(this.app, this));
 
     // Register direct file view for all supported formats. Conversion-capable formats
     // will be routed through the shared model pipeline inside DirectModelView.
@@ -163,7 +162,15 @@ export default class AI3DModelWorkbench extends Plugin {
 
 
 
-  private importModel() {
+  private importModel(): void {
+    void this.showImportModelModal().catch((error: unknown) => {
+      log.error("Failed to open import modal", { error: String(error) });
+      new Notice(`AI3D: failed to open import modal - ${String(error)}`, 5000);
+    });
+  }
+
+  private async showImportModelModal(): Promise<void> {
+    const { ModelFileSuggestModal } = await import("./view/model-file-suggest-modal");
     new ModelFileSuggestModal(this.app, (file: TFile) => {
       const ext = file.extension.toLowerCase();
       if (!isSupportedModelExtension(ext)) {
