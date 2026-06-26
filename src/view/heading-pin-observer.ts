@@ -59,10 +59,36 @@ function buildHeadingMapSignature(headingMap: Map<string, PinEntry[]>): string {
 
 export function setupHeadingPinObserver(context: HeadingPinObserverContext): void {
   const boundEntries = new Map<Element, BoundHeadingEntry>();
+  let lastProfilesRef: Record<string, ModelAssetProfile> | null = null;
+  let lastAnnotationRefs = new Map<string, readonly unknown[]>();
+  let lastHeadingMapSignature = "";
 
-  const buildHeadingMap = (): Map<string, PinEntry[]> => {
+  const annotationsChanged = (profiles: Record<string, ModelAssetProfile>): boolean => {
+    if (profiles === lastProfilesRef) {
+      return false;
+    }
+
+    const nextAnnotationRefs = new Map<string, readonly unknown[]>();
+    let changed = lastProfilesRef === null;
+    for (const [modelPath, profile] of Object.entries(profiles)) {
+      const annotations = profile.annotations ?? [];
+      nextAnnotationRefs.set(modelPath, annotations);
+      if (lastAnnotationRefs.get(modelPath) !== annotations) {
+        changed = true;
+      }
+    }
+
+    if (nextAnnotationRefs.size !== lastAnnotationRefs.size) {
+      changed = true;
+    }
+
+    lastProfilesRef = profiles;
+    lastAnnotationRefs = nextAnnotationRefs;
+    return changed;
+  };
+
+  const buildHeadingMap = (profiles = context.getModelAssetProfiles()): Map<string, PinEntry[]> => {
     const map = new Map<string, PinEntry[]>();
-    const profiles = context.getModelAssetProfiles();
     for (const [modelPath, profile] of Object.entries(profiles)) {
       for (const pin of profile.annotations) {
         if (pin.headingRef && pin.id) {
@@ -178,13 +204,15 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
   };
 
   const scanAll = (): void => {
-    const headingMap = buildHeadingMap();
+    const profiles = context.getModelAssetProfiles();
+    annotationsChanged(profiles);
+    const headingMap = buildHeadingMap(profiles);
+    lastHeadingMapSignature = buildHeadingMapSignature(headingMap);
     reconcileBoundHeadings(headingMap);
     const containers = activeDocument.querySelectorAll(MARKDOWN_CONTAINER_SELECTOR);
     containers.forEach((container) => processHeadings(container, headingMap));
   };
 
-  let lastHeadingMapSignature = buildHeadingMapSignature(buildHeadingMap());
   let scanTimer = 0;
   const scheduleScan = (delay = 0): void => {
     if (scanTimer) {
@@ -197,7 +225,9 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
   };
 
   const unsubscribeStore = context.subscribeStore(() => {
-    const nextHeadingMap = buildHeadingMap();
+    const profiles = context.getModelAssetProfiles();
+    if (!annotationsChanged(profiles)) return;
+    const nextHeadingMap = buildHeadingMap(profiles);
     const nextSignature = buildHeadingMapSignature(nextHeadingMap);
     if (nextSignature === lastHeadingMapSignature) return;
     lastHeadingMapSignature = nextSignature;

@@ -23,7 +23,6 @@ import {
   PerspectiveCamera,
   PlaneGeometry,
   PointLight,
-  Points,
   PMREMGenerator,
   Raycaster,
   Scene,
@@ -105,6 +104,7 @@ import {
 } from "./material-quality";
 import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothness";
 import {
+  createThreeGeometryQualityStats,
   createThreeGroupedPartCandidates,
   createThreeModelPreviewSummary,
   createThreeObjectPartPreviewSummary,
@@ -292,6 +292,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private cachedMeshRoot: Object3D | null = null;
   private cachedRenderables: ThreeRenderableObject[] | null = null;
   private cachedRenderableRoot: Object3D | null = null;
+  private cachedGeometryQualityStats: PreviewQualitySnapshot["geometry"] | null = null;
   private cameraAnimHandle = 0;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     this.prepareInteractiveFrameBudget();
@@ -469,7 +470,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.animationPlaying = true;
     }
 
-    const summary = createThreeModelPreviewSummary(root, this.getRenderableObjects(root), this.resourceWarnings);
+    const renderableObjects = this.getRenderableObjects(root);
+    const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings);
+    this.cachedGeometryQualityStats = createThreeGeometryQualityStats(root, renderableObjects);
     this.fitCameraToObject(root);
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
@@ -879,6 +882,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getPerformanceSnapshot() {
     const smoothness = this.smoothness.snapshot();
+    const qualitySnapshot = this.getQualitySnapshot();
     return {
       backend: "three" as const,
       renderScale: Number(this.renderScale.toFixed(2)),
@@ -901,8 +905,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       adaptiveScaleChangeCount: smoothness.adaptiveScaleChangeCount,
       viewportVisible: this.viewportVisible,
       disposalAudit: { ...this.lastDisposalAudit },
-      meshCount: this.rootObject ? this.getRenderableObjects(this.rootObject).length : 0,
-      qualitySnapshot: this.getQualitySnapshot(),
+      meshCount: qualitySnapshot.geometry.meshCount,
+      qualitySnapshot,
     };
   }
 
@@ -1948,34 +1952,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
       };
     }
 
-    const modelSize = getPreviewBoundsSize(getObjectPreviewBounds(this.rootObject));
-    const modelSpan = Math.max(modelSize.x, modelSize.y, modelSize.z);
-    const smallPartThreshold = Math.max(modelSpan * 0.04, Number.EPSILON);
-    let pointCloudCount = 0;
-    let smallPartCount = 0;
-    let smallestPartSpan = Number.POSITIVE_INFINITY;
-
-    for (const object of this.getRenderableObjects(this.rootObject)) {
-      if (object instanceof Points) {
-        pointCloudCount++;
-      }
-      const size = getPreviewBoundsSize(getObjectPreviewBounds(object));
-      const span = Math.max(size.x, size.y, size.z);
-      if (Number.isFinite(span) && span > 0) {
-        smallestPartSpan = Math.min(smallestPartSpan, span);
-        if (isMesh(object) && span <= smallPartThreshold && span < modelSpan) {
-          smallPartCount++;
-        }
-      }
+    if (!this.cachedGeometryQualityStats) {
+      this.cachedGeometryQualityStats = createThreeGeometryQualityStats(
+        this.rootObject,
+        this.getRenderableObjects(this.rootObject),
+      );
     }
-
-    return {
-      meshCount: this.getRenderableObjects(this.rootObject).length,
-      pointCloudCount,
-      smallPartCount,
-      smallestPartSpan: Number.isFinite(smallestPartSpan) ? Number(smallestPartSpan.toPrecision(6)) : null,
-      modelSpan: Number.isFinite(modelSpan) && modelSpan > 0 ? Number(modelSpan.toPrecision(6)) : null,
-    };
+    return this.cachedGeometryQualityStats;
   }
 
   private invalidateMeshCache(): void {
@@ -1983,6 +1966,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedMeshRoot = null;
     this.cachedRenderables = null;
     this.cachedRenderableRoot = null;
+    this.cachedGeometryQualityStats = null;
   }
 
   private ensureBoundingBoxHelper(): void {

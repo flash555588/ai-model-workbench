@@ -28,6 +28,7 @@ export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
 const DEFERRED_EVIDENCE_DELAY_MS = 450;
+const MEDIUM_DEFERRED_EVIDENCE_DELAY_MS = 1_200;
 const HEAVY_DEFERRED_EVIDENCE_DELAY_MS = 1_500;
 const MAX_AUTO_REGISTERED_PARTS = 256;
 const MAX_AUTO_EVIDENCE_MESHES = 500;
@@ -103,13 +104,15 @@ function getPerformanceTierRank(tier: ModelPreviewSummary["performanceTier"]): n
 }
 
 function getDeferredEvidenceDelay(summary: ModelPreviewSummary): number {
-  return getPerformanceTierRank(summary.performanceTier) >= 2
-    ? HEAVY_DEFERRED_EVIDENCE_DELAY_MS
-    : DEFERRED_EVIDENCE_DELAY_MS;
+  const tierRank = getPerformanceTierRank(summary.performanceTier);
+  if (tierRank >= 2) {
+    return HEAVY_DEFERRED_EVIDENCE_DELAY_MS;
+  }
+  return tierRank === 1 ? MEDIUM_DEFERRED_EVIDENCE_DELAY_MS : DEFERRED_EVIDENCE_DELAY_MS;
 }
 
 function shouldAutoCaptureEvidence(summary: ModelPreviewSummary): boolean {
-  return summary.performanceTier !== "extreme"
+  return getPerformanceTierRank(summary.performanceTier) < 2
     && summary.meshCount <= MAX_AUTO_EVIDENCE_MESHES
     && summary.triangleCount <= MAX_AUTO_EVIDENCE_TRIANGLES;
 }

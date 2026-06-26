@@ -200,6 +200,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private rootMesh: Mesh | null = null;
   private loadedMeshes: AbstractMesh[] = [];
   private loadedTransformNodes: TransformNode[] = [];
+  private cachedRenderableMeshes: AbstractMesh[] | null = null;
+  private cachedRenderableRoot: Mesh | null = null;
   private loadedExt: string = "";
   private rendering = false;
   private contextLost = false;
@@ -358,6 +360,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
       this.rootMesh = null;
     }
+    this.invalidateMeshCache();
     this.loadedMeshes = [];
     this.loadedTransformNodes = [];
     this.disposeMeasurementOverlays(true);
@@ -1283,6 +1286,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
     this.resizeObs.disconnect();
+    this.invalidateMeshCache();
+    this.rootMesh = null;
+    this.loadedMeshes = [];
+    this.loadedTransformNodes = [];
     if (this.autoRotateBehavior) {
       this.camera.removeBehavior(this.autoRotateBehavior);
       this.autoRotateBehavior = null;
@@ -1346,11 +1353,22 @@ export class BabylonModelPreview implements WorkbenchPreview {
   };
 
   private getRenderableMeshes(root: Mesh): AbstractMesh[] {
-    return getBabylonRenderableMeshes(root, this.loadedMeshes);
+    if (this.cachedRenderableMeshes && this.cachedRenderableRoot === root) {
+      return this.cachedRenderableMeshes;
+    }
+    const renderableMeshes = getBabylonRenderableMeshes(root, this.loadedMeshes);
+    this.cachedRenderableMeshes = renderableMeshes;
+    this.cachedRenderableRoot = root;
+    return renderableMeshes;
   }
 
   private getRenderableBounds(root: Mesh) {
     return getBabylonRenderablePreviewBounds(root, this.loadedMeshes);
+  }
+
+  private invalidateMeshCache(): void {
+    this.cachedRenderableMeshes = null;
+    this.cachedRenderableRoot = null;
   }
 
   private resolvePickHighlightMeshes(mesh: AbstractMesh): AbstractMesh[] {

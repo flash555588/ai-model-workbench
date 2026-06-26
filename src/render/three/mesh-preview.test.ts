@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { attachObjectToScenePreservingWorldTransform, createThreeDisassemblyParts } from "./disassembly";
 import {
+  createThreeGeometryQualityStats,
   createThreeGroupedPartCandidates,
   createThreeModelPreviewSummary,
   createThreeObjectPartPreviewSummary,
@@ -89,6 +90,32 @@ describe("three mesh preview helpers", () => {
       vertexCount: 3,
       materialName: "scan-points",
     });
+  });
+
+  it("computes geometry quality stats for cached performance snapshots", () => {
+    const root = new Object3D();
+    const body = new Mesh(new BoxGeometry(10, 1, 1), new MeshStandardMaterial({ name: "body" }));
+    const tiny = new Mesh(new BoxGeometry(0.2, 0.2, 0.2), new MeshStandardMaterial({ name: "detail" }));
+    tiny.position.set(6, 0, 0);
+    const pointGeometry = new BufferGeometry();
+    pointGeometry.setAttribute("position", new BufferAttribute(new Float32Array([
+      0, 0, 0,
+      0.01, 0, 0,
+      0, 0.02, 0,
+    ]), 3));
+    const points = new Points(pointGeometry, new PointsMaterial({ name: "scan" }));
+    points.position.set(-6, 0, 0);
+    root.add(body, tiny, points);
+
+    const stats = createThreeGeometryQualityStats(root, [body, tiny, points]);
+
+    expect(stats).toMatchObject({
+      meshCount: 3,
+      pointCloudCount: 1,
+      smallPartCount: 1,
+    });
+    expect(stats.modelSpan).toBeGreaterThan(10);
+    expect(stats.smallestPartSpan).toBeGreaterThan(0);
   });
 
   it("promotes explicit component metadata on individual meshes", () => {

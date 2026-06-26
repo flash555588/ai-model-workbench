@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Performance: cache Three.js and Babylon renderable geometry stats so large-model performance/quality snapshots do not repeatedly traverse the full scene.
+- Performance: skip automatic direct-view evidence registration for heavy/extreme models and delay medium-model registration to reduce post-load UI stalls.
+- Performance: avoid rescanning heading-pin metadata on unrelated store updates, reducing workspace startup and state-change work in large vaults.
 - Rendering: include Three.js PLY point clouds in summary, part evidence, picking, measurement, material audit, and disposal paths without faking triangle counts.
 - Rendering: keep Three.js orthographic camera, shadow, and grid helper scales tied to real tiny-model bounds instead of a one-unit floor.
 - Rendering: promote Three.js and Babylon picks on converted component child meshes to their parent registered component/group so selection, focus, and disassembly dragging do not collapse to a single surface fragment.

@@ -7,6 +7,7 @@ import {
 } from "three";
 import type { ModelPartSummary, ModelPreviewSummary } from "../../domain/models";
 import type { PreviewMeshBreakdownRow } from "../preview/report";
+import type { PreviewQualitySnapshot } from "../preview/types";
 import {
   createPreviewBounds,
   getPreviewBoundsCenter,
@@ -402,6 +403,50 @@ export function createThreeModelPreviewSummary(
     })),
     resourceWarnings,
   });
+}
+
+export function createThreeGeometryQualityStats(
+  root: Object3D | null,
+  renderableObjects: readonly ThreeRenderableObject[],
+): PreviewQualitySnapshot["geometry"] {
+  if (!root) {
+    return {
+      meshCount: 0,
+      pointCloudCount: 0,
+      smallPartCount: 0,
+      smallestPartSpan: null,
+      modelSpan: null,
+    };
+  }
+
+  const modelSize = getPreviewBoundsSize(getThreeObjectPreviewBounds(root));
+  const modelSpan = Math.max(modelSize.x, modelSize.y, modelSize.z);
+  const smallPartThreshold = Math.max(modelSpan * 0.04, Number.EPSILON);
+  let pointCloudCount = 0;
+  let smallPartCount = 0;
+  let smallestPartSpan = Number.POSITIVE_INFINITY;
+
+  for (const object of renderableObjects) {
+    if (isThreePoints(object)) {
+      pointCloudCount++;
+    }
+    const size = getPreviewBoundsSize(getThreeObjectPreviewBounds(object));
+    const span = Math.max(size.x, size.y, size.z);
+    if (Number.isFinite(span) && span > 0) {
+      smallestPartSpan = Math.min(smallestPartSpan, span);
+      if (isThreeMesh(object) && span <= smallPartThreshold && span < modelSpan) {
+        smallPartCount++;
+      }
+    }
+  }
+
+  return {
+    meshCount: renderableObjects.length,
+    pointCloudCount,
+    smallPartCount,
+    smallestPartSpan: Number.isFinite(smallestPartSpan) ? Number(smallestPartSpan.toPrecision(6)) : null,
+    modelSpan: Number.isFinite(modelSpan) && modelSpan > 0 ? Number(modelSpan.toPrecision(6)) : null,
+  };
 }
 
 function getPartDisplayName(identity: PreviewComponentIdentity, fallback: string): string {
