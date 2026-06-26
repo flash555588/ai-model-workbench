@@ -28,6 +28,7 @@ import {
   attachModelPreviewCanvasShortcuts,
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
+import { transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
 
 const log = createLogger("inline-live-preview");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
@@ -489,6 +490,9 @@ export function registerLivePreviewExtension(
     },
     update(value, tr): DecoSet {
       if (tr.docChanged) {
+        if (!transactionMayAffectModelEmbeds(tr)) {
+          return value.map(tr.changes);
+        }
         const s = getSettings();
         const ranges = findEmbeds(
           tr.state,

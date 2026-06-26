@@ -7,6 +7,8 @@
 - Performance: defer Live Preview model initialization until embeds approach the viewport, preventing hidden large models from reading files during workspace startup.
 - Performance: keep current-preview UI state out of automatic persistence so opening or clearing a model no longer queues a full `data.json` save.
 - Performance: skip direct-view auto part-registration writes when regenerated part candidates match the saved profile.
+- Performance: avoid full Live Preview embed rescans for ordinary note edits that do not touch model embed lines.
+- Performance: throttle Three.js measurement preview-line raycasts to animation frames so large models do less work during pointer movement.
 - Performance: avoid forcing an unchanged plugin `data.json` rewrite during unload; only pending dirty state is flushed.
 - Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.

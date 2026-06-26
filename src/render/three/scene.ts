@@ -280,6 +280,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private hoveredMarkerIndex = -1;
   private lastPointerClient = { x: 0, y: 0 };
   private previewLine: Line | null = null;
+  private previewLineUpdateHandle = 0;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
   private readonly focusDimMaterials = new Map<number, Material | Material[]>();
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
@@ -341,7 +342,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     if (!this.measurementActive) return;
     if (this.pendingPoint) {
-      this.updatePreviewLine();
+      this.schedulePreviewLineUpdate();
     }
     if (this.measurementMarkers.length === 0) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -2231,6 +2232,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private updatePreviewLine(): void {
+    this.previewLineUpdateHandle = 0;
     if (!this.pendingPoint || !this.previewLine || !this.rootObject) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((this.lastPointerClient.x - rect.left) / rect.width) * 2 - 1;
@@ -2253,7 +2255,19 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
+  private schedulePreviewLineUpdate(): void {
+    if (this.previewLineUpdateHandle) return;
+    this.previewLineUpdateHandle = window.requestAnimationFrame(() => this.updatePreviewLine());
+  }
+
+  private cancelPreviewLineUpdate(): void {
+    if (!this.previewLineUpdateHandle) return;
+    window.cancelAnimationFrame(this.previewLineUpdateHandle);
+    this.previewLineUpdateHandle = 0;
+  }
+
   private removePreviewLine(): void {
+    this.cancelPreviewLineUpdate();
     if (!this.previewLine) return;
     this.previewLine.removeFromParent();
     this.previewLine.geometry.dispose();
