@@ -1,19 +1,14 @@
 import type { ModelAssetProfile } from "../domain/models";
 import { formatT, t } from "../i18n";
-import { normalizeHeadingText } from "../utils/note-reader";
+import { normalizeHeadingText } from "../utils/heading-text";
 import { getPortableStem } from "../utils/resolve-path";
+import { buildHeadingPinMap, type PinEntry } from "./heading-pin-map";
 
 export interface HeadingPinObserverContext {
   subscribeStore(callback: () => void): () => void;
   getModelAssetProfiles(): Record<string, ModelAssetProfile>;
   registerCleanup(cleanup: () => void): void;
   onLayoutChange(callback: () => void): void;
-}
-
-interface PinEntry {
-  pinId: string;
-  modelPath: string;
-  color: string;
 }
 
 interface BoundHeadingEntry {
@@ -62,6 +57,10 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
   let lastProfilesRef: Record<string, ModelAssetProfile> | null = null;
   let lastAnnotationRefs = new Map<string, readonly unknown[]>();
   let lastHeadingMapSignature = "";
+  let hasHeadingPins = false;
+  let observer: MutationObserver | null = null;
+  let pendingNodes = new Set<HTMLElement>();
+  let debounceTimer = 0;
 
   const annotationsChanged = (profiles: Record<string, ModelAssetProfile>): boolean => {
     if (profiles === lastProfilesRef) {
@@ -88,19 +87,7 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
   };
 
   const buildHeadingMap = (profiles = context.getModelAssetProfiles()): Map<string, PinEntry[]> => {
-    const map = new Map<string, PinEntry[]>();
-    for (const [modelPath, profile] of Object.entries(profiles)) {
-      for (const pin of profile.annotations) {
-        if (pin.headingRef && pin.id) {
-          const headingKey = normalizeHeadingText(pin.headingRef);
-          if (!headingKey) continue;
-          let arr = map.get(headingKey);
-          if (!arr) { arr = []; map.set(headingKey, arr); }
-          arr.push({ pinId: pin.id, modelPath, color: pin.color });
-        }
-      }
-    }
-    return map;
+    return buildHeadingPinMap(profiles);
   };
 
   const getHeadingText = (el: Element): string => normalizeHeadingText(
@@ -208,6 +195,13 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
     annotationsChanged(profiles);
     const headingMap = buildHeadingMap(profiles);
     lastHeadingMapSignature = buildHeadingMapSignature(headingMap);
+    hasHeadingPins = headingMap.size > 0;
+    if (!hasHeadingPins) {
+      reconcileBoundHeadings(headingMap);
+      stopMutationObserver();
+      return;
+    }
+    ensureMutationObserver();
     reconcileBoundHeadings(headingMap);
     const containers = activeDocument.querySelectorAll(MARKDOWN_CONTAINER_SELECTOR);
     containers.forEach((container) => processHeadings(container, headingMap));
@@ -231,10 +225,20 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
     const nextSignature = buildHeadingMapSignature(nextHeadingMap);
     if (nextSignature === lastHeadingMapSignature) return;
     lastHeadingMapSignature = nextSignature;
+    hasHeadingPins = nextHeadingMap.size > 0;
+    if (!hasHeadingPins) {
+      reconcileBoundHeadings(nextHeadingMap);
+      stopMutationObserver();
+      return;
+    }
+    ensureMutationObserver();
     scheduleScan();
   });
 
   context.onLayoutChange(() => {
+    if (!hasHeadingPins && buildHeadingMap().size === 0) {
+      return;
+    }
     scheduleScan(200);
   });
 
@@ -246,8 +250,6 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
   const isRelevantAddedNode = (node: HTMLElement): boolean => node.isConnected && matchesRelevantNode(node);
   const isRelevantRemovedNode = (node: HTMLElement): boolean => matchesRelevantNode(node);
 
-  let pendingNodes = new Set<HTMLElement>();
-  let debounceTimer = 0;
   const flushPending = () => {
     const nodes = Array.from(pendingNodes);
     pendingNodes.clear();
@@ -264,9 +266,14 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
       node.querySelectorAll?.(MARKDOWN_CONTAINER_SELECTOR)?.forEach((el: Element) => processHeadings(el, headingMap));
     }
     lastHeadingMapSignature = buildHeadingMapSignature(headingMap);
+    hasHeadingPins = headingMap.size > 0;
+    if (!hasHeadingPins) {
+      stopMutationObserver();
+    }
   };
 
-  const observer = new MutationObserver((mutations) => {
+  const handleMutations = (mutations: MutationRecord[]) => {
+    if (!hasHeadingPins) return;
     let shouldFlush = false;
     for (const m of mutations) {
       for (const node of Array.from(m.addedNodes)) {
@@ -284,12 +291,27 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
     if (shouldFlush && !debounceTimer) {
       debounceTimer = window.setTimeout(flushPending, 100);
     }
-  });
-  observer.observe(activeDocument.body, { childList: true, subtree: true });
+  };
+
+  function ensureMutationObserver(): void {
+    if (observer) return;
+    observer = new MutationObserver(handleMutations);
+    observer.observe(activeDocument.body, { childList: true, subtree: true });
+  }
+
+  function stopMutationObserver(): void {
+    observer?.disconnect();
+    observer = null;
+    pendingNodes.clear();
+    if (debounceTimer) {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = 0;
+    }
+  }
 
   context.registerCleanup(() => {
     unsubscribeStore();
-    observer.disconnect();
+    stopMutationObserver();
     if (debounceTimer) { window.clearTimeout(debounceTimer); debounceTimer = 0; }
     if (scanTimer) { window.clearTimeout(scanTimer); scanTimer = 0; }
     for (const el of Array.from(boundEntries.keys())) {
@@ -297,5 +319,13 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
     }
   });
 
-  scheduleScan(500);
+  const initialProfiles = context.getModelAssetProfiles();
+  annotationsChanged(initialProfiles);
+  const initialHeadingMap = buildHeadingMap(initialProfiles);
+  lastHeadingMapSignature = buildHeadingMapSignature(initialHeadingMap);
+  hasHeadingPins = initialHeadingMap.size > 0;
+  if (hasHeadingPins) {
+    ensureMutationObserver();
+    scheduleScan(500);
+  }
 }

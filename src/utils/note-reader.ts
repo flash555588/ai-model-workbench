@@ -1,20 +1,8 @@
 import type { App } from "obsidian";
 import { TFile } from "obsidian";
+import { normalizeHeadingText } from "./heading-text";
 
-/**
- * Normalize heading text by stripping common markdown formatting.
- * Used for fuzzy matching between DOM textContent and raw markdown headings.
- */
-export function normalizeHeadingText(text: string): string {
-  return text
-    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")  // [[target|display]] → display
-    .replace(/\[\[([^\]]+)\]\]/g, "$1")               // [[target]] → target
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")          // [text](url) → text
-    .replace(/[*_~`]+/g, "")                           // bold/italic/strikethrough/code markers
-    .replace(/==([^=]+)==/g, "$1")                     // ==highlight== → highlight
-    .replace(/\s+/g, " ")                              // collapse whitespace
-    .trim();
-}
+export { normalizeHeadingText } from "./heading-text";
 
 /** Result from searching vault headings. */
 export interface HeadingSearchResult {
