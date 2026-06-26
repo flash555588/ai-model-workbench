@@ -453,7 +453,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
 
     const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings, rootBounds ?? undefined);
-    this.cachedGeometryQualityStats = createThreeGeometryQualityStats(root, renderableObjects, rootBounds ?? undefined);
+    // Geometry quality stats require per-object bounds and are only needed for diagnostics/performance snapshots.
+    this.cachedGeometryQualityStats = null;
     this.fitCameraToObject(root, rootBounds ?? undefined);
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();

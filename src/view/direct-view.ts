@@ -34,6 +34,8 @@ const MAX_AUTO_EVIDENCE_MESHES = 500;
 const MAX_AUTO_EVIDENCE_TRIANGLES = 1_500_000;
 const MAX_MATCH_PREVIEW_EVIDENCE_PARTS = 64;
 const MAX_MATCH_PREVIEW_REGISTERED_PARTS = 512;
+const REGISTERED_MATCH_PREVIEW_DELAY_MS = 250;
+const MEDIUM_REGISTERED_MATCH_PREVIEW_DELAY_MS = 1_000;
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 import { createDefaultProfile } from "../store/plugin-store";
@@ -154,6 +156,14 @@ function shouldAutoCaptureEvidence(summary: ModelPreviewSummary): boolean {
     && summary.triangleCount <= MAX_AUTO_EVIDENCE_TRIANGLES;
 }
 
+function getRegisteredMatchPreviewDelay(summary: ModelPreviewSummary): number | null {
+  const tierRank = getPerformanceTierRank(summary.performanceTier);
+  if (tierRank >= 2) {
+    return null;
+  }
+  return tierRank === 1 ? MEDIUM_REGISTERED_MATCH_PREVIEW_DELAY_MS : REGISTERED_MATCH_PREVIEW_DELAY_MS;
+}
+
 function getMatchPreviewPartRank(part: ModelPartSummary): number {
   if (part.source === "component") return 0;
   if (part.source === "group") return 1;
@@ -263,6 +273,7 @@ export class DirectModelView extends FileView {
   private workbenchEvidenceModelPath: string | null = null;
   private workbenchEvidence: ModelEvidence | null = null;
   private evidenceRegistrationTimer: number | null = null;
+  private registeredMatchPreviewTimer: number | null = null;
   private sidebarContent: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
@@ -300,6 +311,7 @@ export class DirectModelView extends FileView {
 
   onClose(): Promise<void> {
     this.clearDeferredEvidenceRegistration();
+    this.clearRegisteredMatchPreview();
     if (this.escHandler) {
       activeDocument.removeEventListener("keydown", this.escHandler);
       this.escHandler = null;
@@ -315,6 +327,7 @@ export class DirectModelView extends FileView {
     const gen = ++this.loadGeneration;
     const mobile = isMobile();
     this.clearDeferredEvidenceRegistration();
+    this.clearRegisteredMatchPreview();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     this.workbenchPanel = null;
@@ -547,6 +560,13 @@ export class DirectModelView extends FileView {
     }
   }
 
+  private clearRegisteredMatchPreview(): void {
+    if (this.registeredMatchPreviewTimer !== null) {
+      window.clearTimeout(this.registeredMatchPreviewTimer);
+      this.registeredMatchPreviewTimer = null;
+    }
+  }
+
   private scheduleDeferredEvidenceRegistration(modelPath: string, generation: number, summary: ModelPreviewSummary): void {
     this.clearDeferredEvidenceRegistration();
     if (!shouldAutoCaptureEvidence(summary)) {
@@ -626,6 +646,7 @@ export class DirectModelView extends FileView {
   }
   private renderSidebarContent(modelPath: string, summary: ModelPreviewSummary): void {
     if (!this.sidebarContent) return;
+    this.clearRegisteredMatchPreview();
     this.sidebarContent.empty();
     this.renderKnowledgeControls(this.sidebarContent, modelPath);
     this.renderRegisteredPartMatches(this.sidebarContent, modelPath, summary);
@@ -769,64 +790,77 @@ export class DirectModelView extends FileView {
       return;
     }
 
-    void import("./workbench/knowledge-note")
-      .then(async ({ collectRegisteredPartsFromProfiles }) => {
-        const state = this.ps.store.getState();
-        const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath, {
-          includeSidecars: false,
-          maxParts: MAX_MATCH_PREVIEW_REGISTERED_PARTS,
-        });
-        if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath || !control.isConnected) {
-          return;
-        }
-        if (registeredParts.length === 0) {
-          renderEmpty("directWorkbench.registeredEmpty");
-          return;
-        }
+    const previewDelay = getRegisteredMatchPreviewDelay(summary);
+    if (previewDelay === null) {
+      renderEmpty("directWorkbench.registeredUnavailable");
+      return;
+    }
 
-        const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
-        const analysis = buildLocalAnalysisResult({
-          modelPath,
-          profile,
-          preview: summary,
-          evidence,
-          registeredParts,
-        });
-        const matchedParts = analysis.parts
-          .filter((part) => part.registeredMatches?.length)
-          .sort((left, right) => (right.registeredMatches?.[0]?.matchScore ?? 0) - (left.registeredMatches?.[0]?.matchScore ?? 0))
-          .slice(0, 5);
+    this.registeredMatchPreviewTimer = window.setTimeout(() => {
+      this.registeredMatchPreviewTimer = null;
+      if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath || !control.isConnected) {
+        return;
+      }
 
-        if (matchedParts.length === 0) {
-          renderEmpty("directWorkbench.registeredEmpty");
-          return;
-        }
-
-        status.setText(formatT("directWorkbench.registeredCount", { count: String(matchedParts.length) }));
-        body.empty();
-        const list = body.createDiv({ cls: "ai3d-direct-workbench-match-list" });
-        for (const part of matchedParts) {
-          const match = part.registeredMatches?.[0];
-          if (!match) continue;
-          const row = renderRegisteredPartMatchRow(list, part.name, match);
-          const openButton = row.querySelector("[data-ai3d-action='open-registered-part']");
-          if (!(openButton instanceof HTMLButtonElement)) continue;
-          openButton.addEventListener("click", () => {
-            const targetPath = openButton.getAttribute("data-ai3d-target-path") || undefined;
-            if (!targetPath) return;
-            const file = this.app.vault.getAbstractFileByPath(targetPath);
-            if (file instanceof TFile) {
-              void this.app.workspace.getLeaf(true).openFile(file, { active: true });
-            }
+      void import("./workbench/knowledge-note")
+        .then(async ({ collectRegisteredPartsFromProfiles }) => {
+          const state = this.ps.store.getState();
+          const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath, {
+            includeSidecars: false,
+            maxParts: MAX_MATCH_PREVIEW_REGISTERED_PARTS,
           });
-        }
-      })
-      .catch((error) => {
-        console.warn("[AI3D] Registered part match preview failed:", error);
-        if (generation === this.loadGeneration && this.workbenchModelPath === modelPath && control.isConnected) {
-          renderEmpty("directWorkbench.registeredUnavailable");
-        }
-      });
+          if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath || !control.isConnected) {
+            return;
+          }
+          if (registeredParts.length === 0) {
+            renderEmpty("directWorkbench.registeredEmpty");
+            return;
+          }
+
+          const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
+          const analysis = buildLocalAnalysisResult({
+            modelPath,
+            profile,
+            preview: summary,
+            evidence,
+            registeredParts,
+          });
+          const matchedParts = analysis.parts
+            .filter((part) => part.registeredMatches?.length)
+            .sort((left, right) => (right.registeredMatches?.[0]?.matchScore ?? 0) - (left.registeredMatches?.[0]?.matchScore ?? 0))
+            .slice(0, 5);
+
+          if (matchedParts.length === 0) {
+            renderEmpty("directWorkbench.registeredEmpty");
+            return;
+          }
+
+          status.setText(formatT("directWorkbench.registeredCount", { count: String(matchedParts.length) }));
+          body.empty();
+          const list = body.createDiv({ cls: "ai3d-direct-workbench-match-list" });
+          for (const part of matchedParts) {
+            const match = part.registeredMatches?.[0];
+            if (!match) continue;
+            const row = renderRegisteredPartMatchRow(list, part.name, match);
+            const openButton = row.querySelector("[data-ai3d-action='open-registered-part']");
+            if (!(openButton instanceof HTMLButtonElement)) continue;
+            openButton.addEventListener("click", () => {
+              const targetPath = openButton.getAttribute("data-ai3d-target-path") || undefined;
+              if (!targetPath) return;
+              const file = this.app.vault.getAbstractFileByPath(targetPath);
+              if (file instanceof TFile) {
+                void this.app.workspace.getLeaf(true).openFile(file, { active: true });
+              }
+            });
+          }
+        })
+        .catch((error) => {
+          console.warn("[AI3D] Registered part match preview failed:", error);
+          if (generation === this.loadGeneration && this.workbenchModelPath === modelPath && control.isConnected) {
+            renderEmpty("directWorkbench.registeredUnavailable");
+          }
+        });
+    }, previewDelay);
   }
 
   private async createPreviewWithFallback(
