@@ -15,6 +15,7 @@
 - Performance: defer Live Preview runtime imports for preview backends, annotation managers, conversion preparation, and load feedback until a visible embed actually starts loading.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
+- Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.
 - Performance: avoid forcing an unchanged plugin `data.json` rewrite during unload; only pending dirty state is flushed.
 - Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.

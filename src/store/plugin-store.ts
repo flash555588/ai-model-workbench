@@ -228,16 +228,30 @@ function normalizeStringArray(value: unknown, maxEntries = Number.POSITIVE_INFIN
   return Number.isFinite(maxEntries) ? entries.slice(0, maxEntries) : entries;
 }
 
+function isNormalizedStringArray(value: unknown, maxEntries = Number.POSITIVE_INFINITY): value is string[] {
+  return Array.isArray(value) &&
+    (!Number.isFinite(maxEntries) || value.length <= maxEntries) &&
+    value.every((entry) => typeof entry === "string" && entry.trim().length > 0);
+}
+
 function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
   if (!Array.isArray(value) || value.length < 3) return undefined;
   const tuple = value.slice(0, 3).map((entry) => Number(entry));
   return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
 }
 
+function isNormalizedNumberTuple(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every((entry) => Number.isFinite(entry));
+}
+
 function normalizePartSource(value: unknown): PartRecord["source"] {
   return value === "group" || value === "mesh" || value === "component" || value === "detail-cluster"
     ? value
     : undefined;
+}
+
+function isNormalizedPartSource(value: unknown): boolean {
+  return value === undefined || normalizePartSource(value) === value;
 }
 
 function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined {
@@ -248,8 +262,79 @@ function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined
     : undefined;
 }
 
+function isNormalizedModelAssetFormat(value: unknown): boolean {
+  return value === undefined || normalizeModelAssetFormat(value) === value;
+}
+
 function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefined {
   return value === "direct" || value === "convert" ? value : undefined;
+}
+
+function isNormalizedModelLoadStrategy(value: unknown): boolean {
+  return value === undefined || normalizeModelLoadStrategy(value) === value;
+}
+
+function isNormalizedOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isNormalizedOptionalCount(value: unknown): boolean {
+  return value === undefined || (Number.isInteger(value) && Number(value) >= 0);
+}
+
+function isReusableRegisteredPart(entry: unknown): entry is PartRecord {
+  if (!entry || typeof entry !== "object") return false;
+  const record = entry as Partial<PartRecord>;
+  if ("registeredMatches" in record) return false;
+  return typeof record.partId === "string" && record.partId.length > 0 &&
+    typeof record.assetId === "string" && record.assetId.length > 0 &&
+    typeof record.name === "string" && record.name.length > 0 &&
+    isNormalizedOptionalString(record.parentPartId) &&
+    isNormalizedPartSource(record.source) &&
+    isNormalizedOptionalString(record.componentId) &&
+    isNormalizedOptionalString(record.occurrenceId) &&
+    isNormalizedOptionalString(record.partNumber) &&
+    isNormalizedOptionalString(record.componentPath) &&
+    isNormalizedOptionalString(record.category) &&
+    isNormalizedStringArray(record.meshRefs, MAX_REGISTERED_PART_MESH_REFS) &&
+    isNormalizedOptionalCount(record.childCount) &&
+    isNormalizedStringArray(record.materialRefs, MAX_REGISTERED_PART_MATERIAL_REFS) &&
+    (record.bbox === undefined || isNormalizedNumberTuple(record.bbox)) &&
+    (record.center === undefined || isNormalizedNumberTuple(record.center)) &&
+    isNormalizedOptionalCount(record.triangleCount) &&
+    isNormalizedOptionalCount(record.vertexCount) &&
+    (typeof record.materialName === "string" || record.materialName === null) &&
+    isNormalizedModelAssetFormat(record.sourceFormat) &&
+    isNormalizedModelAssetFormat(record.effectiveFormat) &&
+    isNormalizedModelLoadStrategy(record.loadStrategy) &&
+    Number.isFinite(record.confidence) && Number(record.confidence) >= 0 && Number(record.confidence) <= 1 &&
+    isNormalizedStringArray(record.observations, MAX_REGISTERED_PART_OBSERVATIONS) &&
+    isNormalizedStringArray(record.inferredFunctions) &&
+    isNormalizedStringArray(record.knowledgeTags) &&
+    isNormalizedOptionalString(record.notePath) &&
+    typeof record.reviewed === "boolean";
+}
+
+function reuseNormalizedRegisteredParts(value: readonly unknown[]): PartRecord[] | undefined | null {
+  if (value.length === 0) {
+    return undefined;
+  }
+  if (value.length > MAX_REGISTERED_PARTS_PER_PROFILE) {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isReusableRegisteredPart(entry)) {
+      return null;
+    }
+    const key = `${entry.assetId}:${entry.partId}`;
+    if (seen.has(key)) {
+      return null;
+    }
+    seen.add(key);
+  }
+  return value as PartRecord[];
 }
 
 function getRegisteredPartRank(part: PartRecord): number {
@@ -279,6 +364,10 @@ function limitRegisteredParts(parts: PartRecord[]): PartRecord[] {
 function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { parts: PartRecord[] | undefined; changed: boolean } {
   if (!Array.isArray(value)) {
     return { parts: undefined, changed: false };
+  }
+  const reusableParts = reuseNormalizedRegisteredParts(value);
+  if (reusableParts !== null) {
+    return { parts: reusableParts, changed: false };
   }
 
   const parts: PartRecord[] = [];

@@ -306,6 +306,64 @@ describe("createPluginStore persistence", () => {
     expect(saveData).not.toHaveBeenCalled();
   });
 
+  it("reuses already normalized registered part arrays during load", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const registeredParts: PartRecord[] = [{
+      partId: "component-part",
+      assetId: "models/board.glb",
+      name: "U1",
+      source: "component",
+      componentId: "U1",
+      occurrenceId: "occ-1",
+      partNumber: "U1",
+      componentPath: "Board/U1",
+      category: "IC",
+      meshRefs: ["U1-body"],
+      childCount: 1,
+      materialRefs: ["Plastic"],
+      bbox: [1, 2, 3],
+      center: [0, 0, 0],
+      triangleCount: 12,
+      vertexCount: 24,
+      materialName: null,
+      sourceFormat: "glb",
+      effectiveFormat: "glb",
+      loadStrategy: "direct",
+      confidence: 0.82,
+      observations: ["Component ID: U1."],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      notePath: "Parts/U1.md",
+      reviewed: false,
+    }];
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin, saveData } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settlePromises();
+
+    expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts).toBe(registeredParts);
+    expect(saveData).not.toHaveBeenCalled();
+  });
+
   it("limits oversized registered part lists while keeping reviewed and component records", async () => {
     const now = "2026-06-22T00:00:00.000Z";
     const createPart = (index: number, partial: Partial<PartRecord> = {}): PartRecord => ({
