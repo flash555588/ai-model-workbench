@@ -13,6 +13,7 @@
 - Performance: register reading-mode `3d`/`3dgrid` code blocks through lightweight lazy handlers so heavy inline preview modules load only when a rendered block needs them.
 - Performance: serialize Live Preview and reading-mode model loads through an inline preview queue and defer `3dgrid` model preparation until the grid enters the viewport, reducing startup and multi-model I/O spikes.
 - Performance: defer Live Preview runtime imports for preview backends, annotation managers, conversion preparation, and load feedback until a visible embed actually starts loading.
+- Performance: defer reading-mode annotation runtime setup until after inline model canvases are visible, reducing first-frame delay for annotated previews.
 - Performance: register Live Preview embeds through a lightweight lazy widget so workspace startup no longer imports the full embed runtime before a model embed approaches the viewport.
 - Performance: defer Live Preview editor-extension registration until the workspace layout is ready, keeping CodeMirror model-embed setup off the plugin startup critical path.
 - Performance: schedule Live Preview extension setup after the initial layout settles and lazy-load heading-pin observer runtime only when heading-linked annotations exist.

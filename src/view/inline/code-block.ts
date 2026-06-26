@@ -1,7 +1,7 @@
 import type { App, MarkdownPostProcessorContext } from "obsidian";
 import { isDisabledSplatExtension, isSupportedModelExtension, listSupportedModelExtensions } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
-import { AnnotationManager } from "../../render/preview/annotations";
+import type { AnnotationManager } from "../../render/preview/annotations";
 import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
@@ -15,7 +15,6 @@ import { prepareModelInput } from "../../io/model-pipeline";
 import { toPreviewSource } from "../../io/preview/preview-source";
 import { listPreferredConversionExts } from "../../io/formats/route-preferences";
 import { createLoadingOverlay } from "./loading-overlay";
-import { createNoteReader } from "../../utils/note-reader";
 import { describeModelLoadFailure, isMissingConverterError } from "../../io/conversion/errors";
 import { formatT, t } from "../../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
@@ -267,6 +266,47 @@ export function registerCodeBlockProcessor(
 
         const loading = createLoadingOverlay(host);
 
+        const setupReadonlyAnnotations = async (
+          previewForAnnotations: ModelPreview,
+          pinsForAnnotations: AnnotationPin[],
+        ): Promise<void> => {
+          if (pinsForAnnotations.length === 0 || !supportsAnnotationPreview(previewForAnnotations)) {
+            return;
+          }
+          const provider = previewForAnnotations.getAnnotationProvider();
+          if (!provider.canvas) {
+            return;
+          }
+
+          try {
+            const [{ AnnotationManager }, { createNoteReader }] = await Promise.all([
+              import("../../render/preview/annotations"),
+              import("../../utils/note-reader"),
+            ]);
+            if (destroyed || preview !== previewForAnnotations || !host.isConnected) {
+              return;
+            }
+            annotationMgr = new AnnotationManager(
+              provider,
+              host,
+              "readonly",
+              pinsForAnnotations,
+              undefined,
+              createNoteReader(app),
+              undefined,
+              {
+                app,
+                previewMode: settings.annotationPreviewMode,
+                displayMode: settings.annotationDisplayMode,
+              },
+            );
+            toolbar.showAnnotateButton();
+            toolbar.updateAnnotationBadge(pinsForAnnotations.length);
+          } catch (error) {
+            console.warn("[AI3D] Inline annotation runtime failed to load:", error);
+          }
+        };
+
         try {
           loading.setPhaseKey("loading.preparingModel");
           await scheduleInlinePreviewLoad(async () => {
@@ -315,29 +355,6 @@ export function registerCodeBlockProcessor(
             preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
             toolbar.syncCapabilities();
 
-            // Readonly annotations
-            if (pins.length > 0 && supportsAnnotationPreview(preview)) {
-              const provider = preview.getAnnotationProvider();
-              if (provider.canvas) {
-                annotationMgr = new AnnotationManager(
-                  provider,
-                  host,
-                  "readonly",
-                  pins,
-                  undefined,
-                  createNoteReader(app),
-                  undefined,
-                  {
-                    app,
-                    previewMode: settings.annotationPreviewMode,
-                    displayMode: settings.annotationDisplayMode,
-                  },
-                );
-                toolbar.showAnnotateButton();
-                toolbar.updateAnnotationBadge(pins.length);
-              }
-            }
-
             if (ext === "stl" && modelCfg.color) {
               preview.setSTLColor?.(modelCfg.color);
             }
@@ -350,6 +367,7 @@ export function registerCodeBlockProcessor(
             }
 
             loading.hide();
+            void setupReadonlyAnnotations(preview, pins);
           });
         } catch (err) {
           destroyed = true;
