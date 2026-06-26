@@ -1,7 +1,7 @@
 import type { Plugin } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../domain/constants";
-import type { PartRecord, PersistedPluginState } from "../domain/models";
+import type { ModelPreviewSummary, PartRecord, PersistedPluginState } from "../domain/models";
 import { createPluginStore } from "./plugin-store";
 
 interface Deferred<T = void> {
@@ -37,6 +37,20 @@ function createFakePlugin(
   return {
     plugin: { loadData, saveData } as unknown as Plugin,
     saveData,
+  };
+}
+
+function createPreviewSummary(): ModelPreviewSummary {
+  return {
+    meshCount: 1,
+    triangleCount: 12,
+    vertexCount: 24,
+    materialCount: 1,
+    performanceTier: "light",
+    performanceHint: "12 triangles, 1 materials. Performance tier: light.",
+    resourceWarnings: [],
+    boundingSize: { x: 1, y: 1, z: 1 },
+    rootName: "__root__",
   };
 }
 
@@ -168,6 +182,34 @@ describe("createPluginStore persistence", () => {
     await settlePromises();
 
     expect(errorSpy).toHaveBeenCalledWith("[AI3D] Final save on dispose failed:", error);
+  });
+
+  it("does not persist transient current preview state", async () => {
+    const { plugin, saveData } = createFakePlugin();
+    const pluginStore = createPluginStore(plugin);
+
+    pluginStore.setCurrentModel("models/large.glb", createPreviewSummary());
+    pluginStore.clearModelPreview();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settlePromises();
+
+    expect(saveData).not.toHaveBeenCalled();
+
+    pluginStore.dispose();
+    await settlePromises();
+
+    expect(saveData).not.toHaveBeenCalled();
+  });
+
+  it("does not persist unchanged settings values", async () => {
+    const { plugin, saveData } = createFakePlugin();
+    const pluginStore = createPluginStore(plugin);
+
+    pluginStore.updateSettings({ locale: DEFAULT_SETTINGS.locale });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settlePromises();
+
+    expect(saveData).not.toHaveBeenCalled();
   });
 
   it("preserves registered detail cluster part sources when loading saved data", async () => {

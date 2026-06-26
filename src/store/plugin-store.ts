@@ -49,7 +49,6 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   let dirtyRevision = 0;
   let savedRevision = 0;
   let saveLoop: Promise<void> | null = null;
-  let hydrating = false;
 
   function scheduleSave() {
     if (saveTimer) window.clearTimeout(saveTimer);
@@ -105,13 +104,6 @@ export function createPluginStore(plugin: Plugin): PluginStore {
     }
   }
 
-  // Auto-save on user/runtime changes, but not while hydrating persisted state.
-  store.subscribe(() => {
-    if (!hydrating) {
-      markDirty();
-    }
-  });
-
   let localeLoadedFromSaved = false;
 
   return {
@@ -132,19 +124,28 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       store.setState({
         modelAssetProfiles: { ...current, [path]: { ...existing, ...updater(existing), updatedAt: new Date().toISOString() } },
       });
+      markDirty();
     },
 
     setConvertedAssetRecords(records) {
+      if (records === store.getState().convertedAssetRecords) return;
       store.setState({ convertedAssetRecords: records });
+      markDirty();
     },
 
     updateSettings(partial) {
       const current = store.getState().settings;
+      if (!Object.entries(partial).some(([key, value]) => current[key as keyof typeof current] !== value)) {
+        return;
+      }
       store.setState({ settings: { ...current, ...partial } });
+      markDirty();
     },
 
     setLastKnowledgeGeneration(record) {
+      if (record === store.getState().lastKnowledgeGeneration) return;
       store.setState({ lastKnowledgeGeneration: record });
+      markDirty();
     },
 
     async load() {
@@ -152,19 +153,14 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       if (!saved) return;
       localeLoadedFromSaved = !!saved.settings?.locale;
       const profiles = normalizeModelAssetProfiles(saved.modelAssetProfiles);
-      hydrating = true;
-      try {
-        store.setState({
-          settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
-          convertedAssetRecords: saved.convertedAssetRecords ?? [],
-          modelAssetProfiles: profiles,
-          agentDraft: saved.agentDraft ?? "",
-          agentPlan: saved.agentPlan ?? null,
-          lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
-        });
-      } finally {
-        hydrating = false;
-      }
+      store.setState({
+        settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
+        convertedAssetRecords: saved.convertedAssetRecords ?? [],
+        modelAssetProfiles: profiles,
+        agentDraft: saved.agentDraft ?? "",
+        agentPlan: saved.agentPlan ?? null,
+        lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
+      });
       if (shouldPersistNormalizedProfiles(saved.modelAssetProfiles, profiles)) {
         dirtyRevision += 1;
         if (saveTimer) window.clearTimeout(saveTimer);

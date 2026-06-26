@@ -95,6 +95,43 @@ function limitAutoRegisteredParts(parts: PartRecord[]): PartRecord[] {
     .slice(0, MAX_AUTO_REGISTERED_PARTS);
 }
 
+function createComparableRegisteredPart(part: PartRecord): Omit<PartRecord, "registeredMatches"> {
+  return {
+    partId: part.partId,
+    assetId: part.assetId,
+    parentPartId: part.parentPartId,
+    name: part.name,
+    source: part.source,
+    componentId: part.componentId,
+    occurrenceId: part.occurrenceId,
+    partNumber: part.partNumber,
+    componentPath: part.componentPath,
+    category: part.category,
+    meshRefs: part.meshRefs,
+    childCount: part.childCount,
+    materialRefs: part.materialRefs,
+    bbox: part.bbox,
+    center: part.center,
+    triangleCount: part.triangleCount,
+    vertexCount: part.vertexCount,
+    materialName: part.materialName,
+    sourceFormat: part.sourceFormat,
+    effectiveFormat: part.effectiveFormat,
+    loadStrategy: part.loadStrategy,
+    confidence: part.confidence,
+    observations: part.observations,
+    inferredFunctions: part.inferredFunctions,
+    knowledgeTags: part.knowledgeTags,
+    notePath: part.notePath,
+    reviewed: part.reviewed,
+  };
+}
+
+function areRegisteredPartListsEquivalent(left: readonly PartRecord[] = [], right: readonly PartRecord[] = []): boolean {
+  if (left.length !== right.length) return false;
+  return JSON.stringify(left.map(createComparableRegisteredPart)) === JSON.stringify(right.map(createComparableRegisteredPart));
+}
+
 function getPerformanceTierRank(tier: ModelPreviewSummary["performanceTier"]): number {
   if (tier === "extreme") return 3;
   if (tier === "heavy") return 2;
@@ -495,6 +532,9 @@ export class DirectModelView extends FileView {
     const registeredParts = limitAutoRegisteredParts(
       nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part)),
     );
+    if (areRegisteredPartListsEquivalent(existingProfile.registeredParts, registeredParts)) {
+      return;
+    }
 
     this.ps.updateModelProfile(modelPath, (_existing) => ({ registeredParts }));
   }
