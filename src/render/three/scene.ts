@@ -107,6 +107,7 @@ import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothn
 import {
   createThreeGeometryQualityStats,
   createThreeGroupedPartCandidates,
+  createThreeChildRenderableMeshMap,
   createThreeModelPreviewSummary,
   createThreeObjectPartPreviewSummary,
   createThreeRenderableInfoBreakdown,
@@ -117,6 +118,7 @@ import {
   getThreeObjectPreviewBounds as getObjectPreviewBounds,
   isThreeRenderableObject,
   isThreeMesh as isMesh,
+  type ThreeChildRenderableMeshMap,
   type ThreeRenderableObject,
 } from "./mesh-preview";
 
@@ -295,6 +297,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private cachedMeshRoot: Object3D | null = null;
   private cachedRenderables: ThreeRenderableObject[] | null = null;
   private cachedRenderableRoot: Object3D | null = null;
+  private cachedChildMeshMap: ThreeChildRenderableMeshMap | null = null;
+  private cachedChildMeshMapRoot: Object3D | null = null;
   private cachedRootPreviewBounds: PreviewBounds | null = null;
   private cachedRootPreviewBoundsObject: Object3D | null = null;
   private cachedGeometryQualityStats: PreviewQualitySnapshot["geometry"] | null = null;
@@ -599,7 +603,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.rootObject) return null;
     const renderableObjects = this.getRenderableObjects(this.rootObject);
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
-    const groupedPartCandidates = createThreeGroupedPartCandidates(this.rootObject, renderableMeshes);
+    const childMeshMap = this.getChildRenderableMeshMap(this.rootObject);
+    const groupedPartCandidates = createThreeGroupedPartCandidates(this.rootObject, renderableMeshes, childMeshMap);
     const groupedRenderableCandidates = {
       parts: groupedPartCandidates.parts,
       groupedMeshes: new Set<ThreeRenderableObject>(groupedPartCandidates.groupedMeshes),
@@ -624,7 +629,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       ?? (this._lastPickResult.mesh instanceof Object3D ? this._lastPickResult.mesh : null);
     if (!object) return null;
     const renderableMeshes = this.rootObject ? this.getRenderableMeshes(this.rootObject) : [];
-    return createThreeObjectPartPreviewSummary(object, this.rootObject, renderableMeshes);
+    const childMeshMap = this.rootObject ? this.getChildRenderableMeshMap(this.rootObject) : undefined;
+    return createThreeObjectPartPreviewSummary(object, this.rootObject, renderableMeshes, childMeshMap);
   }
 
   exportSelectedPartInfo(): string {
@@ -1031,6 +1037,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.markShadowDirty();
         this.markDirty();
       },
+      this.getChildRenderableMeshMap(this.rootObject),
     );
   }
 
@@ -1767,8 +1774,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
     const renderable = isThreeRenderableObject(hit?.object) ? hit.object : null;
+    const renderableMeshes = this.getRenderableMeshes(this.rootObject);
+    const childMeshMap = this.getChildRenderableMeshMap(this.rootObject);
     const selectable = renderable
-      ? findThreeSelectablePartObject(this.rootObject, renderable, this.getRenderableMeshes(this.rootObject))
+      ? findThreeSelectablePartObject(this.rootObject, renderable, renderableMeshes, childMeshMap)
       : null;
     const result: PreviewPickResult = {
       mesh: selectable,
@@ -2003,6 +2012,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return renderables;
   }
 
+  private getChildRenderableMeshMap(root: Object3D): ThreeChildRenderableMeshMap {
+    if (this.cachedChildMeshMap && this.cachedChildMeshMapRoot === root) return this.cachedChildMeshMap;
+    this.cachedChildMeshMap = createThreeChildRenderableMeshMap(root, this.getRenderableMeshes(root));
+    this.cachedChildMeshMapRoot = root;
+    return this.cachedChildMeshMap;
+  }
+
   private getGeometryQualityStats(): PreviewQualitySnapshot["geometry"] {
     if (!this.rootObject) {
       return {
@@ -2029,6 +2045,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedMeshRoot = null;
     this.cachedRenderables = null;
     this.cachedRenderableRoot = null;
+    this.cachedChildMeshMap = null;
+    this.cachedChildMeshMapRoot = null;
     this.invalidateRootBoundsCache();
   }
 

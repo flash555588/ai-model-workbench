@@ -26,7 +26,11 @@ import {
   type PreviewDisassemblyController,
   type PreviewDisassemblySubscriptions,
 } from "../preview/disassembly";
-import { findThreeSelectablePartObject } from "./mesh-preview";
+import {
+  createThreeChildRenderableMeshMap,
+  findThreeSelectablePartObject,
+  type ThreeChildRenderableMeshMap,
+} from "./mesh-preview";
 
 export interface ThreeDisassemblyPart {
   id: number;
@@ -60,10 +64,11 @@ function isThreeDisassemblyPart(value: unknown): value is ThreeDisassemblyPart {
 export function createThreeDisassemblyParts(
   root: Object3D,
   meshes: readonly Mesh[],
+  childMeshMap: ThreeChildRenderableMeshMap = createThreeChildRenderableMeshMap(root, meshes),
 ): ThreeDisassemblyPart[] {
   const byObject = new Map<Object3D, ThreeDisassemblyPart>();
   for (const mesh of meshes) {
-    const object = findThreeSelectablePartObject(root, mesh, meshes);
+    const object = findThreeSelectablePartObject(root, mesh, meshes, childMeshMap);
     let part = byObject.get(object);
     if (!part) {
       part = { id: object.id, object, meshes: [] };
@@ -119,12 +124,13 @@ class ThreeDisassemblyAdapter
     meshes: Mesh[],
     controls: { enabled: boolean },
     requestRender: () => void,
+    childMeshMap: ThreeChildRenderableMeshMap = createThreeChildRenderableMeshMap(root, meshes),
   ) {
     this.scene = scene;
     this.camera = camera;
     this.canvas = canvas;
     this.meshes = meshes;
-    this.parts = createThreeDisassemblyParts(root, meshes);
+    this.parts = createThreeDisassemblyParts(root, meshes, childMeshMap);
     for (const part of this.parts) {
       for (const mesh of part.meshes) {
         this.meshToPart.set(mesh.id, part);
@@ -448,8 +454,9 @@ export function createThreeDisassemblyController(
   meshes: Mesh[],
   controls: { enabled: boolean },
   requestRender: () => void,
+  childMeshMap?: ThreeChildRenderableMeshMap,
 ): PreviewDisassemblyController {
   return createPreviewDisassemblyController(
-    new ThreeDisassemblyAdapter(scene, camera, canvas, root, meshes, controls, requestRender),
+    new ThreeDisassemblyAdapter(scene, camera, canvas, root, meshes, controls, requestRender, childMeshMap),
   );
 }

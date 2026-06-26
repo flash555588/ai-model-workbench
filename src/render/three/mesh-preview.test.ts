@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { attachObjectToScenePreservingWorldTransform, createThreeDisassemblyParts } from "./disassembly";
 import {
+  createThreeChildRenderableMeshMap,
   createThreeGeometryQualityStats,
   createThreeGroupedPartCandidates,
   createThreeModelPreviewSummary,
@@ -163,6 +164,34 @@ describe("three mesh preview helpers", () => {
       materialName: "2 materials",
       meshNames: ["screw-a", "screw-b"],
     });
+  });
+
+  it("reuses child mesh maps for selection and grouped part candidates", () => {
+    const root = new Object3D();
+    const component = new Object3D();
+    component.name = "J2";
+    component.userData = {
+      ai3dPartId: "component-J2",
+      componentPath: "PCB/J2",
+    };
+    const terminalGroup = new Object3D();
+    terminalGroup.name = "terminal-cluster";
+    const meshA = createBox("J2->0_primitive0", "gold");
+    const meshB = createBox("J2->0_primitive1", "gold");
+    const meshC = createBox("J2->0_primitive2", "plastic");
+    const other = createBox("board", "fr4");
+    terminalGroup.add(meshA, meshB);
+    component.add(terminalGroup, meshC);
+    root.add(component, other);
+
+    const meshes = [meshA, meshB, meshC, other];
+    const childMeshMap = createThreeChildRenderableMeshMap(root, meshes);
+    const selected = findThreeSelectablePartObject(root, meshA, meshes, childMeshMap);
+    const candidates = createThreeGroupedPartCandidates(root, meshes, childMeshMap);
+
+    expect(childMeshMap.get(component)).toEqual([meshA, meshB, meshC]);
+    expect(selected).toBe(component);
+    expect(candidates.parts.some((part) => part.componentId === "component-J2")).toBe(true);
   });
 
   it("keeps nested grouped part candidates attached to their descendant meshes", () => {

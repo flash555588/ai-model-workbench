@@ -26,6 +26,7 @@ import {
 } from "../preview/summary";
 
 export type ThreeRenderableObject = Mesh | Points;
+export type ThreeChildRenderableMeshMap = ReadonlyMap<Object3D, readonly Mesh[]>;
 
 export function isThreeMesh(value: unknown): value is Mesh {
   return value instanceof Mesh;
@@ -186,7 +187,7 @@ function collectChildRenderableMeshes(object: Object3D, renderableSet: ReadonlyS
   return meshes;
 }
 
-function createChildRenderableMeshMap(root: Object3D, renderableMeshes: readonly Mesh[]): Map<Object3D, Mesh[]> {
+export function createThreeChildRenderableMeshMap(root: Object3D, renderableMeshes: readonly Mesh[]): Map<Object3D, Mesh[]> {
   const byObject = new Map<Object3D, Mesh[]>();
   for (const mesh of renderableMeshes) {
     let current = mesh.parent;
@@ -203,6 +204,14 @@ function createChildRenderableMeshMap(root: Object3D, renderableMeshes: readonly
   return byObject;
 }
 
+function getChildRenderableMeshes(
+  object: Object3D,
+  renderableSet: ReadonlySet<Mesh>,
+  childMeshMap?: ThreeChildRenderableMeshMap,
+): readonly Mesh[] {
+  return childMeshMap?.get(object) ?? collectChildRenderableMeshes(object, renderableSet);
+}
+
 function isGenericWrapperName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   return /^(scene|root|model|group|node|object|assembly|component)[-_\s.]?\d*$/i.test(normalized)
@@ -217,6 +226,7 @@ export function createThreeObjectPartPreviewSummary(
   object: Object3D,
   root: Object3D | null,
   renderableMeshes?: readonly Mesh[],
+  childMeshMap?: ThreeChildRenderableMeshMap,
 ): ModelPartSummary {
   if (isThreeRenderableObject(object)) {
     return createThreeRenderablePartPreviewSummary(object, root);
@@ -231,7 +241,7 @@ export function createThreeObjectPartPreviewSummary(
       }
     });
   }
-  const childMeshes = collectChildRenderableMeshes(object, renderableSet);
+  const childMeshes = getChildRenderableMeshes(object, renderableSet, childMeshMap);
   const bounds = new Box3();
   const materialNames = new Set<string>();
   let triangleCount = 0;
@@ -285,13 +295,14 @@ export function findThreeSelectablePartObject(
   root: Object3D,
   renderable: ThreeRenderableObject,
   renderableMeshes: readonly Mesh[],
+  childMeshMap?: ThreeChildRenderableMeshMap,
 ): Object3D {
   const renderableSet = new Set(renderableMeshes);
   let fallbackGroup: Object3D | null = null;
   let fallbackExplicitObject: Object3D | null = null;
   let current = renderable.parent;
   while (current && current !== root) {
-    const childMeshes = collectChildRenderableMeshes(current, renderableSet);
+    const childMeshes = getChildRenderableMeshes(current, renderableSet, childMeshMap);
     if (childMeshes.length > 0 && childMeshes.length < renderableMeshes.length) {
       const rawObjectName = current.name ?? "";
       const fallbackName = getThreeObjectDisplayName(current, `group-${current.id}`);
@@ -317,13 +328,13 @@ export function findThreeSelectablePartObject(
 export function createThreeGroupedPartCandidates(
   root: Object3D,
   renderableMeshes: readonly Mesh[],
+  childMeshMap: ThreeChildRenderableMeshMap = createThreeChildRenderableMeshMap(root, renderableMeshes),
 ): PreviewGroupedPartCandidates<Mesh> {
-  const childMeshMap = createChildRenderableMeshMap(root, renderableMeshes);
   const parts: ModelPartSummary[] = [];
   const groupedMeshes = new Set<Mesh>();
   const candidates: Array<{
     object: Object3D;
-    childMeshes: Mesh[];
+    childMeshes: readonly Mesh[];
     identity: PreviewComponentIdentity;
   }> = [];
   root.updateWorldMatrix(true, true);
