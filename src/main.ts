@@ -1,5 +1,5 @@
 import { Notice, Plugin, TFile } from "obsidian";
-import type { AnnotationPin, PluginSettings } from "./domain/models";
+import type { AnnotationPin, ModelAssetProfile, PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
@@ -8,6 +8,7 @@ import { DIRECT_VIEW_TYPE } from "./view/direct-view-type";
 import { LazyAI3DSettingTab } from "./lazy-setting-tab";
 import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
+import { containsHeadingLinkedAnnotations } from "./view/heading-pin-map";
 
 const log = createLogger("main");
 const POST_LAYOUT_STARTUP_DELAY_MS = 700;
@@ -77,6 +78,8 @@ export default class AI3DModelWorkbench extends Plugin {
   private convertedAssetCache!: ConvertedAssetCache;
   private unloaded = false;
   private headingPinObserverStarted = false;
+  private headingLinkedProfilesRef: Record<string, ModelAssetProfile> | null = null;
+  private headingLinkedProfilesResult = false;
 
   getSettings(): PluginSettings {
     return this.ps.store.getState().settings;
@@ -214,12 +217,12 @@ export default class AI3DModelWorkbench extends Plugin {
 
   private hasHeadingLinkedAnnotations(): boolean {
     const profiles = this.ps.store.getState().modelAssetProfiles;
-    for (const profile of Object.values(profiles)) {
-      if (profile.annotations.some((pin) => typeof pin.headingRef === "string" && pin.headingRef.trim().length > 0)) {
-        return true;
-      }
+    if (this.headingLinkedProfilesRef === profiles) {
+      return this.headingLinkedProfilesResult;
     }
-    return false;
+    this.headingLinkedProfilesRef = profiles;
+    this.headingLinkedProfilesResult = containsHeadingLinkedAnnotations(profiles);
+    return this.headingLinkedProfilesResult;
   }
 
   private async registerLivePreviewExtension(getAnnotations: (modelPath: string) => AnnotationPin[]): Promise<void> {

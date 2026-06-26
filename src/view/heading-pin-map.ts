@@ -22,3 +22,14 @@ export function buildHeadingPinMap(profiles: Record<string, ModelAssetProfile>):
   }
   return map;
 }
+
+export function containsHeadingLinkedAnnotations(profiles: Record<string, ModelAssetProfile>): boolean {
+  for (const profile of Object.values(profiles)) {
+    for (const pin of profile.annotations) {
+      if (typeof pin.headingRef === "string" && normalizeHeadingText(pin.headingRef)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}

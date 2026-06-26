@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelAssetProfile } from "../domain/models";
-import { buildHeadingPinMap } from "./heading-pin-map";
+import { buildHeadingPinMap, containsHeadingLinkedAnnotations } from "./heading-pin-map";
 
 function profile(annotations: ModelAssetProfile["annotations"]): ModelAssetProfile {
   return {
@@ -38,5 +38,27 @@ describe("buildHeadingPinMap", () => {
       { pinId: "pin-a", modelPath: "models/a.glb", color: "#f00" },
       { pinId: "pin-b", modelPath: "models/b.glb", color: "#0f0" },
     ]);
+  });
+});
+
+describe("containsHeadingLinkedAnnotations", () => {
+  it("detects normalized non-empty heading refs", () => {
+    expect(containsHeadingLinkedAnnotations({
+      "models/a.glb": profile([
+        { id: "plain", position: [0, 0, 0], label: "Plain", color: "#fff", headingRef: "   ", createdAt: "now" },
+      ]),
+      "models/b.glb": profile([
+        { id: "pin-b", position: [1, 0, 0], label: "B", color: "#0f0", headingRef: "  Motor   Housing ", createdAt: "now" },
+      ]),
+    })).toBe(true);
+  });
+
+  it("skips profiles without heading refs", () => {
+    expect(containsHeadingLinkedAnnotations({
+      "models/a.glb": profile([
+        { id: "plain", position: [0, 0, 0], label: "Plain", color: "#fff", createdAt: "now" },
+      ]),
+      "models/b.glb": profile([]),
+    })).toBe(false);
   });
 });
