@@ -223,6 +223,47 @@ describe("createPluginStore persistence", () => {
     });
   });
 
+  it("does not rewrite unchanged state during load", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "board:part:1",
+            assetId: "models/board.glb",
+            name: "Board",
+            source: "component",
+            meshRefs: ["board"],
+            materialRefs: ["Plastic"],
+            confidence: 0.82,
+            observations: ["Component ID: board."],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            reviewed: false,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin, saveData } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settlePromises();
+
+    expect(saveData).not.toHaveBeenCalled();
+  });
+
   it("limits oversized registered part lists while keeping reviewed and component records", async () => {
     const now = "2026-06-22T00:00:00.000Z";
     const createPart = (index: number, partial: Partial<PartRecord> = {}): PartRecord => ({

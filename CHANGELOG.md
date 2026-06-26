@@ -10,6 +10,7 @@
 - Performance: route conversion-backed GLB direct file views through Three.js and avoid extra full-buffer copies during GLB parsing.
 - Performance: cap automatic registered-part writes for highly fragmented models so large imports do not keep growing the plugin state file with low-value surface shards.
 - Performance: normalize oversized saved registered-part lists on load, strip transient registered-match caches, and quickly persist the compact state so future workspace startup parses less data.
+- Performance: avoid rewriting unchanged plugin state during startup or unload, reducing extra `data.json` disk I/O in large vaults.
 - Performance: make direct-view registered-part match previews skip sidecar reads, cap current/candidate part samples, and reuse indexed match tokens to reduce large-model UI stalls.
 - Performance: apply direct-file render quality settings immediately and automatically lower resolution/shadow cost for heavy and extreme model previews.
 - Conversion: write new converted GLB outputs to `.obsidian/ai-model-workbench/converted-assets` while continuing to reuse existing side-by-side `.ai3d-converted.glb` files.

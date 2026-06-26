@@ -49,6 +49,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   let dirtyRevision = 0;
   let savedRevision = 0;
   let saveLoop: Promise<void> | null = null;
+  let hydrating = false;
 
   function scheduleSave() {
     if (saveTimer) window.clearTimeout(saveTimer);
@@ -104,8 +105,12 @@ export function createPluginStore(plugin: Plugin): PluginStore {
     }
   }
 
-  // Auto-save on every state change
-  store.subscribe(() => markDirty());
+  // Auto-save on user/runtime changes, but not while hydrating persisted state.
+  store.subscribe(() => {
+    if (!hydrating) {
+      markDirty();
+    }
+  });
 
   let localeLoadedFromSaved = false;
 
@@ -147,15 +152,21 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       if (!saved) return;
       localeLoadedFromSaved = !!saved.settings?.locale;
       const profiles = normalizeModelAssetProfiles(saved.modelAssetProfiles);
-      store.setState({
-        settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
-        convertedAssetRecords: saved.convertedAssetRecords ?? [],
-        modelAssetProfiles: profiles,
-        agentDraft: saved.agentDraft ?? "",
-        agentPlan: saved.agentPlan ?? null,
-        lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
-      });
+      hydrating = true;
+      try {
+        store.setState({
+          settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
+          convertedAssetRecords: saved.convertedAssetRecords ?? [],
+          modelAssetProfiles: profiles,
+          agentDraft: saved.agentDraft ?? "",
+          agentPlan: saved.agentPlan ?? null,
+          lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
+        });
+      } finally {
+        hydrating = false;
+      }
       if (shouldPersistNormalizedProfiles(saved.modelAssetProfiles, profiles)) {
+        dirtyRevision += 1;
         if (saveTimer) window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
           saveTimer = null;
@@ -178,7 +189,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
         saveTimer = null;
       }
       // Fire-and-forget final flush so pending state changes are not lost on unload.
-      flushLatestState(true).catch(err => console.error("[AI3D] Final save on dispose failed:", err));
+      flushLatestState().catch(err => console.error("[AI3D] Final save on dispose failed:", err));
     },
   };
 }
