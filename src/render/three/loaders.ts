@@ -4,7 +4,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { BufferGeometry, Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
+import { BufferGeometry, LoadingManager, Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import {
@@ -30,9 +30,86 @@ interface GltfJson {
   images?: GltfExternalResource[];
 }
 
+interface GltfBlobResourceResolver {
+  manager: LoadingManager;
+  dispose: () => void;
+}
+
 function guessMime(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "png";
   return IMAGE_MIME[ext] ?? `image/${ext}`;
+}
+
+function stripUriSuffix(uri: string): string {
+  return uri.split(/[?#]/, 1)[0] ?? uri;
+}
+
+function normalizeResourceLookupKey(uri: string): string {
+  return stripUriSuffix(uri).replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function addResourceLookupKey(
+  lookup: Map<string, string>,
+  key: string | undefined,
+  objectUrl: string,
+): void {
+  if (!key) return;
+  lookup.set(normalizeResourceLookupKey(key), objectUrl);
+}
+
+function addGltfResourceLookupKeys(
+  lookup: Map<string, string>,
+  modelDir: string,
+  uri: string,
+  resolvedPath: string,
+  objectUrl: string,
+): void {
+  const rawUri = stripUriSuffix(uri);
+  addResourceLookupKey(lookup, rawUri, objectUrl);
+  addResourceLookupKey(lookup, joinPortablePath("", rawUri), objectUrl);
+  addResourceLookupKey(lookup, resolvedPath, objectUrl);
+  if (modelDir) {
+    addResourceLookupKey(lookup, `${modelDir}/${rawUri}`, objectUrl);
+  }
+}
+
+async function createGltfBlobResourceResolver(
+  readFile: (path: string) => Promise<ArrayBuffer>,
+  modelDir: string,
+  gltfJson: GltfJson,
+): Promise<GltfBlobResourceResolver> {
+  const lookup = new Map<string, string>();
+  const objectUrls: string[] = [];
+  const manager = new LoadingManager();
+
+  const register = async (uri: string | undefined, mimeType?: string): Promise<void> => {
+    if (!uri || uri.startsWith("data:")) {
+      return;
+    }
+    const resource = await readRelativeResource(readFile, modelDir, uri);
+    const objectUrl = URL.createObjectURL(new Blob([resource.data], { type: mimeType ?? guessMime(resource.path) }));
+    objectUrls.push(objectUrl);
+    addGltfResourceLookupKeys(lookup, modelDir, uri, resource.path, objectUrl);
+  };
+
+  await Promise.all([
+    ...(gltfJson.buffers ?? []).map((buffer) => register(buffer.uri, "application/octet-stream")),
+    ...(gltfJson.images ?? []).map((image) => register(image.uri)),
+  ]);
+
+  manager.setURLModifier((url) => {
+    const key = normalizeResourceLookupKey(url);
+    return lookup.get(key) ?? lookup.get(joinPortablePath("", key)) ?? url;
+  });
+
+  return {
+    manager,
+    dispose: () => {
+      for (const objectUrl of objectUrls) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    },
+  };
 }
 
 function firstMtlPath(value: string): string {
@@ -95,44 +172,29 @@ export async function loadThreeGLTF(
   readFile?: (path: string) => Promise<ArrayBuffer>,
   modelPath?: string,
 ): Promise<{ scene: Object3D; animations: AnimationClip[]; warnings: string[] }> {
-  const loader = new GLTFLoader();
   const warnings: string[] = [];
 
   if (ext === "gltf" && readFile && modelPath) {
-    // GLTF JSON may reference external .bin and textures.
-    // Use a custom loader manager that resolves from the vault.
+    // GLTF JSON may reference external .bin and textures. Keep the original JSON
+    // intact and resolve vault resources through temporary Blob URLs to avoid
+    // base64-expanding large buffers/textures during model load.
     const gltfText = new TextDecoder().decode(new Uint8Array(data));
     const gltfJson = JSON.parse(gltfText) as GltfJson;
     const modelDir = getPortableDirname(modelPath);
-
-    // Pre-load all external buffers and images as data URLs
-    if (gltfJson.buffers) {
-      for (const buf of gltfJson.buffers) {
-        if (buf.uri && !buf.uri.startsWith("data:")) {
-          const resource = await readRelativeResource(readFile, modelDir, buf.uri);
-          buf.uri = `data:application/octet-stream;base64,${arrayBufferToBase64(resource.data)}`;
-        }
-      }
+    const resolver = await createGltfBlobResourceResolver(readFile, modelDir, gltfJson);
+    const loader = new GLTFLoader(resolver.manager);
+    try {
+      const gltf = await loader.parseAsync(data, modelDir ? `${modelDir}/` : "");
+      const root = gltf.scene || gltf.scenes?.[0];
+      if (!root) throw new Error("GLTF did not contain a scene");
+      return { scene: root, animations: gltf.animations, warnings };
+    } finally {
+      resolver.dispose();
     }
-
-    if (gltfJson.images) {
-      for (const img of gltfJson.images) {
-        if (img.uri && !img.uri.startsWith("data:")) {
-          const resource = await readRelativeResource(readFile, modelDir, img.uri);
-          img.uri = `data:${guessMime(resource.path)};base64,${arrayBufferToBase64(resource.data)}`;
-        }
-      }
-    }
-
-    const resolvedText = JSON.stringify(gltfJson);
-    const resolvedBuffer = new TextEncoder().encode(resolvedText);
-    const gltf = await loader.parseAsync(resolvedBuffer.buffer, modelDir ? `${modelDir}/` : "");
-    const root = gltf.scene || gltf.scenes?.[0];
-    if (!root) throw new Error("GLTF did not contain a scene");
-    return { scene: root, animations: gltf.animations, warnings };
   }
 
   // .glb binary path
+  const loader = new GLTFLoader();
   const gltf = await loader.parseAsync(data, "");
   const root = gltf.scene || gltf.scenes?.[0];
   if (!root) throw new Error("GLB did not contain a scene");

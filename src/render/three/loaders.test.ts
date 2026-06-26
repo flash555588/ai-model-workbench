@@ -8,10 +8,24 @@ vi.mock("obsidian", () => ({
 
 let loadThreePLY: typeof import("./loaders").loadThreePLY;
 let loadThreeSTL: typeof import("./loaders").loadThreeSTL;
+let loadThreeGLTF: typeof import("./loaders").loadThreeGLTF;
 
 beforeAll(async () => {
   vi.stubGlobal("activeWindow", {});
+  vi.stubGlobal("ProgressEvent", class ProgressEvent extends Event {
+    readonly lengthComputable: boolean;
+    readonly loaded: number;
+    readonly total: number;
+
+    constructor(type: string, eventInitDict: ProgressEventInit = {}) {
+      super(type, eventInitDict);
+      this.lengthComputable = eventInitDict.lengthComputable ?? false;
+      this.loaded = eventInitDict.loaded ?? 0;
+      this.total = eventInitDict.total ?? 0;
+    }
+  });
   const loaders = await import("./loaders");
+  loadThreeGLTF = loaders.loadThreeGLTF;
   loadThreePLY = loaders.loadThreePLY;
   loadThreeSTL = loaders.loadThreeSTL;
 });
@@ -45,7 +59,67 @@ function createColoredBinaryStl(): ArrayBuffer {
   return buffer;
 }
 
+function createExternalBufferGltf(): { gltf: ArrayBuffer; bin: ArrayBuffer } {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const gltf = {
+    asset: { version: "2.0" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, name: "external-buffer-triangle" }],
+    meshes: [{
+      primitives: [{
+        attributes: { POSITION: 0 },
+        mode: 4,
+      }],
+    }],
+    buffers: [{ uri: "Geometry%20Data.BIN", byteLength: positions.byteLength }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.byteLength, target: 34962 }],
+    accessors: [{
+      bufferView: 0,
+      componentType: 5126,
+      count: 3,
+      type: "VEC3",
+      min: [0, 0, 0],
+      max: [1, 1, 0],
+    }],
+  };
+  return {
+    gltf: encodeAscii(JSON.stringify(gltf)),
+    bin: positions.buffer.slice(positions.byteOffset, positions.byteOffset + positions.byteLength) as ArrayBuffer,
+  };
+}
+
 describe("Three loaders", () => {
+  it("loads GLTF external buffers through Blob URLs without rewriting the JSON", async () => {
+    const fixture = createExternalBufferGltf();
+    const createObjectURL = URL.createObjectURL.bind(URL);
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+    const createSpy = vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => createObjectURL(blob));
+    const revokeSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => revokeObjectURL(url));
+    const readFile = vi.fn(async (path: string) => {
+      if (path === "fixtures/Geometry Data.BIN") {
+        return fixture.bin;
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    try {
+      const result = await loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf");
+
+      expect(readFile).toHaveBeenCalledWith("fixtures/Geometry Data.BIN");
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(result.scene.getObjectByName("external-buffer-triangle")).toBeTruthy();
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
   it("enables vertex colors for colored STL", async () => {
     const object = await loadThreeSTL(createColoredBinaryStl());
 
