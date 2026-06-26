@@ -51,6 +51,34 @@ function normalizeRecords(records: readonly ConvertedAssetRecord[], now = Date.n
     .slice(0, MAX_CONVERTED_ASSET_RECORDS);
 }
 
+function reuseNormalizedRecords(
+  records: readonly ConvertedAssetRecord[],
+  now: number,
+): readonly ConvertedAssetRecord[] | null {
+  if (records.length > MAX_CONVERTED_ASSET_RECORDS) {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  let previousCreatedAt = Number.POSITIVE_INFINITY;
+  for (const record of records) {
+    if (!isRecordUsable(record, now)) {
+      return null;
+    }
+    const key = makeKey(record.sourcePath, record.sourceExt, record.targetExt);
+    if (seen.has(key)) {
+      return null;
+    }
+    if (record.createdAt > previousCreatedAt) {
+      return null;
+    }
+    seen.add(key);
+    previousCreatedAt = record.createdAt;
+  }
+
+  return records;
+}
+
 function sameRecord(a: ConvertedAssetRecord | undefined, b: ConvertedAssetRecord | undefined): boolean {
   return !!a && !!b &&
     a.cacheVersion === b.cacheVersion &&
@@ -80,7 +108,8 @@ export function createConvertedAssetCache(
     }
   }
 
-  const normalizedInitialRecords = normalizeRecords(initialRecords);
+  const now = Date.now();
+  const normalizedInitialRecords = reuseNormalizedRecords(initialRecords, now) ?? normalizeRecords(initialRecords, now);
   const map = new Map<string, ConvertedAssetRecord>(
     normalizedInitialRecords.map((record) => [makeKey(record.sourcePath, record.sourceExt, record.targetExt), record]),
   );
@@ -96,7 +125,7 @@ export function createConvertedAssetCache(
     normalizedInitialRecords.some((record, index) => !sameRecord(record, initialRecords[index]));
 
   if (initialChanged) {
-    onChange?.(normalizedInitialRecords);
+    onChange?.([...normalizedInitialRecords]);
   }
 
   return {

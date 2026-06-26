@@ -53,6 +53,27 @@ describe("createConvertedAssetCache", () => {
     expect(changes).toEqual([[newer]]);
   });
 
+  it("reuses already normalized initial records without emitting cleanup", () => {
+    const newest = createRecord({
+      sourcePath: "models/newest.step",
+      outputPath: "models/newest.glb",
+      createdAt: NOW,
+    });
+    const older = createRecord({
+      sourcePath: "models/older.step",
+      outputPath: "models/older.glb",
+      createdAt: NOW - 1_000,
+    });
+    const changes: ConvertedAssetRecord[][] = [];
+
+    const cache = createConvertedAssetCache([newest, older], records => changes.push(records));
+
+    expect(cache.entries()).toEqual([newest, older]);
+    expect(cache.get("models/newest.step", "step", "glb")).toEqual(newest);
+    expect(cache.get("models/older.step", "step", "glb")).toEqual(older);
+    expect(changes).toHaveLength(0);
+  });
+
   it("emits sorted snapshots when setting and replacing records", () => {
     const changes: ConvertedAssetRecord[][] = [];
     const cache = createConvertedAssetCache([], records => changes.push(records));

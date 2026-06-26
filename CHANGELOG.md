@@ -41,6 +41,7 @@
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.
 - Performance: overlap direct-view model file reads with preview backend creation so large files spend less time in the loading phase before parsing starts.
 - Performance: reuse source file stats across conversion-cache checks, reducing repeated filesystem metadata reads on slow or synced storage.
+- Performance: reuse already-normalized converted-asset cache records during plugin startup, avoiding unnecessary cache cleanup work on healthy state.
 - Performance: cache Three.js and Babylon renderable geometry stats so large-model performance/quality snapshots do not repeatedly traverse the full scene.
 - Performance: skip automatic direct-view evidence registration for heavy/extreme models and delay medium-model registration to reduce post-load UI stalls.
 - Performance: avoid rescanning heading-pin metadata on unrelated store updates, reducing workspace startup and state-change work in large vaults.
