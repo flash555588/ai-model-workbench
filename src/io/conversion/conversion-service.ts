@@ -97,10 +97,14 @@ async function isCachedOutputAvailable(outputPath: string): Promise<boolean> {
   }
 }
 
-async function isConvertedOutputReusable(sourcePath: string, outputPath: string): Promise<boolean> {
+async function isConvertedOutputReusable(
+  sourcePath: string,
+  outputPath: string,
+  sourceStatsPromise?: Promise<{ mtimeMs: number }>,
+): Promise<boolean> {
   if (!outputPath) return false;
   try {
-    const [sourceStats, outputStats] = await Promise.all([stat(sourcePath), stat(outputPath)]);
+    const [sourceStats, outputStats] = await Promise.all([sourceStatsPromise ?? stat(sourcePath), stat(outputPath)]);
     return outputStats.size > 0 && outputStats.mtimeMs >= sourceStats.mtimeMs;
   } catch {
     return false;
@@ -126,6 +130,12 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
     converterId,
   });
 
+  let sourceStatsPromise: ReturnType<typeof stat> | null = null;
+  const getSourceStats = () => {
+    sourceStatsPromise ??= stat(input.sourcePath);
+    return sourceStatsPromise;
+  };
+
   const cached = input.convertedAssetCache?.get(input.sourcePath, input.sourceExt, targetExt);
   if (cached) {
     if (!(await isCachedOutputAvailable(cached.outputPath))) {
@@ -146,7 +156,7 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
         currentConverterId: converterId,
       });
       input.convertedAssetCache?.delete(input.sourcePath, input.sourceExt, targetExt);
-    } else if (!(await isConvertedOutputReusable(input.sourcePath, cached.outputPath))) {
+    } else if (!(await isConvertedOutputReusable(input.sourcePath, cached.outputPath, getSourceStats()))) {
       log.warn("conversion cache output older than source", {
         sourcePath: input.sourcePath,
         sourceExt: input.sourceExt,
@@ -170,7 +180,7 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
   }
 
   const expectedOutputPath = getConvertedOutputPath(input.sourcePath, targetExt, input.outputRoot);
-  if (await isConvertedOutputReusable(input.sourcePath, expectedOutputPath)) {
+  if (await isConvertedOutputReusable(input.sourcePath, expectedOutputPath, getSourceStats())) {
     log.info("conversion output already exists", {
       sourcePath: input.sourcePath,
       outputPath: expectedOutputPath,
@@ -195,7 +205,10 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
   }
 
   const legacyOutputPath = getLegacyConvertedOutputPath(input.sourcePath, targetExt);
-  if (legacyOutputPath !== expectedOutputPath && await isConvertedOutputReusable(input.sourcePath, legacyOutputPath)) {
+  if (
+    legacyOutputPath !== expectedOutputPath &&
+    await isConvertedOutputReusable(input.sourcePath, legacyOutputPath, getSourceStats())
+  ) {
     log.info("legacy conversion output already exists", {
       sourcePath: input.sourcePath,
       outputPath: legacyOutputPath,

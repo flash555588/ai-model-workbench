@@ -376,8 +376,9 @@ export class DirectModelView extends FileView {
       const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
-      const data = await readBinaryPath(this.app, source.path);
-      const created = await this.createPreviewWithFallback(canvas, data, source, basePreviewOptions, file.path, settings);
+      const dataPromise = readBinaryPath(this.app, source.path);
+      void dataPromise.catch(() => undefined);
+      const created = await this.createPreviewWithFallback(canvas, dataPromise, source, basePreviewOptions, file.path, settings);
       if (gen !== this.loadGeneration) {
         created.preview.destroy();
         new Notice(t("directWorkbench.modelLoadInterrupted"));
@@ -788,7 +789,7 @@ export class DirectModelView extends FileView {
 
   private async createPreviewWithFallback(
     canvas: HTMLCanvasElement,
-    data: ArrayBuffer,
+    dataPromise: Promise<ArrayBuffer>,
     source: ReturnType<typeof toPreviewSource>,
     options: DirectViewPreviewOptions,
     modelPath: string,
@@ -805,6 +806,14 @@ export class DirectModelView extends FileView {
       options,
     );
     this.applyConfiguredRenderQuality(created.preview, settings);
+
+    let data: ArrayBuffer;
+    try {
+      data = await dataPromise;
+    } catch (error) {
+      created.preview.destroy();
+      throw error;
+    }
 
     try {
       const summary = await created.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);

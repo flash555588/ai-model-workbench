@@ -180,4 +180,43 @@ describe("convertForPreview", () => {
       converterCacheKey: "freecad:v2",
     }));
   });
+
+  it("reuses source file stats while checking expected and legacy outputs", async () => {
+    const sourcePath = "/vault/models/bracket.step";
+    const outputRoot = "/vault/.obsidian/ai-model-workbench/converted-assets";
+    const legacyOutputPath = "/vault/models/bracket.ai3d-converted.glb";
+    const manager = createManager();
+    const cache = {
+      get: vi.fn(() => undefined),
+      set: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as ConvertedAssetCache;
+    fsMocks.stat.mockImplementation(async (path: string) => {
+      if (path === sourcePath) {
+        return { size: 2048, mtimeMs: 100 };
+      }
+      if (path === legacyOutputPath) {
+        return { size: 1024, mtimeMs: 200 };
+      }
+      throw new Error("missing");
+    });
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: manager,
+      convertedAssetCache: cache,
+      outputRoot,
+    });
+
+    expect(result).toEqual({
+      effectivePath: legacyOutputPath,
+      effectiveExt: "glb",
+      warnings: ["Using existing conversion output."],
+    });
+    expect(fsMocks.stat.mock.calls.filter(([path]) => path === sourcePath)).toHaveLength(1);
+    expect(manager.getConverterCacheIdentity).not.toHaveBeenCalled();
+    expect(manager.convert).not.toHaveBeenCalled();
+  });
 });
