@@ -97,6 +97,7 @@ import {
   type MeasurementRecord,
 } from "../preview/measurement";
 import { createThreeDisassemblyController } from "./disassembly";
+import { ThreeFocusDimMaterialCache } from "./focus-materials";
 import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 import {
@@ -123,7 +124,6 @@ import {
 } from "./mesh-preview";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
-const FOCUS_DIM_OPACITY = 0.242;
 const DEFAULT_SHADOW_OPACITY = 0.28;
 const MAX_RENDER_PIXEL_RATIO = 2.5;
 const DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP = 1.5;
@@ -153,15 +153,6 @@ interface ThreeDisposalAudit {
   timestamp: number;
 }
 
-function isObjectOrDescendant(candidate: Object3D, target: Object3D): boolean {
-  let current: Object3D | null = candidate;
-  while (current) {
-    if (current === target) return true;
-    current = current.parent;
-  }
-  return false;
-}
-
 function createEmptyTextureAudit(): ThreeTextureAudit {
   return {
     textureCount: 0,
@@ -180,27 +171,6 @@ type ShadowCastingLight = DirectionalLight | PointLight | SpotLight;
 
 function isShadowCastingLight(light: Light): light is ShadowCastingLight {
   return light instanceof DirectionalLight || light instanceof PointLight || light instanceof SpotLight;
-}
-
-function createFocusDimMaterial(material: Material): Material {
-  const clone = material.clone();
-  clone.transparent = true;
-  clone.opacity = Math.max(0, Math.min(1, material.opacity)) * FOCUS_DIM_OPACITY;
-  clone.depthWrite = false;
-  clone.needsUpdate = true;
-  return clone;
-}
-
-function cloneFocusDimMaterialValue(material: Material | Material[]): Material | Material[] {
-  return Array.isArray(material)
-    ? material.map(createFocusDimMaterial)
-    : createFocusDimMaterial(material);
-}
-
-function disposeMaterialValue(material: Material | Material[] | undefined): void {
-  for (const entry of materialList(material)) {
-    entry.dispose();
-  }
 }
 
 // TODO(P2): decompose this class into loader/camera/light/annotation modules.
@@ -286,7 +256,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private previewLine: Line | null = null;
   private previewLineUpdateHandle = 0;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
-  private readonly focusDimMaterials = new Map<number, Material | Material[]>();
+  private readonly focusDimMaterialCache = new ThreeFocusDimMaterialCache();
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private disassembly: PreviewDisassemblyController | null = null;
@@ -2097,7 +2067,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (this.focusedObject === object) return;
 
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
-    const selectedMeshes = renderableMeshes.filter((candidate) => isObjectOrDescendant(candidate, object));
+    const selectedMeshes = isMesh(object)
+      ? [object]
+      : this.getChildRenderableMeshMap(this.rootObject).get(object) ?? [];
     if (selectedMeshes.length === 0 && !isThreeRenderableObject(object)) {
       this.clearFocusedMesh();
       return;
@@ -2117,9 +2089,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
 
       const originalMaterial = this.originalMaterials.get(candidate.id) ?? candidate.material;
-      const dimMaterial = cloneFocusDimMaterialValue(originalMaterial);
-      this.focusDimMaterials.set(candidate.id, dimMaterial);
-      candidate.material = dimMaterial;
+      candidate.material = this.focusDimMaterialCache.get(originalMaterial);
     }
 
     this.focusHelper?.removeFromParent();
@@ -2150,10 +2120,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private disposeFocusDimMaterials(): void {
-    for (const material of this.focusDimMaterials.values()) {
-      disposeMaterialValue(material);
-    }
-    this.focusDimMaterials.clear();
+    this.focusDimMaterialCache.clear();
   }
 
   private clearSelectionHighlight(): void {
