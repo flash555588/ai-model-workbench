@@ -14,6 +14,7 @@ import {
 import { MissingConverterError } from "./errors";
 
 const log = createLogger("conversion-service");
+export type ConversionManagerProvider = ConversionManager | (() => ConversionManager | Promise<ConversionManager>);
 
 function getLegacyConvertedOutputPath(sourcePath: string, targetExt: string): string {
   const lastDot = sourcePath.lastIndexOf(".");
@@ -57,7 +58,7 @@ export interface ConversionRouteInput {
   sourcePath: string;
   sourceExt: string;
   capability: FormatCapability;
-  conversionManager: ConversionManager;
+  conversionManager?: ConversionManagerProvider;
   convertedAssetCache?: ConvertedAssetCache;
   outputRoot?: string;
 }
@@ -109,6 +110,10 @@ async function isConvertedOutputReusable(
   } catch {
     return false;
   }
+}
+
+async function resolveConversionManager(provider: ConversionManagerProvider | undefined): Promise<ConversionManager | undefined> {
+  return typeof provider === "function" ? await provider() : provider;
 }
 
 export async function convertForPreview(input: ConversionRouteInput): Promise<ConversionRouteResult> {
@@ -232,16 +237,21 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
     };
   }
 
-  if (!input.conversionManager.canConvert(input.sourceExt)) {
+  const conversionManager = await resolveConversionManager(input.conversionManager);
+  if (!conversionManager) {
+    throw new Error(`Format .${input.sourceExt} requires conversion support, but no conversion manager is available.`);
+  }
+
+  if (!conversionManager.canConvert(input.sourceExt)) {
     throw new MissingConverterError(converterId, input.sourceExt);
   }
 
-  const currentCacheIdentity = await input.conversionManager.getConverterCacheIdentity(input.sourceExt);
+  const currentCacheIdentity = await conversionManager.getConverterCacheIdentity(input.sourceExt);
   if (input.outputRoot) {
     await mkdir(input.outputRoot, { recursive: true });
   }
 
-  const result = await input.conversionManager.convert({
+  const result = await conversionManager.convert({
     sourcePath: input.sourcePath,
     sourceExt: input.sourceExt,
     targetExt,

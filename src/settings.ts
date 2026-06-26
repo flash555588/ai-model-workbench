@@ -1,11 +1,10 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type AI3DModelWorkbench from "./main";
 import { DEFAULT_SETTINGS } from "./domain/constants";
-import {
-  describeConverterCommandSource,
-  inspectAllConverterCommands,
-  type ConverterDependencyCheck,
-  type ConverterCommandStatus,
+import type {
+  ConverterCommandSource,
+  ConverterDependencyCheck,
+  ConverterCommandStatus,
 } from "./io/conversion/command-discovery";
 import { t, setLocale, type Locale } from "./i18n";
 import { isMobile } from "./utils/device";
@@ -615,6 +614,7 @@ export class AI3DSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.createEl("p", { text: t("settings.diagnostics.checkingAvailability") });
 
+    const { describeConverterCommandSource, inspectAllConverterCommands } = await import("./io/conversion/command-discovery");
     const statuses = await inspectAllConverterCommands(this.plugin.getSettings());
     if (runId !== this.diagnosticsRunId) {
       return;
@@ -622,11 +622,15 @@ export class AI3DSettingTab extends PluginSettingTab {
 
     containerEl.empty();
     for (const status of statuses) {
-      this.renderCommandStatus(containerEl, status);
+      this.renderCommandStatus(containerEl, status, describeConverterCommandSource);
     }
   }
 
-  private renderCommandStatus(containerEl: HTMLElement, status: ConverterCommandStatus): void {
+  private renderCommandStatus(
+    containerEl: HTMLElement,
+    status: ConverterCommandStatus,
+    describeCommandSource: (source: ConverterCommandSource) => string,
+  ): void {
     const block = containerEl.createDiv({ cls: "ai3d-settings-status-block" });
 
     block.createEl("strong", {
@@ -634,7 +638,7 @@ export class AI3DSettingTab extends PluginSettingTab {
     });
 
     const lines = [
-      `${t("settings.diagnostics.sourceLabel")}: ${describeConverterCommandSource(status.source)}`,
+      `${t("settings.diagnostics.sourceLabel")}: ${describeCommandSource(status.source)}`,
       `${t("settings.diagnostics.commandLabel")}: ${status.command}`,
       status.resolvedPath && status.resolvedPath !== status.command ? `${t("settings.diagnostics.resolvedPathLabel")}: ${status.resolvedPath}` : "",
       status.detail,

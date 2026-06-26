@@ -4,7 +4,6 @@ import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
 import { createHelperButtons } from "./inline/helper-buttons";
-import { createConversionManager } from "../io/conversion/factory";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import type { PluginStore } from "../store/plugin-store";
 import { prepareModelInput } from "../io/model-pipeline";
@@ -353,7 +352,6 @@ export class DirectModelView extends FileView {
     const loading = createLoadingOverlay(host);
     try {
       const settings = this.getSettings();
-      const conversionManager = createConversionManager(settings);
       const absolutePath = resolveVaultAbsolutePath(this.app, file.path) ?? undefined;
       const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
       loading.setPhaseKey("loading.preparingModel");
@@ -361,7 +359,10 @@ export class DirectModelView extends FileView {
         path: file.path,
         absolutePath,
         preferConversionExts: listPreferredConversionExts(settings),
-        conversionManager,
+        conversionManager: async () => {
+          const { createConversionManager } = await import("../io/conversion/factory");
+          return createConversionManager(settings);
+        },
         convertedAssetCache: this.convertedAssetCache,
         conversionOutputRoot,
       });

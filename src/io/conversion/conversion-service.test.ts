@@ -100,6 +100,29 @@ describe("convertForPreview", () => {
     }));
   });
 
+  it("reuses an existing converted output without creating a lazy conversion manager", async () => {
+    const sourcePath = "/vault/models/case.step";
+    const outputPath = "/vault/models/case.ai3d-converted.glb";
+    const createManager = vi.fn(() => {
+      throw new Error("conversion manager should not be created for reusable outputs");
+    });
+    mockReusableConvertedOutput(sourcePath, outputPath);
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: createManager,
+    });
+
+    expect(result).toEqual({
+      effectivePath: outputPath,
+      effectiveExt: "glb",
+      warnings: ["Using existing conversion output."],
+    });
+    expect(createManager).not.toHaveBeenCalled();
+  });
+
   it("reuses a cached conversion record without probing converter identity", async () => {
     const sourcePath = "/vault/models/plate.step";
     const outputPath = "/vault/models/plate.ai3d-converted.glb";
@@ -179,6 +202,33 @@ describe("convertForPreview", () => {
       outputPath: result.effectivePath,
       converterCacheKey: "freecad:v2",
     }));
+  });
+
+  it("creates a lazy conversion manager only when conversion is required", async () => {
+    const sourcePath = "/vault/models/missing-output.step";
+    const manager = {
+      canConvert: vi.fn(() => true),
+      getConverterCacheIdentity: vi.fn(async () => ({ converterId: "freecad", cacheKey: "freecad:v3" })),
+      convert: vi.fn(async (req: { outputPath?: string }) => ({
+        outputPath: req.outputPath ?? "/unexpected.glb",
+        outputExt: "glb",
+        fromCache: false,
+        warnings: [],
+      })),
+    } as unknown as ConversionManager;
+    const createManager = vi.fn(() => manager);
+    fsMocks.stat.mockRejectedValue(new Error("missing"));
+
+    await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: createManager,
+    });
+
+    expect(createManager).toHaveBeenCalledTimes(1);
+    expect(manager.canConvert).toHaveBeenCalledWith("step");
+    expect(manager.convert).toHaveBeenCalled();
   });
 
   it("reuses source file stats while checking expected and legacy outputs", async () => {

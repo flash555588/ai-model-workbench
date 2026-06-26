@@ -10,7 +10,6 @@ import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../.
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
 import type { ThreeDBlockConfig, ModelConfig, GridBlockConfig, ComposeSection } from "../../domain/models";
-import { createConversionManager } from "../../io/conversion/factory";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { prepareModelInput } from "../../io/model-pipeline";
 import { toPreviewSource } from "../../io/preview/preview-source";
@@ -31,6 +30,11 @@ import {
 
 const log = createLogger("inline-code-block");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
+
+async function createInlineConversionManager(settings: PluginSettings) {
+  const { createConversionManager } = await import("../../io/conversion/factory");
+  return createConversionManager(settings);
+}
 
 interface PreparedInlineModel {
   sourcePath: string;
@@ -65,12 +69,11 @@ async function prepareInlineModel(
 
   const absolutePath = resolveVaultAbsolutePath(app, sourcePath) ?? undefined;
   const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
-  const conversionManager = createConversionManager(settings);
   const prepared = await prepareModelInput({
     path: sourcePath,
     absolutePath,
     preferConversionExts: listPreferredConversionExts(settings),
-    conversionManager,
+    conversionManager: () => createInlineConversionManager(settings),
     convertedAssetCache,
     conversionOutputRoot,
   });
@@ -266,13 +269,12 @@ export function registerCodeBlockProcessor(
         try {
           const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
           const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
-          const conversionManager = createConversionManager(settings);
           loading.setPhaseKey("loading.preparingModel");
           const prepared = await prepareModelInput({
             path: modelPath,
             absolutePath,
             preferConversionExts: listPreferredConversionExts(settings),
-            conversionManager,
+            conversionManager: () => createInlineConversionManager(settings),
             convertedAssetCache,
             conversionOutputRoot,
           });

@@ -6,7 +6,6 @@ import { createPluginStore, type PluginStore } from "./store/plugin-store";
 import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
 import { AI3DSettingTab } from "./settings";
-import { inspectAllConverterCommands } from "./io/conversion/command-discovery";
 import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
 
@@ -133,9 +132,8 @@ export default class AI3DModelWorkbench extends Plugin {
 
   onunload(): void {
     this.unloaded = true;
-    // Flush any pending state before the plugin is torn down so annotations,
-    // registered parts, and last-generation metadata are not lost.
-    this.ps.save().catch(err => console.error("[AI3D] unload save failed:", err));
+    // Flush pending dirty state without forcing an unchanged data.json rewrite.
+    this.ps.dispose();
     // Views are cleaned up by Obsidian calling onClose()
   }
 
@@ -226,6 +224,7 @@ export default class AI3DModelWorkbench extends Plugin {
       return;
     }
 
+    const { inspectAllConverterCommands } = await import("./io/conversion/command-discovery");
     const statuses = await inspectAllConverterCommands(this.getSettings());
     const available = statuses.filter((status) => status.available).map((status) => status.label);
     const missing = statuses.filter((status) => !status.available).map((status) => status.label);

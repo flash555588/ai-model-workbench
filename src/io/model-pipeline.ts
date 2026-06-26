@@ -1,9 +1,8 @@
 import { getFormatCapability, isDisabledSplatExtension, normalizeModelExt } from "./formats/registry";
 import type { LoadStrategy } from "./formats/types";
-import type { ConversionManager } from "./conversion/manager";
 import type { ConvertedAssetCache } from "./cache/converted-asset-cache";
 import { prepareDirectLoad } from "./direct/direct-load-service";
-import { convertForPreview } from "./conversion/conversion-service";
+import { convertForPreview, type ConversionManagerProvider } from "./conversion/conversion-service";
 import { MobileConversionUnavailableError } from "./conversion/errors";
 import { createLogger } from "../utils/log";
 import { isMobile } from "../utils/device";
@@ -14,7 +13,7 @@ export interface PrepareModelInput {
   path: string;
   absolutePath?: string;
   preferConversionExts?: readonly string[];
-  conversionManager?: ConversionManager;
+  conversionManager?: ConversionManagerProvider;
   convertedAssetCache?: ConvertedAssetCache;
   conversionOutputRoot?: string;
 }
@@ -60,11 +59,6 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
       throw new Error(
         `Format .${sourceExt} requires a local filesystem path for conversion, but none was resolved for '${input.path}'.`,
       );
-    }
-
-    if (!input.conversionManager) {
-      log.error("conversion manager missing", { sourceExt, path: input.path });
-      throw new Error(`Format .${sourceExt} requires conversion support, but no conversion manager is available.`);
     }
 
     const conversionCapability = cap.strategy === "convert"

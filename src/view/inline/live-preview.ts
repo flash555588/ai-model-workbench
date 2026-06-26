@@ -13,7 +13,6 @@ import { createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsAnnotationPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
-import { createConversionManager } from "../../io/conversion/factory";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { prepareModelInput } from "../../io/model-pipeline";
 import { listPreferredConversionExts } from "../../io/formats/route-preferences";
@@ -39,10 +38,12 @@ class ModelEmbedWidget extends WidgetType {
   private preview: ModelPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
   private readyObs: ResizeObserver | null = null;
+  private viewportObs: IntersectionObserver | null = null;
   private pollId = 0;
   private initStarted = false;
   private destroyed = false;
   private initGeneration = 0;
+  private viewportReady = false;
 
   constructor(
     private app: App,
@@ -138,9 +139,12 @@ class ModelEmbedWidget extends WidgetType {
 
     const tryInit = () => {
       if (this.destroyed || this.initStarted) return;
+      if (!this.viewportReady) return;
       if (!host.isConnected || canvas.clientWidth <= 0 || canvas.clientHeight <= 0) return;
       this.initStarted = true;
+      this.stopReadyPoll();
       this.stopReadyWatch();
+      this.stopViewportWatch();
       void this.initPreview(host, canvas, loading, error, ++this.initGeneration);
     };
 
@@ -148,17 +152,43 @@ class ModelEmbedWidget extends WidgetType {
     this.readyObs.observe(host);
     this.readyObs.observe(canvas);
 
-    let attempts = 0;
-    const poll = () => {
-      if (this.destroyed || this.initStarted) return;
-      tryInit();
-      if (this.initStarted) return;
-      if (++attempts > 240) return; // ~4s at 60fps, then rely on resize observer only
+    const startReadyPoll = () => {
+      if (this.pollId || this.destroyed || this.initStarted) return;
+      let attempts = 0;
+      const poll = () => {
+        this.pollId = 0;
+        if (this.destroyed || this.initStarted) return;
+        tryInit();
+        if (this.initStarted) return;
+        if (++attempts > 240) return; // ~4s at 60fps, then rely on resize observer only
+        this.pollId = window.requestAnimationFrame(poll);
+      };
       this.pollId = window.requestAnimationFrame(poll);
     };
-    this.pollId = window.requestAnimationFrame(poll);
+
+    if (typeof IntersectionObserver === "undefined") {
+      this.viewportReady = true;
+      startReadyPoll();
+      tryInit();
+    } else {
+      this.viewportObs = new IntersectionObserver((entries) => {
+        if (this.destroyed || this.initStarted) return;
+        if (!entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) return;
+        this.viewportReady = true;
+        this.stopViewportWatch();
+        startReadyPoll();
+        tryInit();
+      }, { rootMargin: "200px" });
+      this.viewportObs.observe(host);
+    }
 
     return host;
+  }
+
+  private stopReadyPoll(): void {
+    if (!this.pollId) return;
+    window.cancelAnimationFrame(this.pollId);
+    this.pollId = 0;
   }
 
   private async initPreview(
@@ -170,13 +200,6 @@ class ModelEmbedWidget extends WidgetType {
   ): Promise<void> {
     try {
       const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
-      const conversionManager = createConversionManager({
-        enabledConverterIds: this.enabledConverterIds,
-        freecadCommand: this.freecadCommand,
-        obj2gltfCommand: this.obj2gltfCommand,
-        fbx2gltfCommand: this.fbx2gltfCommand,
-        freecadcmdCommand: this.freecadcmdCommand,
-      });
       loading.setPhaseKey("loading.preparingModel");
       const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
       const prepared = await prepareModelInput({
@@ -186,7 +209,16 @@ class ModelEmbedWidget extends WidgetType {
           preferObj2gltfForObj: this.preferObj2gltfForObj,
           preferFbx2gltfForFbx: this.preferFbx2gltfForFbx,
         }),
-        conversionManager,
+        conversionManager: async () => {
+          const { createConversionManager } = await import("../../io/conversion/factory");
+          return createConversionManager({
+            enabledConverterIds: this.enabledConverterIds,
+            freecadCommand: this.freecadCommand,
+            obj2gltfCommand: this.obj2gltfCommand,
+            fbx2gltfCommand: this.fbx2gltfCommand,
+            freecadcmdCommand: this.freecadcmdCommand,
+          });
+        },
         convertedAssetCache: this.convertedAssetCache,
         conversionOutputRoot,
       });
@@ -281,9 +313,9 @@ class ModelEmbedWidget extends WidgetType {
 
   override destroy(): void {
     this.destroyed = true;
-    window.cancelAnimationFrame(this.pollId);
-    this.pollId = 0;
+    this.stopReadyPoll();
     this.stopReadyWatch();
+    this.stopViewportWatch();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     if (this.preview) {
@@ -291,11 +323,17 @@ class ModelEmbedWidget extends WidgetType {
       this.preview = null;
     }
     this.initStarted = false;
+    this.viewportReady = false;
   }
 
   private stopReadyWatch(): void {
     this.readyObs?.disconnect();
     this.readyObs = null;
+  }
+
+  private stopViewportWatch(): void {
+    this.viewportObs?.disconnect();
+    this.viewportObs = null;
   }
 
   override ignoreEvent(): boolean {
