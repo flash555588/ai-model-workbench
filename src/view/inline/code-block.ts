@@ -337,6 +337,7 @@ export function registerCodeBlockProcessor(
               previewOptions,
             );
             preview = nextPreview;
+            preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
             toolbar.syncCapabilities();
             loading.setPhaseKey("loading.loadingModel");
             const data = await readBinaryPath(app, source.path);
@@ -352,7 +353,6 @@ export function registerCodeBlockProcessor(
               config.scene = { ...config.scene, autoRotate: true, autoRotateSpeed: settings.autoRotateSpeed };
             }
             preview.applyConfig(config);
-            preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
             toolbar.syncCapabilities();
 
             if (ext === "stl" && modelCfg.color) {

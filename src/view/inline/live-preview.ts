@@ -61,6 +61,8 @@ export class ModelEmbedWidget extends WidgetType {
     private annotationDisplayMode: PluginSettings["annotationDisplayMode"],
     private previewRendererRollout: PluginSettings["previewRendererRollout"],
     private useThreeRenderer: boolean,
+    private renderQuality: PluginSettings["renderQuality"],
+    private renderScale: PluginSettings["renderScale"],
     private convertedAssetCache: ConvertedAssetCache,
     private getAnnotations?: (modelPath: string) => AnnotationPin[],
   ) {
@@ -83,6 +85,9 @@ export class ModelEmbedWidget extends WidgetType {
       this.annotationPreviewMode === other.annotationPreviewMode &&
       this.annotationDisplayMode === other.annotationDisplayMode &&
       this.previewRendererRollout === other.previewRendererRollout &&
+      this.useThreeRenderer === other.useThreeRenderer &&
+      this.renderQuality === other.renderQuality &&
+      this.renderScale === other.renderScale &&
       this.convertedAssetCache === other.convertedAssetCache
     );
   }
@@ -262,6 +267,7 @@ export class ModelEmbedWidget extends WidgetType {
           return;
         }
         this.preview = preview;
+        this.preview.setRenderQuality?.(this.renderQuality, this.renderScale);
         loading.setPhaseKey("loading.loadingModel");
         const data = await readBinaryPath(this.app, prepared.effectivePath);
         if (this.destroyed || generation !== this.initGeneration) {
@@ -388,6 +394,8 @@ function findEmbeds(
   annotationDisplayMode: PluginSettings["annotationDisplayMode"],
   previewRendererRollout: PluginSettings["previewRendererRollout"],
   useThreeRenderer: boolean,
+  renderQuality: PluginSettings["renderQuality"],
+  renderScale: PluginSettings["renderScale"],
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
@@ -466,6 +474,8 @@ function findEmbeds(
             annotationDisplayMode,
             previewRendererRollout,
             useThreeRenderer,
+            renderQuality,
+            renderScale,
             convertedAssetCache,
             getAnnotations,
           ),
@@ -516,6 +526,8 @@ export function registerLivePreviewExtension(
         s.annotationDisplayMode,
         s.previewRendererRollout,
         s.useThreeRenderer,
+        s.renderQuality,
+        s.renderScale,
         convertedAssetCache,
         getAnnotations,
       );
@@ -542,6 +554,8 @@ export function registerLivePreviewExtension(
           s.annotationDisplayMode,
           s.previewRendererRollout,
           s.useThreeRenderer,
+          s.renderQuality,
+          s.renderScale,
           convertedAssetCache,
           getAnnotations,
         );
