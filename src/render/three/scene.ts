@@ -1530,8 +1530,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private prepareModelForQuality(renderables: ThreeRenderableObject[]): void {
     const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const preparedMaterials = new Set<string>();
     for (const object of renderables) {
       for (const material of materialList(object.material)) {
+        if (preparedMaterials.has(material.uuid)) {
+          continue;
+        }
+        preparedMaterials.add(material.uuid);
         this.prepareMaterialForQuality(material, anisotropy);
       }
     }
