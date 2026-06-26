@@ -2,7 +2,7 @@ import type { App } from "obsidian";
 import { TFile } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../../domain/constants";
-import type { KnowledgeGenerationRecord, ModelAssetProfile, PluginState } from "../../domain/models";
+import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, ModelEvidence, PluginState } from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createDefaultProfile } from "../../store/plugin-store";
 import { generateKnowledgeNote } from "./knowledge-note";
@@ -238,5 +238,58 @@ describe("generateKnowledgeNote generation marker", () => {
     expect(noticeMessages[0]).toContain("Previous knowledge generation for models/old.glb did not complete");
     expect(files.get("Analysis/3D Reports/gear Analysis.json")).toContain("Previous knowledge generation for models/old.glb did not complete");
     expect(generationRecords[1].warningCount).toBe(1);
+  });
+
+  it("keeps detail clusters as evidence without drafting standalone part notes by default", async () => {
+    const evidence: ModelEvidence = {
+      summary: {
+        meshCount: 2,
+        triangleCount: 600,
+        vertexCount: 900,
+        materialCount: 1,
+        boundingSize: { x: 10, y: 10, z: 10 },
+        rootName: "board",
+      },
+      parts: [{
+        name: "Small detail cluster",
+        triangleCount: 600,
+        vertexCount: 900,
+        materialName: "Plastic",
+        boundingSize: { x: 0.2, y: 0.2, z: 0.2 },
+        center: { x: 1, y: 1, z: 1 },
+        source: "detail-cluster",
+        meshNames: ["mesh-1", "mesh-2"],
+        childCount: 2,
+      }],
+      materialNames: ["Plastic"],
+      resourceWarnings: [],
+      capturedAt: "2026-06-22T00:00:00.000Z",
+    };
+    const { app, files } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState({
+      currentModelPath: "models/board.glb",
+      modelPreview: evidence.summary,
+    }));
+
+    await generateKnowledgeNote(app, ps, {
+      preview: {
+        captureSnapshot: () => null,
+        getModelEvidence: () => evidence,
+      },
+    });
+
+    const analysis = JSON.parse(files.get("Analysis/3D Reports/board Analysis.json") ?? "{}") as AnalysisResult;
+    expect(analysis.parts[0]).toMatchObject({
+      name: "Small detail cluster",
+      source: "detail-cluster",
+      category: "detail-cluster",
+      confidence: 0.48,
+      meshRefs: ["mesh-1", "mesh-2"],
+    });
+    expect(analysis.parts[0].observations.join(" ")).toContain("avoid over-splitting");
+    expect(analysis.partNotePaths).toBeUndefined();
+    expect(generationRecords[generationRecords.length - 1]?.partNoteCount).toBe(0);
+    expect(files.get("Analysis/3D Reports/board Report.md")).toContain("detail cluster (2)");
+    expect([...files.keys()].some((path) => path.startsWith("Parts/3D Components/board/"))).toBe(false);
   });
 });

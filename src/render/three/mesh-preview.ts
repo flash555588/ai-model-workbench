@@ -3,8 +3,10 @@ import {
   Material,
   Mesh,
   Object3D,
+  Points,
 } from "three";
 import type { ModelPartSummary, ModelPreviewSummary } from "../../domain/models";
+import type { PreviewMeshBreakdownRow } from "../preview/report";
 import {
   createPreviewBounds,
   getPreviewBoundsCenter,
@@ -21,8 +23,18 @@ import {
   createPreviewPartSummary,
 } from "../preview/summary";
 
+export type ThreeRenderableObject = Mesh | Points;
+
 export function isThreeMesh(value: unknown): value is Mesh {
   return value instanceof Mesh;
+}
+
+export function isThreePoints(value: unknown): value is Points {
+  return value instanceof Points;
+}
+
+export function isThreeRenderableObject(value: unknown): value is ThreeRenderableObject {
+  return isThreeMesh(value) || isThreePoints(value);
 }
 
 export function getThreeMaterialList(material: Material | Material[] | undefined | null): Material[] {
@@ -30,16 +42,17 @@ export function getThreeMaterialList(material: Material | Material[] | undefined
   return Array.isArray(material) ? material : [material];
 }
 
-export function getThreeTriangleCount(mesh: Mesh): number {
-  const geometry = mesh.geometry;
+export function getThreeTriangleCount(object: ThreeRenderableObject): number {
+  if (isThreePoints(object)) return 0;
+  const geometry = object.geometry;
   const indexCount = geometry.getIndex()?.count ?? 0;
   if (indexCount > 0) return Math.floor(indexCount / 3);
   const positionCount = geometry.getAttribute("position")?.count ?? 0;
   return Math.floor(positionCount / 3);
 }
 
-export function getThreeVertexCount(mesh: Mesh): number {
-  return mesh.geometry.getAttribute("position")?.count ?? 0;
+export function getThreeVertexCount(object: ThreeRenderableObject): number {
+  return object.geometry.getAttribute("position")?.count ?? 0;
 }
 
 export function describeThreeMaterial(material: Material | null | undefined): string | null {
@@ -76,6 +89,10 @@ export function getThreeMeshMaterialNames(mesh: Mesh): Array<string | null> {
   return getThreeMaterialList(mesh.material).map((material) => describeThreeMaterial(material));
 }
 
+export function getThreeRenderableMaterialNames(object: ThreeRenderableObject): Array<string | null> {
+  return getThreeMaterialList(object.material).map((material) => describeThreeMaterial(material));
+}
+
 export function createThreeMeshInfoBreakdown(mesh: Mesh): {
   name: string;
   triangleCount: number;
@@ -87,6 +104,16 @@ export function createThreeMeshInfoBreakdown(mesh: Mesh): {
     triangleCount: getThreeTriangleCount(mesh),
     vertexCount: getThreeVertexCount(mesh),
     materialName: describeThreeMaterial(getThreeMaterialList(mesh.material)[0]),
+  };
+}
+
+export function createThreeRenderableInfoBreakdown(object: ThreeRenderableObject): PreviewMeshBreakdownRow {
+  const name = getThreeObjectDisplayName(object, isThreePoints(object) ? `points-${object.id}` : `mesh-${object.id}`);
+  return {
+    name,
+    triangleCount: isThreePoints(object) ? null : getThreeTriangleCount(object),
+    vertexCount: getThreeVertexCount(object),
+    materialName: describeThreeMaterial(getThreeMaterialList(object.material)[0]),
   };
 }
 
@@ -103,6 +130,38 @@ export function createThreePartPreviewSummary(mesh: Mesh, root: Object3D | null)
     triangleCount: getThreeTriangleCount(mesh),
     vertexCount: getThreeVertexCount(mesh),
     materialName: describeThreeMaterial(getThreeMaterialList(mesh.material)[0]),
+    boundingSize: getPreviewBoundsSize(bounds),
+    center: getPreviewBoundsCenter(bounds),
+    source: identity.hasExplicitIdentity ? "component" : "mesh",
+    meshNames: [name],
+    childCount: 1,
+    componentId: identity.componentId,
+    occurrenceId: identity.occurrenceId,
+    partNumber: identity.partNumber,
+    componentPath: identity.componentPath,
+  });
+}
+
+export function createThreeRenderablePartPreviewSummary(
+  object: ThreeRenderableObject,
+  root: Object3D | null,
+): ModelPartSummary {
+  if (isThreeMesh(object)) {
+    return createThreePartPreviewSummary(object, root);
+  }
+
+  object.updateWorldMatrix(true, false);
+  const bounds = getThreeObjectPreviewBounds(object);
+  const name = getThreeObjectDisplayName(object, `points-${object.id}`);
+  const identity = extractPreviewComponentIdentity(object.userData, {
+    name,
+    path: root ? getThreeObjectComponentPath(root, object) : name,
+  });
+  return createPreviewPartSummary({
+    name: getPartDisplayName(identity, name),
+    triangleCount: 0,
+    vertexCount: getThreeVertexCount(object),
+    materialName: describeThreeMaterial(getThreeMaterialList(object.material)[0]),
     boundingSize: getPreviewBoundsSize(bounds),
     center: getPreviewBoundsCenter(bounds),
     source: identity.hasExplicitIdentity ? "component" : "mesh",
@@ -209,16 +268,16 @@ export function createThreeGroupedPartCandidates(
 
 export function createThreeModelPreviewSummary(
   root: Object3D,
-  renderableMeshes: readonly Mesh[],
+  renderableObjects: readonly ThreeRenderableObject[],
   resourceWarnings: readonly string[] = [],
 ): ModelPreviewSummary {
   return createPreviewModelSummary({
     rootName: root.name || "__root__",
     boundingSize: getPreviewBoundsSize(getThreeObjectPreviewBounds(root)),
-    meshes: renderableMeshes.map((mesh) => ({
-      triangleCount: getThreeTriangleCount(mesh),
-      vertexCount: getThreeVertexCount(mesh),
-      materialKeys: getThreeMaterialList(mesh.material).map((material) => material.uuid),
+    meshes: renderableObjects.map((object) => ({
+      triangleCount: getThreeTriangleCount(object),
+      vertexCount: getThreeVertexCount(object),
+      materialKeys: getThreeMaterialList(object.material).map((material) => material.uuid),
     })),
     resourceWarnings,
   });

@@ -214,6 +214,7 @@ function inferPartCategory(part: ModelPartSummary): string {
   const name = part.name.toLowerCase();
   if (part.source === "component") return "component";
   if (part.source === "group") return "group";
+  if (part.source === "detail-cluster") return "detail-cluster";
   if (name.includes("wheel") || name.includes("gear") || name.includes("axle")) return "mechanical";
   if (name.includes("shell") || name.includes("case") || name.includes("cover") || name.includes("housing")) return "enclosure";
   if (name.includes("button") || name.includes("key") || name.includes("switch")) return "control";
@@ -229,6 +230,9 @@ function buildPartObservations(part: ModelPartSummary): string[] {
   }
   if (part.source === "component") {
     observations.push(`Registered from model component metadata with ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 1, "child mesh", "child meshes")}.`);
+  }
+  if (part.source === "detail-cluster") {
+    observations.push(`Merged from ${formatObservationCount(part.childCount ?? part.meshNames?.length ?? 0, "generic tiny mesh", "generic tiny meshes")} to avoid over-splitting renderer fragments.`);
   }
   if (part.componentId) {
     observations.push(`Component ID: ${part.componentId}.`);
@@ -252,6 +256,13 @@ function buildPartObservations(part: ModelPartSummary): string[] {
   return observations;
 }
 
+function inferPartConfidence(part: ModelPartSummary): number {
+  if (part.source === "component") return 0.82;
+  if (part.source === "group") return 0.72;
+  if (part.source === "detail-cluster") return 0.48;
+  return part.name ? 0.55 : 0.35;
+}
+
 export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly ModelPartSummary[]): PartRecord[] {
   const seenPartIds = new Set<string>();
   return parts.map((part, index) => ({
@@ -272,7 +283,7 @@ export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly 
     triangleCount: part.triangleCount,
     vertexCount: part.vertexCount,
     materialName: part.materialName,
-    confidence: part.source === "component" ? 0.82 : part.source === "group" ? 0.72 : part.name ? 0.55 : 0.35,
+    confidence: inferPartConfidence(part),
     observations: buildPartObservations(part),
     inferredFunctions: [],
     knowledgeTags: [],

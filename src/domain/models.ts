@@ -149,7 +149,7 @@ export interface ModelPreviewSummary {
   rootName: string;
 }
 
-export type ModelPartSource = "mesh" | "group" | "component";
+export type ModelPartSource = "mesh" | "group" | "component" | "detail-cluster";
 
 export interface ModelPartSummary {
   name: string;

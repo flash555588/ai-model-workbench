@@ -209,6 +209,12 @@ function normalizeNumberTuple(value: unknown): [number, number, number] | undefi
   return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
 }
 
+function normalizePartSource(value: unknown): PartRecord["source"] {
+  return value === "group" || value === "mesh" || value === "component" || value === "detail-cluster"
+    ? value
+    : undefined;
+}
+
 function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): PartRecord[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -231,7 +237,7 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): Part
       assetId,
       parentPartId: typeof record.parentPartId === "string" ? record.parentPartId : undefined,
       name,
-      source: record.source === "group" || record.source === "mesh" || record.source === "component" ? record.source : undefined,
+      source: normalizePartSource(record.source),
       componentId: typeof record.componentId === "string" ? record.componentId : undefined,
       occurrenceId: typeof record.occurrenceId === "string" ? record.occurrenceId : undefined,
       partNumber: typeof record.partNumber === "string" ? record.partNumber : undefined,

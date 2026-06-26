@@ -106,13 +106,15 @@ import {
 import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothness";
 import {
   createThreeGroupedPartCandidates,
-  createThreeMeshInfoBreakdown,
   createThreeModelPreviewSummary,
-  createThreePartPreviewSummary,
+  createThreeRenderableInfoBreakdown,
+  createThreeRenderablePartPreviewSummary,
   getThreeMaterialList as materialList,
-  getThreeMeshMaterialNames,
+  getThreeRenderableMaterialNames,
   getThreeObjectPreviewBounds as getObjectPreviewBounds,
+  isThreeRenderableObject,
   isThreeMesh as isMesh,
+  type ThreeRenderableObject,
 } from "./mesh-preview";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
@@ -277,6 +279,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private stlMaterial: MeshStandardMaterial | null = null;
   private cachedMeshes: Mesh[] | null = null;
   private cachedMeshRoot: Object3D | null = null;
+  private cachedRenderables: ThreeRenderableObject[] | null = null;
+  private cachedRenderableRoot: Object3D | null = null;
   private cameraAnimHandle = 0;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     this.prepareInteractiveFrameBudget();
@@ -454,7 +458,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.animationPlaying = true;
     }
 
-    const summary = createThreeModelPreviewSummary(root, this.getRenderableMeshes(root), this.resourceWarnings);
+    const summary = createThreeModelPreviewSummary(root, this.getRenderableObjects(root), this.resourceWarnings);
     this.fitCameraToObject(root);
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
@@ -554,27 +558,32 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   exportModelInfo(modelPath?: string): string {
     if (!this.rootObject) return "";
-    const renderableMeshes = this.getRenderableMeshes(this.rootObject);
-    const summary = createThreeModelPreviewSummary(this.rootObject, renderableMeshes, this.resourceWarnings);
+    const renderableObjects = this.getRenderableObjects(this.rootObject);
+    const summary = createThreeModelPreviewSummary(this.rootObject, renderableObjects, this.resourceWarnings);
     const name = modelPath ? getPortableBasename(modelPath) || summary.rootName : summary.rootName;
     return createPreviewModelInfoMarkdown({
       title: name,
       format: this.loadedExt.toUpperCase(),
       summary,
-      meshBreakdown: renderableMeshes.map(createThreeMeshInfoBreakdown),
+      meshBreakdown: renderableObjects.map(createThreeRenderableInfoBreakdown),
     });
   }
 
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootObject) return null;
+    const renderableObjects = this.getRenderableObjects(this.rootObject);
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
     const groupedPartCandidates = createThreeGroupedPartCandidates(this.rootObject, renderableMeshes);
+    const groupedRenderableCandidates = {
+      parts: groupedPartCandidates.parts,
+      groupedMeshes: new Set<ThreeRenderableObject>(groupedPartCandidates.groupedMeshes),
+    };
     return createPreviewEvidence({
-      summary: createThreeModelPreviewSummary(this.rootObject, renderableMeshes, this.resourceWarnings),
-      renderableMeshes,
-      groupedPartCandidates,
-      createMeshPart: (mesh) => createThreePartPreviewSummary(mesh, this.rootObject),
-      getMeshMaterialNames: getThreeMeshMaterialNames,
+      summary: createThreeModelPreviewSummary(this.rootObject, renderableObjects, this.resourceWarnings),
+      renderableMeshes: renderableObjects,
+      groupedPartCandidates: groupedRenderableCandidates,
+      createMeshPart: (object) => createThreeRenderablePartPreviewSummary(object, this.rootObject),
+      getMeshMaterialNames: getThreeRenderableMaterialNames,
       resourceWarnings: this.resourceWarnings,
     });
   }
@@ -582,7 +591,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   getSelectedPartInfo(): ModelPartSummary | null {
     const mesh = this.focusedMesh
       ?? (isMesh(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
-    return mesh ? createThreePartPreviewSummary(mesh, this.rootObject) : null;
+    if (mesh) return createThreeRenderablePartPreviewSummary(mesh, this.rootObject);
+    const renderable = isThreeRenderableObject(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null;
+    return renderable ? createThreeRenderablePartPreviewSummary(renderable, this.rootObject) : null;
   }
 
   exportSelectedPartInfo(): string {
@@ -595,7 +606,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return toPreviewWorldPoint(result.pickedPoint as { x: number; y: number; z: number });
     }
 
-    if (result.mesh instanceof Mesh) {
+    if (isThreeRenderableObject(result.mesh)) {
       return getPreviewBoundsCenter(getObjectPreviewBounds(result.mesh));
     }
 
@@ -879,7 +890,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       adaptiveScaleChangeCount: smoothness.adaptiveScaleChangeCount,
       viewportVisible: this.viewportVisible,
       disposalAudit: { ...this.lastDisposalAudit },
-      meshCount: this.rootObject ? this.getRenderableMeshes(this.rootObject).length : 0,
+      meshCount: this.rootObject ? this.getRenderableObjects(this.rootObject).length : 0,
       qualitySnapshot: this.getQualitySnapshot(),
     };
   }
@@ -1244,7 +1255,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.rootObject) return 2;
     const bounds = getObjectPreviewBounds(this.rootObject);
     const size = getPreviewBoundsSize(bounds);
-    return Math.max(size.x, size.y, size.z, 1) * 1.2;
+    return Math.max(Math.max(size.x, size.y, size.z, Number.EPSILON) * 1.2, 0.001);
   }
 
   private updateOrthographicFrustum(aspect: number): void {
@@ -1497,9 +1508,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private prepareModelForQuality(root: Object3D): void {
     const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     root.traverse((object) => {
-      if (!isMesh(object)) return;
-      object.castShadow = true;
-      object.receiveShadow = true;
+      if (!isThreeRenderableObject(object)) return;
+      if (isMesh(object)) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+      }
       for (const material of materialList(object.material)) {
         this.prepareMaterialForQuality(material, anisotropy);
       }
@@ -1528,7 +1541,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const box = new Box3().setFromObject(this.rootObject);
     const center = box.getCenter(new Vector3());
     const size = box.getSize(new Vector3());
-    const radius = Math.max(size.x, size.y, size.z, 1) * 1.8;
+    const span = Math.max(size.x, size.y, size.z, Number.EPSILON);
+    const radius = Math.max(span * 1.8, 0.001);
 
     for (const light of this.allLights()) {
       if (!isShadowCastingLight(light) || !light.castShadow) continue;
@@ -1609,8 +1623,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const bounds = getObjectPreviewBounds(this.rootObject);
     const center = getPreviewBoundsCenter(bounds);
     const boundsSize = getPreviewBoundsSize(bounds);
-    const size = Math.max(boundsSize.x, boundsSize.z, 1) * 3;
-    const y = bounds.min.y - Math.max(size * 0.002, 0.002);
+    const span = Math.max(boundsSize.x, boundsSize.z, Number.EPSILON);
+    const size = Math.max(span * 3, 0.001);
+    const y = bounds.min.y - Math.max(size * 0.002, 0.00001);
 
     const mesh = new Mesh(
       new PlaneGeometry(size, size),
@@ -1640,11 +1655,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const bounds = getObjectPreviewBounds(this.rootObject);
     const center = getPreviewBoundsCenter(bounds);
     const boundsSize = getPreviewBoundsSize(bounds);
-    const size = Math.max(boundsSize.x, boundsSize.z, 1) * 2;
+    const span = Math.max(boundsSize.x, boundsSize.z, Number.EPSILON);
+    const size = Math.max(span * 2, 0.001);
 
     const grid = new GridHelper(size, 20, 0x6f7785, 0x343b46);
     grid.name = "ai3d-grid";
-    grid.position.set(center.x, bounds.min.y - Math.max(size * 0.003, 0.003), center.z);
+    grid.position.set(center.x, bounds.min.y - Math.max(size * 0.003, 0.00001), center.z);
     for (const material of materialList(grid.material)) {
       material.transparent = true;
       material.opacity = 0.42;
@@ -1672,10 +1688,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    const hit = this.raycaster.intersectObjects(this.getRenderableMeshes(this.rootObject), false)[0];
-    const mesh = hit?.object instanceof Mesh ? hit.object : null;
+    const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
+    const renderable = isThreeRenderableObject(hit?.object) ? hit.object : null;
+    const mesh = renderable instanceof Mesh ? renderable : null;
     const result: PreviewPickResult = {
-      mesh,
+      mesh: renderable,
       pickedPoint: hit?.point?.clone() ?? null,
       screenX: event.clientX,
       screenY: event.clientY,
@@ -1747,8 +1764,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     root.traverse((object) => {
       objectCount++;
-      if (!isMesh(object)) return;
-      meshCount++;
+      if (!isThreeRenderableObject(object)) return;
+      if (isMesh(object)) {
+        meshCount++;
+      }
 
       const geometry = object.geometry;
       if (geometry && !geometryIds.has(geometry.uuid)) {
@@ -1873,7 +1892,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.occlusionRaycaster.set(this.camera.position, this.annotationDirection);
     this.occlusionRaycaster.far = lineOfSight.distance;
 
-    const hit = this.occlusionRaycaster.intersectObjects(this.getRenderableMeshes(this.rootObject), false)[0];
+    const hit = this.occlusionRaycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
     return !!hit
       && isPreviewHitOccluded(hit.distance, lineOfSight.distance, lineOfSight.epsilon);
   }
@@ -1889,6 +1908,19 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedMeshes = meshes;
     this.cachedMeshRoot = root;
     return meshes;
+  }
+
+  private getRenderableObjects(root: Object3D): ThreeRenderableObject[] {
+    if (this.cachedRenderables && this.cachedRenderableRoot === root) return this.cachedRenderables;
+    const renderables: ThreeRenderableObject[] = [];
+    root.traverse((object) => {
+      if (isThreeRenderableObject(object) && object.geometry) {
+        renderables.push(object);
+      }
+    });
+    this.cachedRenderables = renderables;
+    this.cachedRenderableRoot = root;
+    return renderables;
   }
 
   private getGeometryQualityStats(): PreviewQualitySnapshot["geometry"] {
@@ -1909,25 +1941,22 @@ export class ThreeModelPreview implements WorkbenchPreview {
     let smallPartCount = 0;
     let smallestPartSpan = Number.POSITIVE_INFINITY;
 
-    for (const mesh of this.getRenderableMeshes(this.rootObject)) {
-      const size = getPreviewBoundsSize(getObjectPreviewBounds(mesh));
+    for (const object of this.getRenderableObjects(this.rootObject)) {
+      if (object instanceof Points) {
+        pointCloudCount++;
+      }
+      const size = getPreviewBoundsSize(getObjectPreviewBounds(object));
       const span = Math.max(size.x, size.y, size.z);
       if (Number.isFinite(span) && span > 0) {
         smallestPartSpan = Math.min(smallestPartSpan, span);
-        if (span <= smallPartThreshold && span < modelSpan) {
+        if (isMesh(object) && span <= smallPartThreshold && span < modelSpan) {
           smallPartCount++;
         }
       }
     }
 
-    this.rootObject.traverse((object) => {
-      if (object instanceof Points) {
-        pointCloudCount++;
-      }
-    });
-
     return {
-      meshCount: this.getRenderableMeshes(this.rootObject).length,
+      meshCount: this.getRenderableObjects(this.rootObject).length,
       pointCloudCount,
       smallPartCount,
       smallestPartSpan: Number.isFinite(smallestPartSpan) ? Number(smallestPartSpan.toPrecision(6)) : null,
@@ -1938,6 +1967,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private invalidateMeshCache(): void {
     this.cachedMeshes = null;
     this.cachedMeshRoot = null;
+    this.cachedRenderables = null;
+    this.cachedRenderableRoot = null;
   }
 
   private ensureBoundingBoxHelper(): void {
@@ -2205,7 +2236,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.pointer.x = ((this.lastPointerClient.x - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((this.lastPointerClient.y - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.raycaster.intersectObjects(this.getRenderableMeshes(this.rootObject), false)[0];
+    const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
     let endPoint: Vector3;
     if (hit?.point) {
       endPoint = hit.point.clone();

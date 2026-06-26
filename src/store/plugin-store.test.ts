@@ -1,5 +1,6 @@
 import type { Plugin } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../domain/constants";
 import type { PersistedPluginState } from "../domain/models";
 import { createPluginStore } from "./plugin-store";
 
@@ -23,8 +24,11 @@ function cloneState(data: PersistedPluginState): PersistedPluginState {
   return JSON.parse(JSON.stringify(data)) as PersistedPluginState;
 }
 
-function createFakePlugin(saveDataImpl?: (data: PersistedPluginState) => Promise<void>) {
-  const loadData = vi.fn(async () => null);
+function createFakePlugin(
+  saveDataImpl?: (data: PersistedPluginState) => Promise<void>,
+  loadDataValue: PersistedPluginState | null = null,
+) {
+  const loadData = vi.fn(async () => loadDataValue);
   const saveData = vi.fn((data: unknown) => {
     const snapshot = cloneState(data as PersistedPluginState);
     return saveDataImpl?.(snapshot) ?? Promise.resolve();
@@ -164,5 +168,50 @@ describe("createPluginStore persistence", () => {
     await settlePromises();
 
     expect(errorSpy).toHaveBeenCalledWith("[AI3D] Final save on dispose failed:", error);
+  });
+
+  it("preserves registered detail cluster part sources when loading saved data", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "board:part:1",
+            assetId: "models/board.glb",
+            name: "Small detail cluster",
+            source: "detail-cluster",
+            meshRefs: ["mesh-1", "mesh-2"],
+            childCount: 2,
+            materialRefs: ["Plastic"],
+            bbox: [0.1, 0.1, 0.1],
+            center: [0, 0, 0],
+            triangleCount: 12,
+            vertexCount: 24,
+            materialName: "Plastic",
+            confidence: 0.48,
+            observations: ["Merged tiny fragments."],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            reviewed: false,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts?.[0]?.source).toBe("detail-cluster");
   });
 });

@@ -108,6 +108,9 @@ function formatPartSource(part: PartRecord): string {
   if (part.source === "group") {
     return `group (${part.childCount ?? part.meshRefs.length})`;
   }
+  if (part.source === "detail-cluster") {
+    return `detail cluster (${part.childCount ?? part.meshRefs.length})`;
+  }
   return "mesh";
 }
 
@@ -849,6 +852,12 @@ function normalizeNumberTuple(value: unknown): [number, number, number] | undefi
   return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
 }
 
+function normalizePartSource(value: unknown): PartRecord["source"] {
+  return value === "group" || value === "mesh" || value === "component" || value === "detail-cluster"
+    ? value
+    : undefined;
+}
+
 function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string): PartRecord | null {
   if (!isRecord(value)) return null;
   const partId = typeof value.partId === "string" ? value.partId : "";
@@ -860,7 +869,7 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     assetId,
     parentPartId: typeof value.parentPartId === "string" ? value.parentPartId : undefined,
     name,
-    source: value.source === "group" || value.source === "mesh" || value.source === "component" ? value.source : undefined,
+    source: normalizePartSource(value.source),
     componentId: typeof value.componentId === "string" ? value.componentId : undefined,
     occurrenceId: typeof value.occurrenceId === "string" ? value.occurrenceId : undefined,
     partNumber: typeof value.partNumber === "string" ? value.partNumber : undefined,
@@ -939,6 +948,7 @@ function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
   const linkedPartIds = new Set((analysis.annotationLinks ?? []).flatMap((link) => link.nearestPartId ? [link.nearestPartId] : []));
   return new Set(
     [...analysis.parts]
+      .filter((part) => part.source !== "detail-cluster" || linkedPartIds.has(part.partId) || !!part.registeredMatches?.length)
       .sort((left, right) => {
         const leftLinked = linkedPartIds.has(left.partId) ? 1 : 0;
         const rightLinked = linkedPartIds.has(right.partId) ? 1 : 0;
@@ -1003,7 +1013,7 @@ function buildPartNoteContent(options: {
     ...(options.part.occurrenceId ? [`- Occurrence ID: ${options.part.occurrenceId}`] : []),
     ...(options.part.partNumber ? [`- Part number: ${options.part.partNumber}`] : []),
     ...(options.part.componentPath ? [`- Component path: ${options.part.componentPath}`] : []),
-    ...(options.part.source === "group" || options.part.source === "component" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
+    ...(options.part.source === "group" || options.part.source === "component" || options.part.source === "detail-cluster" ? [`- Child meshes: ${formatMeshRefs(options.part.meshRefs)}`] : []),
     `- Triangles: ${(options.part.triangleCount ?? 0).toLocaleString()}`,
     `- Vertices: ${(options.part.vertexCount ?? 0).toLocaleString()}`,
     `- Material: ${options.part.materialName ? escapeHtml(options.part.materialName) : "-"}`,

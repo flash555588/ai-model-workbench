@@ -1,9 +1,20 @@
-import { BoxGeometry, Mesh, MeshStandardMaterial, Object3D } from "three";
+import {
+  BoxGeometry,
+  BufferAttribute,
+  BufferGeometry,
+  Mesh,
+  MeshStandardMaterial,
+  Object3D,
+  Points,
+  PointsMaterial,
+} from "three";
 import { describe, expect, it } from "vitest";
 import {
   createThreeGroupedPartCandidates,
   createThreeModelPreviewSummary,
   createThreePartPreviewSummary,
+  createThreeRenderableInfoBreakdown,
+  createThreeRenderablePartPreviewSummary,
 } from "./mesh-preview";
 
 function createBox(name: string, materialName: string): Mesh {
@@ -31,6 +42,46 @@ describe("three mesh preview helpers", () => {
     expect(summary.materialCount).toBe(1);
     expect(summary.resourceWarnings).toEqual(["missing texture"]);
     expect(summary.boundingSize).toEqual({ x: 2, y: 4, z: 6 });
+  });
+
+  it("summarizes point clouds as renderable evidence without faking triangles", () => {
+    const root = new Object3D();
+    root.name = "scan-root";
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(new Float32Array([
+      0, 0, 0,
+      0.01, 0, 0,
+      0, 0.02, 0,
+    ]), 3));
+    const points = new Points(geometry, new PointsMaterial({ name: "scan-points" }));
+    points.name = "micro-scan";
+    root.add(points);
+
+    const summary = createThreeModelPreviewSummary(root, [points]);
+    const part = createThreeRenderablePartPreviewSummary(points, root);
+    const breakdown = createThreeRenderableInfoBreakdown(points);
+
+    expect(summary).toMatchObject({
+      meshCount: 1,
+      triangleCount: 0,
+      vertexCount: 3,
+      materialCount: 1,
+      rootName: "scan-root",
+    });
+    expect(part).toMatchObject({
+      name: "micro-scan",
+      triangleCount: 0,
+      vertexCount: 3,
+      materialName: "scan-points",
+      source: "mesh",
+      meshNames: ["micro-scan"],
+    });
+    expect(breakdown).toMatchObject({
+      name: "micro-scan",
+      triangleCount: null,
+      vertexCount: 3,
+      materialName: "scan-points",
+    });
   });
 
   it("promotes explicit component metadata on individual meshes", () => {
