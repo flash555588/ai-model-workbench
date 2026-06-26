@@ -17,6 +17,7 @@
 - Performance: skip full Live Preview line parsing for editor documents that do not contain model embed markers, reducing startup work for large ordinary notes.
 - Performance: defer Three.js mesh shadow flag setup and shadow-map updates until ground shadows or shadow-casting lights are active, reducing large-model load work on the default route.
 - Performance: keep the heading-pin DOM observer disabled until at least one annotation is bound to a note heading, avoiding startup-wide heading scans in vaults without heading-linked model pins.
+- Performance: compact saved registered-part mesh references to representative samples, reducing `data.json` size and startup parsing work for large converted assemblies while preserving component identity fields.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.

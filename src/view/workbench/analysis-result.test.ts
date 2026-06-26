@@ -102,7 +102,7 @@ describe("buildLocalAnalysisResult format lineage", () => {
       evidence,
     });
 
-    expect(analysis.parts[0].meshRefs).toHaveLength(64);
-    expect(analysis.draftingInput?.partCandidates[0].meshRefs).toHaveLength(64);
+    expect(analysis.parts[0].meshRefs).toHaveLength(16);
+    expect(analysis.draftingInput?.partCandidates[0].meshRefs).toHaveLength(16);
   });
 });

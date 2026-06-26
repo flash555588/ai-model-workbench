@@ -479,7 +479,7 @@ describe("createPluginStore persistence", () => {
 
     const part = pluginStore.store.getState().modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
     expect(part?.registeredMatches).toBeUndefined();
-    expect(part?.meshRefs).toHaveLength(64);
+    expect(part?.meshRefs).toHaveLength(16);
 
     await vi.advanceTimersByTimeAsync(50);
     await settlePromises();
@@ -487,6 +487,6 @@ describe("createPluginStore persistence", () => {
     expect(saveData).toHaveBeenCalledTimes(1);
     const persistedPart = normalizedSaves[0].modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
     expect(persistedPart?.registeredMatches).toBeUndefined();
-    expect(persistedPart?.meshRefs).toHaveLength(64);
+    expect(persistedPart?.meshRefs).toHaveLength(16);
   });
 });

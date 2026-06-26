@@ -19,7 +19,7 @@ import { getPortableStem } from "../../utils/resolve-path";
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
 const MAX_REGISTERED_MATCHES_PER_PART = 3;
 const REGISTERED_PART_MATCH_THRESHOLD = 0.58;
-const MAX_PART_MESH_REFS = 64;
+const MAX_PART_MESH_REFS = 16;
 const MAX_PART_MATERIAL_REFS = 16;
 const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
   "glb",
