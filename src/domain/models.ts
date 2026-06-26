@@ -69,6 +69,32 @@ export interface ConvertedAssetRecord {
   createdAt: number;
 }
 
+export type ModelAssetFormat =
+  | "glb"
+  | "gltf"
+  | "stl"
+  | "obj"
+  | "splat"
+  | "ply"
+  | "fbx"
+  | "step"
+  | "stp"
+  | "iges"
+  | "igs"
+  | "brep"
+  | "sldprt"
+  | "3mf"
+  | "dae";
+
+export type ModelLoadStrategy = "direct" | "convert";
+
+export interface ModelEvidenceFormatLineage {
+  sourcePath?: string;
+  sourceFormat?: ModelAssetFormat;
+  effectiveFormat?: ModelAssetFormat;
+  loadStrategy?: ModelLoadStrategy;
+}
+
 // ── Persisted Plugin State ───────────────────────────────────────
 
 export interface PersistedPluginState {
@@ -165,6 +191,9 @@ export interface ModelPartSummary {
   occurrenceId?: string;
   partNumber?: string;
   componentPath?: string;
+  sourceFormat?: ModelAssetFormat;
+  effectiveFormat?: ModelAssetFormat;
+  loadStrategy?: ModelLoadStrategy;
 }
 
 export interface ModelEvidence {
@@ -173,6 +202,7 @@ export interface ModelEvidence {
   materialNames: string[];
   resourceWarnings: string[];
   capturedAt: string;
+  formatLineage?: ModelEvidenceFormatLineage;
 }
 
 // ── Asset Record ─────────────────────────────────────────────────
@@ -182,22 +212,9 @@ export interface AssetRecord {
   title: string;
   sourcePath: string;
   vaultPath?: string;
-  format:
-    | "glb"
-    | "gltf"
-    | "stl"
-    | "obj"
-    | "splat"
-    | "ply"
-    | "fbx"
-    | "step"
-    | "stp"
-    | "iges"
-    | "igs"
-    | "brep"
-    | "sldprt"
-    | "3mf"
-    | "dae";
+  format: ModelAssetFormat;
+  effectiveFormat?: ModelAssetFormat;
+  loadStrategy?: ModelLoadStrategy;
   importedAt: string;
   updatedAt: string;
   status: "idle" | "processing" | "ready" | "error";
@@ -231,6 +248,9 @@ export interface PartRecord {
   triangleCount?: number;
   vertexCount?: number;
   materialName?: string | null;
+  sourceFormat?: ModelAssetFormat;
+  effectiveFormat?: ModelAssetFormat;
+  loadStrategy?: ModelLoadStrategy;
   confidence: number;
   observations: string[];
   inferredFunctions: string[];
@@ -291,7 +311,9 @@ export interface AnalysisDraftingInput {
   model: {
     path: string;
     title: string;
-    format: AssetRecord["format"];
+    format: ModelAssetFormat;
+    effectiveFormat?: ModelAssetFormat;
+    loadStrategy?: ModelLoadStrategy;
     summary?: ModelPreviewSummary;
     tags: string[];
     notes: string;
@@ -312,6 +334,9 @@ export interface AnalysisDraftingInput {
     partNumber?: string;
     componentPath?: string;
     category?: string;
+    sourceFormat?: ModelAssetFormat;
+    effectiveFormat?: ModelAssetFormat;
+    loadStrategy?: ModelLoadStrategy;
     meshRefs?: string[];
     childCount?: number;
     triangleCount?: number;

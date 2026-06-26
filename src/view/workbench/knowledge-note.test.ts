@@ -292,4 +292,70 @@ describe("generateKnowledgeNote generation marker", () => {
     expect(files.get("Analysis/3D Reports/board Report.md")).toContain("detail cluster (2)");
     expect([...files.keys()].some((path) => path.startsWith("Parts/3D Components/board/"))).toBe(false);
   });
+
+  it("writes part split format lineage into reports, sidecars, and part notes", async () => {
+    const evidence: ModelEvidence = {
+      summary: {
+        meshCount: 1,
+        triangleCount: 420,
+        vertexCount: 210,
+        materialCount: 1,
+        boundingSize: { x: 1.6, y: 0.8, z: 0.45 },
+        rootName: "pcb",
+      },
+      formatLineage: {
+        sourcePath: "models/pcb.step",
+        sourceFormat: "step",
+        effectiveFormat: "glb",
+        loadStrategy: "convert",
+      },
+      parts: [{
+        name: "R1",
+        source: "component",
+        componentId: "R0603-10K",
+        occurrenceId: "PCB/R1",
+        componentPath: "PCB/R1",
+        meshNames: ["R1"],
+        childCount: 1,
+        triangleCount: 420,
+        vertexCount: 210,
+        materialName: "component matte",
+        boundingSize: { x: 1.6, y: 0.8, z: 0.45 },
+        center: { x: 1, y: 2, z: 0.5 },
+      }],
+      materialNames: ["component matte"],
+      resourceWarnings: [],
+      capturedAt: "2026-06-22T00:00:00.000Z",
+    };
+    const { app, files } = createVaultHarness();
+    const { ps } = createPluginStoreHarness(createState({
+      currentModelPath: "models/pcb.step",
+      modelPreview: evidence.summary,
+    }));
+
+    await generateKnowledgeNote(app, ps, {
+      preview: {
+        captureSnapshot: () => null,
+        getModelEvidence: () => evidence,
+      },
+    });
+
+    const analysis = JSON.parse(files.get("Analysis/3D Reports/pcb Analysis.json") ?? "{}") as AnalysisResult;
+    expect(analysis.parts[0]).toMatchObject({
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+    });
+    expect(analysis.draftingInput?.partCandidates[0]).toMatchObject({
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+    });
+    expect(files.get("Analysis/3D Reports/pcb Report.md")).toContain("STEP -&gt; GLB (convert)");
+    const partNote = files.get("Parts/3D Components/pcb/01 R1.md") ?? "";
+    expect(partNote).toContain("source_format: \"step\"");
+    expect(partNote).toContain("effective_format: \"glb\"");
+    expect(partNote).toContain("load_strategy: \"convert\"");
+    expect(partNote).toContain("- Format lineage: STEP -> GLB (convert)");
+  });
 });

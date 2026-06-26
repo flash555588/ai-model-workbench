@@ -193,6 +193,9 @@ describe("createPluginStore persistence", () => {
             triangleCount: 12,
             vertexCount: 24,
             materialName: "Plastic",
+            sourceFormat: "step",
+            effectiveFormat: "glb",
+            loadStrategy: "convert",
             confidence: 0.48,
             observations: ["Merged tiny fragments."],
             inferredFunctions: [],
@@ -213,5 +216,10 @@ describe("createPluginStore persistence", () => {
     await pluginStore.load();
 
     expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts?.[0]?.source).toBe("detail-cluster");
+    expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts?.[0]).toMatchObject({
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+    });
   });
 });

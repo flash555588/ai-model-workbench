@@ -5,6 +5,7 @@
 - Rendering: include Three.js PLY point clouds in summary, part evidence, picking, measurement, material audit, and disposal paths without faking triangle counts.
 - Rendering: keep Three.js orthographic camera, shadow, and grid helper scales tied to real tiny-model bounds instead of a one-unit floor.
 - Knowledge: merge generic tiny mesh fragments into a lower-confidence detail cluster so imported models keep meaningful small parts without over-splitting renderer noise.
+- Knowledge: preserve part-splitting format lineage across direct and converted formats, including source format, rendered format, and direct/convert strategy in reports, sidecars, draft input, and registered part profiles.
 
 ## 0.6.1 - 2026-06-25
 

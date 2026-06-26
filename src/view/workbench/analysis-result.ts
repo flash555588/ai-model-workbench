@@ -5,7 +5,10 @@ import type {
   AnalysisResult,
   KnowledgeNode,
   ModelAssetProfile,
+  ModelAssetFormat,
   ModelEvidence,
+  ModelEvidenceFormatLineage,
+  ModelLoadStrategy,
   ModelPartSummary,
   ModelPreviewSummary,
   PartRecord,
@@ -33,6 +36,8 @@ const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
   "3mf",
   "dae",
 ]);
+
+const SUPPORTED_LOAD_STRATEGIES = new Set(["direct", "convert"]);
 
 export interface BuildLocalAnalysisOptions {
   modelPath: string;
@@ -67,12 +72,23 @@ function distance3d(left: readonly [number, number, number], right: readonly [nu
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-function inferFormat(path: string): AnalysisResult["asset"]["format"] {
-  const ext = path.split(".").pop()?.trim().toLowerCase();
-  if (SUPPORTED_ANALYSIS_FORMATS.has(ext as AnalysisResult["asset"]["format"])) {
-    return ext as AnalysisResult["asset"]["format"];
+export function inferModelAssetFormat(value: string | null | undefined): ModelAssetFormat {
+  const ext = (value ?? "").split(".").pop()?.trim().toLowerCase();
+  if (SUPPORTED_ANALYSIS_FORMATS.has(ext as ModelAssetFormat)) {
+    return ext as ModelAssetFormat;
   }
   return "glb";
+}
+
+function normalizeModelLoadStrategy(
+  value: unknown,
+  sourceFormat: ModelAssetFormat,
+  effectiveFormat: ModelAssetFormat,
+): ModelLoadStrategy {
+  if (typeof value === "string" && SUPPORTED_LOAD_STRATEGIES.has(value)) {
+    return value as "direct" | "convert";
+  }
+  return sourceFormat === effectiveFormat ? "direct" : "convert";
 }
 
 function toVectorTuple(point: { x: number; y: number; z: number }): [number, number, number] {
@@ -246,6 +262,12 @@ function buildPartObservations(part: ModelPartSummary): string[] {
   if (part.componentPath) {
     observations.push(`Component path: ${part.componentPath}.`);
   }
+  if (part.sourceFormat || part.effectiveFormat || part.loadStrategy) {
+    const sourceFormat = part.sourceFormat ?? part.effectiveFormat ?? "glb";
+    const effectiveFormat = part.effectiveFormat ?? sourceFormat;
+    const loadStrategy = normalizeModelLoadStrategy(part.loadStrategy, sourceFormat, effectiveFormat);
+    observations.push(`Format lineage: ${sourceFormat.toUpperCase()}${effectiveFormat !== sourceFormat ? ` -> ${effectiveFormat.toUpperCase()}` : ""} (${loadStrategy}).`);
+  }
   observations.push(
     `${formatObservationCount(part.triangleCount, "triangle")} and ${formatObservationCount(part.vertexCount, "vertex")}.`,
     `Bounding size ${part.boundingSize.x.toFixed(3)} x ${part.boundingSize.y.toFixed(3)} x ${part.boundingSize.z.toFixed(3)}.`,
@@ -256,6 +278,18 @@ function buildPartObservations(part: ModelPartSummary): string[] {
   return observations;
 }
 
+function resolvePartFormatLineage(
+  modelPath: string,
+  part: ModelPartSummary,
+  evidenceLineage?: ModelEvidenceFormatLineage,
+): Required<Pick<PartRecord, "sourceFormat" | "effectiveFormat" | "loadStrategy">> {
+  const fallbackSourceFormat = inferModelAssetFormat(modelPath);
+  const sourceFormat = part.sourceFormat ?? evidenceLineage?.sourceFormat ?? fallbackSourceFormat;
+  const effectiveFormat = part.effectiveFormat ?? evidenceLineage?.effectiveFormat ?? sourceFormat;
+  const loadStrategy = normalizeModelLoadStrategy(part.loadStrategy ?? evidenceLineage?.loadStrategy, sourceFormat, effectiveFormat);
+  return { sourceFormat, effectiveFormat, loadStrategy };
+}
+
 function inferPartConfidence(part: ModelPartSummary): number {
   if (part.source === "component") return 0.82;
   if (part.source === "group") return 0.72;
@@ -263,32 +297,48 @@ function inferPartConfidence(part: ModelPartSummary): number {
   return part.name ? 0.55 : 0.35;
 }
 
-export function buildPartRecordsFromEvidence(modelPath: string, parts: readonly ModelPartSummary[]): PartRecord[] {
+export function buildPartRecordsFromEvidence(
+  modelPath: string,
+  parts: readonly ModelPartSummary[],
+  evidenceLineage?: ModelEvidenceFormatLineage,
+): PartRecord[] {
   const seenPartIds = new Set<string>();
-  return parts.map((part, index) => ({
-    partId: createPartId(modelPath, part, index, seenPartIds),
-    assetId: modelPath,
-    name: part.name || `Part ${index + 1}`,
-    source: part.source,
-    componentId: part.componentId,
-    occurrenceId: part.occurrenceId,
-    partNumber: part.partNumber,
-    componentPath: part.componentPath,
-    category: inferPartCategory(part),
-    meshRefs: part.meshNames?.length ? [...part.meshNames] : [part.name || `mesh-${index + 1}`],
-    childCount: part.childCount,
-    materialRefs: part.materialName ? [part.materialName] : [],
-    bbox: toVectorTuple(part.boundingSize),
-    center: toVectorTuple(part.center),
-    triangleCount: part.triangleCount,
-    vertexCount: part.vertexCount,
-    materialName: part.materialName,
-    confidence: inferPartConfidence(part),
-    observations: buildPartObservations(part),
-    inferredFunctions: [],
-    knowledgeTags: [],
-    reviewed: false,
-  }));
+  return parts.map((part, index) => {
+    const lineage = resolvePartFormatLineage(modelPath, part, evidenceLineage);
+    const enrichedPart = {
+      ...part,
+      sourceFormat: lineage.sourceFormat,
+      effectiveFormat: lineage.effectiveFormat,
+      loadStrategy: lineage.loadStrategy,
+    };
+    return {
+      partId: createPartId(modelPath, part, index, seenPartIds),
+      assetId: modelPath,
+      name: part.name || `Part ${index + 1}`,
+      source: part.source,
+      componentId: part.componentId,
+      occurrenceId: part.occurrenceId,
+      partNumber: part.partNumber,
+      componentPath: part.componentPath,
+      category: inferPartCategory(part),
+      meshRefs: part.meshNames?.length ? [...part.meshNames] : [part.name || `mesh-${index + 1}`],
+      childCount: part.childCount,
+      materialRefs: part.materialName ? [part.materialName] : [],
+      bbox: toVectorTuple(part.boundingSize),
+      center: toVectorTuple(part.center),
+      triangleCount: part.triangleCount,
+      vertexCount: part.vertexCount,
+      materialName: part.materialName,
+      sourceFormat: lineage.sourceFormat,
+      effectiveFormat: lineage.effectiveFormat,
+      loadStrategy: lineage.loadStrategy,
+      confidence: inferPartConfidence(part),
+      observations: buildPartObservations(enrichedPart),
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: false,
+    };
+  });
 }
 
 function buildKnowledgeNodes(
@@ -370,6 +420,7 @@ function buildDraftingInput(options: {
   modelPath: string;
   profile?: ModelAssetProfile;
   preview: ModelPreviewSummary | null;
+  formatLineage?: ModelEvidenceFormatLineage;
   parts: readonly PartRecord[];
   knowledgeNodes: readonly KnowledgeNode[];
   annotationLinks: readonly AnnotationPartLink[];
@@ -377,12 +428,17 @@ function buildDraftingInput(options: {
   warnings: readonly string[];
 }): AnalysisDraftingInput {
   const title = getPortableStem(options.modelPath) || options.modelPath;
+  const sourceFormat = options.formatLineage?.sourceFormat ?? inferModelAssetFormat(options.modelPath);
+  const effectiveFormat = options.formatLineage?.effectiveFormat ?? sourceFormat;
+  const loadStrategy = normalizeModelLoadStrategy(options.formatLineage?.loadStrategy, sourceFormat, effectiveFormat);
   return {
     task: "Draft an Obsidian knowledge note grounded only in the provided model evidence, annotations, and preview images. Do not invent part functions unless evidence or user notes support them.",
     model: {
       path: options.modelPath,
       title,
-      format: inferFormat(options.modelPath),
+      format: sourceFormat,
+      effectiveFormat,
+      loadStrategy,
       summary: options.preview ?? undefined,
       tags: options.profile?.tags ?? [],
       notes: options.profile?.notes ?? "",
@@ -403,6 +459,9 @@ function buildDraftingInput(options: {
       partNumber: part.partNumber,
       componentPath: part.componentPath,
       category: part.category,
+      sourceFormat: part.sourceFormat,
+      effectiveFormat: part.effectiveFormat,
+      loadStrategy: part.loadStrategy,
       meshRefs: [...part.meshRefs],
       childCount: part.childCount,
       triangleCount: part.triangleCount,
@@ -425,8 +484,12 @@ function collectWarnings(preview: ModelPreviewSummary | null, evidence?: ModelEv
 export function buildLocalAnalysisResult(options: BuildLocalAnalysisOptions): AnalysisResult {
   const startedAt = options.startedAt ?? nowMs();
   const preview = options.evidence?.summary ?? options.preview;
+  const assetFormat = inferModelAssetFormat(options.modelPath);
+  const evidenceLineage = options.evidence?.formatLineage;
+  const effectiveFormat = evidenceLineage?.effectiveFormat ?? assetFormat;
+  const loadStrategy = normalizeModelLoadStrategy(evidenceLineage?.loadStrategy, evidenceLineage?.sourceFormat ?? assetFormat, effectiveFormat);
   const parts = attachRegisteredPartMatches(
-    buildPartRecordsFromEvidence(options.modelPath, options.evidence?.parts ?? []),
+    buildPartRecordsFromEvidence(options.modelPath, options.evidence?.parts ?? [], evidenceLineage),
     options.registeredParts ?? [],
   );
   const importedAt = new Date().toISOString();
@@ -438,6 +501,7 @@ export function buildLocalAnalysisResult(options: BuildLocalAnalysisOptions): An
     modelPath: options.modelPath,
     profile: options.profile,
     preview,
+    formatLineage: evidenceLineage,
     parts,
     knowledgeNodes,
     annotationLinks,
@@ -450,7 +514,9 @@ export function buildLocalAnalysisResult(options: BuildLocalAnalysisOptions): An
       assetId: options.modelPath,
       title: getPortableStem(options.modelPath) || options.modelPath,
       sourcePath: options.modelPath,
-      format: inferFormat(options.modelPath),
+      format: assetFormat,
+      effectiveFormat,
+      loadStrategy,
       importedAt,
       updatedAt: importedAt,
       status: preview ? "ready" : "processing",

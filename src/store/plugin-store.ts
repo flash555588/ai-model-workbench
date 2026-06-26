@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import type { ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
+import type { ModelAssetFormat, ModelAssetProfile, ModelLoadStrategy, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 
@@ -215,6 +215,18 @@ function normalizePartSource(value: unknown): PartRecord["source"] {
     : undefined;
 }
 
+function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined {
+  return value === "glb" || value === "gltf" || value === "stl" || value === "obj" || value === "splat" ||
+    value === "ply" || value === "fbx" || value === "step" || value === "stp" || value === "iges" ||
+    value === "igs" || value === "brep" || value === "sldprt" || value === "3mf" || value === "dae"
+    ? value
+    : undefined;
+}
+
+function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefined {
+  return value === "direct" || value === "convert" ? value : undefined;
+}
+
 function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): PartRecord[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -251,6 +263,9 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): Part
       triangleCount: Number.isFinite(record.triangleCount) ? Math.max(0, Math.floor(Number(record.triangleCount))) : undefined,
       vertexCount: Number.isFinite(record.vertexCount) ? Math.max(0, Math.floor(Number(record.vertexCount))) : undefined,
       materialName: typeof record.materialName === "string" ? record.materialName : null,
+      sourceFormat: normalizeModelAssetFormat(record.sourceFormat),
+      effectiveFormat: normalizeModelAssetFormat(record.effectiveFormat),
+      loadStrategy: normalizeModelLoadStrategy(record.loadStrategy),
       confidence: Number.isFinite(record.confidence) ? Math.max(0, Math.min(1, Number(record.confidence))) : 0.5,
       observations: normalizeStringArray(record.observations),
       inferredFunctions: normalizeStringArray(record.inferredFunctions),

@@ -1,5 +1,5 @@
 import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
-import type { PluginSettings, ModelPreviewSummary, ModelEvidence, PartRecord } from "../domain/models";
+import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
@@ -8,7 +8,7 @@ import { createConversionManager } from "../io/conversion/factory";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import type { PluginStore } from "../store/plugin-store";
 import { prepareModelInput } from "../io/model-pipeline";
-import { toPreviewSource } from "../io/preview/preview-source";
+import { toPreviewSource, type PreviewSource } from "../io/preview/preview-source";
 import { readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
 import { listPreferredConversionExts } from "../io/formats/route-preferences";
 import { createNoteReader, createHeadingSearch } from "../utils/note-reader";
@@ -18,7 +18,7 @@ import { formatT, t } from "../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "./model-load-feedback";
 import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
-import { buildLocalAnalysisResult, buildPartRecordsFromEvidence } from "./workbench/analysis-result";
+import { buildLocalAnalysisResult, buildPartRecordsFromEvidence, inferModelAssetFormat } from "./workbench/analysis-result";
 import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
 import { createDirectViewLayout } from "./direct-view-layout";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
@@ -63,6 +63,43 @@ function mergeAutoRegisteredPart(previous: PartRecord | undefined, next: PartRec
   };
 }
 
+function createEvidenceFormatLineage(source: PreviewSource): ModelEvidenceFormatLineage {
+  return {
+    sourcePath: source.sourcePath,
+    sourceFormat: inferModelAssetFormat(source.sourceExt || source.sourcePath),
+    effectiveFormat: inferModelAssetFormat(source.ext || source.path),
+    loadStrategy: source.strategy,
+  };
+}
+
+function applyEvidenceFormatLineage(
+  evidence: ModelEvidence,
+  lineage: ModelEvidenceFormatLineage | null,
+  warnings: readonly string[] = [],
+): ModelEvidence {
+  if (!lineage && warnings.length === 0) {
+    return evidence;
+  }
+
+  const formatLineage = lineage ?? evidence.formatLineage;
+  const resourceWarnings = Array.from(new Set([
+    ...evidence.resourceWarnings,
+    ...warnings,
+  ]));
+
+  return {
+    ...evidence,
+    formatLineage,
+    resourceWarnings,
+    parts: evidence.parts.map((part) => ({
+      ...part,
+      sourceFormat: part.sourceFormat ?? formatLineage?.sourceFormat,
+      effectiveFormat: part.effectiveFormat ?? formatLineage?.effectiveFormat,
+      loadStrategy: part.loadStrategy ?? formatLineage?.loadStrategy,
+    })),
+  };
+}
+
 export class DirectModelView extends FileView {
   private preview: AnnotationPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
@@ -76,6 +113,8 @@ export class DirectModelView extends FileView {
   private workbenchSummary: ModelPreviewSummary | null = null;
   private workbenchRoute: { backend: string; reason: string } | null = null;
   private workbenchModelPath: string | null = null;
+  private workbenchEvidenceLineage: ModelEvidenceFormatLineage | null = null;
+  private workbenchSourceWarnings: string[] = [];
   private sidebarContent: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
@@ -132,6 +171,8 @@ export class DirectModelView extends FileView {
     this.workbenchSummary = null;
     this.workbenchRoute = null;
     this.workbenchModelPath = null;
+    this.workbenchEvidenceLineage = null;
+    this.workbenchSourceWarnings = [];
     this.sidebarContent = null;
     this.preview?.destroy();
     this.preview = null;
@@ -212,6 +253,8 @@ export class DirectModelView extends FileView {
         return;
       }
       const source = toPreviewSource(prepared);
+      this.workbenchEvidenceLineage = createEvidenceFormatLineage(source);
+      this.workbenchSourceWarnings = [...source.warnings];
 
       const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
       toolbar?.syncCapabilities();
@@ -228,7 +271,7 @@ export class DirectModelView extends FileView {
       host.dataset.ai3dRouteReason = created.route.reason;
       toolbar?.syncCapabilities();
       const summary = created.summary;
-      const evidence = this.preview.getModelEvidence?.() ?? null;
+      const evidence = this.getCurrentModelEvidence();
       this.registerModelPartsFromEvidence(file.path, evidence);
       renderModelPerformanceFeedback(host, summary);
       this.workbenchPanel = workbenchPanel;
@@ -318,7 +361,7 @@ export class DirectModelView extends FileView {
       return;
     }
 
-    const nextParts = buildPartRecordsFromEvidence(modelPath, evidence.parts);
+    const nextParts = buildPartRecordsFromEvidence(modelPath, evidence.parts, evidence.formatLineage);
     if (nextParts.length === 0) {
       return;
     }
@@ -332,6 +375,22 @@ export class DirectModelView extends FileView {
 
     this.ps.updateModelProfile(modelPath, (_existing) => ({ registeredParts }));
   }
+
+  private getCurrentModelEvidence(): ModelEvidence | null {
+    const evidence = this.preview?.getModelEvidence?.() ?? null;
+    return evidence ? applyEvidenceFormatLineage(evidence, this.workbenchEvidenceLineage, this.workbenchSourceWarnings) : null;
+  }
+
+  private createKnowledgePreviewAdapter(): Pick<AnnotationPreview, "captureSnapshot" | "getModelEvidence"> | null {
+    if (!this.preview) {
+      return null;
+    }
+    return {
+      captureSnapshot: () => this.preview?.captureSnapshot() ?? null,
+      getModelEvidence: () => this.getCurrentModelEvidence(),
+    };
+  }
+
   private renderWorkbenchPanel(
     panel: HTMLElement,
     summary: ModelPreviewSummary,
@@ -424,7 +483,7 @@ export class DirectModelView extends FileView {
     generateButton.addEventListener("click", () => {
       generateButton.disabled = true;
       void import("./workbench/knowledge-note")
-        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview: this.preview }))
+        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview: this.createKnowledgePreviewAdapter() }))
         .catch((err) => {
           console.error("[AI3D] Generate knowledge note failed:", err);
         })
@@ -479,7 +538,7 @@ export class DirectModelView extends FileView {
       body.createDiv({ cls: "ai3d-direct-workbench-empty", text: t(messageKey) });
     };
 
-    const evidence = this.preview?.getModelEvidence?.() ?? null;
+    const evidence = this.getCurrentModelEvidence();
     if (!evidence?.parts.length) {
       renderEmpty("directWorkbench.registeredUnavailable");
       return;

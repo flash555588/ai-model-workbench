@@ -30,7 +30,7 @@ future agent notes can refer to the same requirement over time.
 | REQ-001 | Single-model previews use Three.js by default while Babylon remains fallback/capability backend | P0 | Verified | `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-002 | `3dgrid` and conservative workbench routes remain on Babylon until workflow evidence justifies migration | P0 | Verified | `docs/preview-routing-matrix.md`, `npm test -- --run src/render/preview/routing.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-003 | Knowledge generation remains local-first and records report, sidecar, index, preview evidence, and part notes | P0 | Verified | `npm run verify:knowledge-index` |
-| REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `npm test -- --run src/render/preview/evidence.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
+| REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `npm test -- --run src/render/preview/evidence.test.ts src/view/workbench/analysis-result.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
 | REQ-005 | Registered part reuse feedback is visible in generated notes and direct workbench UI | P1 | Verified | `npm run verify:knowledge-index`, `npm run typecheck`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three` |
 | REQ-006 | Diagnostics reports expose support context without leaking draft service URLs, converter command paths, or vault-relative model/note paths | P1 | Verified | `npm run verify:diagnostics` |
 | REQ-007 | Release assets keep `manifest.json`, `package.json`, `versions.json`, `main.js`, and `styles.css` aligned | P0 | Verified | `npm run build`, `npm run verify:release` |
@@ -59,10 +59,11 @@ future agent notes can refer to the same requirement over time.
   - Generic, tiny, semantically unnamed mesh fragments are merged into a lower-confidence detail cluster when multiple fragments would otherwise over-split the evidence.
   - Semantically named tiny mesh parts, explicit groups, and component metadata remain separate part candidates.
   - Detail clusters remain visible in reports and sidecars but are not drafted as standalone part notes unless user evidence or registered matches promotes them.
+  - Part candidates preserve source/effective format lineage, such as `STEP -> GLB (convert)`, in registered profiles, reports, sidecars, draft input, and part notes without storing converted absolute filesystem paths.
   - The grouped-parts browser fixture verifies that group and mesh evidence are both preserved.
 - Verification:
   - `npm run verify:knowledge-index`
-  - `npm test -- --run src/render/preview/evidence.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`
+  - `npm test -- --run src/render/preview/evidence.test.ts src/view/workbench/analysis-result.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`
   - `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`
   - `AstroInk_v1_1_3D模型.step` conversion probe exported 82 named component meshes and preview verification passed on the generated GLB.
 

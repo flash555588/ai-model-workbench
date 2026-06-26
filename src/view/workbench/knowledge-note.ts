@@ -4,7 +4,9 @@ import type {
   AnnotationPin,
   KnowledgeGenerationRecord,
   LocalDraftResult,
+  ModelAssetFormat,
   ModelAssetProfile,
+  ModelLoadStrategy,
   ModelPreviewSummary,
   PartRecord,
   RegisteredPartMatch,
@@ -112,6 +114,18 @@ function formatPartSource(part: PartRecord): string {
     return `detail cluster (${part.childCount ?? part.meshRefs.length})`;
   }
   return "mesh";
+}
+
+function formatPartFormatLineage(part: PartRecord): string | null {
+  if (!part.sourceFormat && !part.effectiveFormat && !part.loadStrategy) {
+    return null;
+  }
+  const sourceFormat = part.sourceFormat ?? part.effectiveFormat;
+  const effectiveFormat = part.effectiveFormat ?? sourceFormat;
+  const strategy = part.loadStrategy ?? (sourceFormat && effectiveFormat && sourceFormat !== effectiveFormat ? "convert" : "direct");
+  const sourceText = sourceFormat ? sourceFormat.toUpperCase() : "unknown";
+  const effectiveText = effectiveFormat && effectiveFormat !== sourceFormat ? ` -> ${effectiveFormat.toUpperCase()}` : "";
+  return `${sourceText}${effectiveText} (${strategy})`;
 }
 
 function formatRegisteredMatch(match: RegisteredPartMatch): string {
@@ -570,7 +584,8 @@ function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
     const center = formatVectorTuple(part.center);
     const observations = part.observations.slice(0, 2).join(" ");
     const partNote = part.notePath ? `[[${part.notePath}]]` : "-";
-    const source = formatPartSource(part);
+    const formatLineage = formatPartFormatLineage(part);
+    const source = [formatPartSource(part), formatLineage].filter(Boolean).join("; ");
     lines.push(`| ${index + 1} | ${escapeTableCell(part.name)} | ${escapeTableCell(partNote)} | ${escapeTableCell(source)} | ${escapeTableCell(part.category ?? "unclassified")} | ${(part.triangleCount ?? 0).toLocaleString()} | ${escapeTableCell(part.materialName ?? "-")} | ${center} | ${escapeTableCell(observations)} |`);
   }
   if (parts.length > 32) {
@@ -858,6 +873,18 @@ function normalizePartSource(value: unknown): PartRecord["source"] {
     : undefined;
 }
 
+function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined {
+  return value === "glb" || value === "gltf" || value === "stl" || value === "obj" || value === "splat" ||
+    value === "ply" || value === "fbx" || value === "step" || value === "stp" || value === "iges" ||
+    value === "igs" || value === "brep" || value === "sldprt" || value === "3mf" || value === "dae"
+    ? value
+    : undefined;
+}
+
+function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefined {
+  return value === "direct" || value === "convert" ? value : undefined;
+}
+
 function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string): PartRecord | null {
   if (!isRecord(value)) return null;
   const partId = typeof value.partId === "string" ? value.partId : "";
@@ -883,6 +910,9 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     triangleCount: Number.isFinite(value.triangleCount) ? Number(value.triangleCount) : undefined,
     vertexCount: Number.isFinite(value.vertexCount) ? Number(value.vertexCount) : undefined,
     materialName: typeof value.materialName === "string" ? value.materialName : null,
+    sourceFormat: normalizeModelAssetFormat(value.sourceFormat),
+    effectiveFormat: normalizeModelAssetFormat(value.effectiveFormat),
+    loadStrategy: normalizeModelLoadStrategy(value.loadStrategy),
     confidence: Number.isFinite(value.confidence) ? Number(value.confidence) : 0.5,
     observations: normalizeStringArray(value.observations),
     inferredFunctions: normalizeStringArray(value.inferredFunctions),
@@ -991,6 +1021,9 @@ function buildPartNoteContent(options: {
     ...(options.part.componentId ? [`component_id: ${markdownQuote(options.part.componentId)}`] : []),
     ...(options.part.occurrenceId ? [`occurrence_id: ${markdownQuote(options.part.occurrenceId)}`] : []),
     ...(options.part.partNumber ? [`part_number: ${markdownQuote(options.part.partNumber)}`] : []),
+    ...(options.part.sourceFormat ? [`source_format: ${markdownQuote(options.part.sourceFormat)}`] : []),
+    ...(options.part.effectiveFormat ? [`effective_format: ${markdownQuote(options.part.effectiveFormat)}`] : []),
+    ...(options.part.loadStrategy ? [`load_strategy: ${markdownQuote(options.part.loadStrategy)}`] : []),
     `category: ${markdownQuote(options.part.category ?? "unclassified")}`,
     `status: draft`,
     `generated_by: ai-model-workbench`,
@@ -1008,6 +1041,7 @@ function buildPartNoteContent(options: {
     `- Source model: [[${options.sourcePath}|${options.baseName}]]`,
     `- Parent report: [[${options.notePath}|${options.baseName} Report]]`,
     `- Source: ${formatPartSource(options.part)}`,
+    ...(formatPartFormatLineage(options.part) ? [`- Format lineage: ${formatPartFormatLineage(options.part)}`] : []),
     `- Category: ${options.part.category ?? "unclassified"}`,
     ...(options.part.componentId ? [`- Component ID: ${options.part.componentId}`] : []),
     ...(options.part.occurrenceId ? [`- Occurrence ID: ${options.part.occurrenceId}`] : []),

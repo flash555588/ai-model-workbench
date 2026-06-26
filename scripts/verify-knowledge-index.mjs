@@ -260,6 +260,12 @@ await writeFile(entryPath, `
 
   const stepEvidence: ModelEvidence = {
     summary: { ...preview, rootName: "pcb.step", meshCount: 1 },
+    formatLineage: {
+      sourcePath: "models/pcb.step",
+      sourceFormat: "step",
+      effectiveFormat: "glb",
+      loadStrategy: "convert",
+    },
     parts: [
       {
         name: "R1",
@@ -311,7 +317,12 @@ await writeFile(entryPath, `
     ],
   });
   assert(stepAnalysis.asset.format === "step", "STEP analysis should preserve source format");
+  assert(stepAnalysis.asset.effectiveFormat === "glb", "STEP analysis should preserve effective converted format");
+  assert(stepAnalysis.asset.loadStrategy === "convert", "STEP analysis should preserve conversion load strategy");
   const stepPart = stepAnalysis.parts.find((part) => part.name === "R1");
+  assert(stepPart?.sourceFormat === "step", "STEP component part did not preserve source format");
+  assert(stepPart?.effectiveFormat === "glb", "STEP component part did not preserve effective format");
+  assert(stepPart?.loadStrategy === "convert", "STEP component part did not preserve load strategy");
   assert(stepPart?.registeredMatches?.[0]?.sourceAssetId === "models/other-board.fbx", "STEP component did not match registered part from another extension");
   assert(stepPart.registeredMatches[0].reasons.some((reason) => reason.includes("same component id")), "Cross-extension match did not use component id");
 
