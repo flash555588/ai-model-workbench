@@ -5,7 +5,6 @@ import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/fo
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
 import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
-import { setupHeadingPinObserver } from "./view/heading-pin-observer";
 import { AI3DSettingTab } from "./settings";
 import { inspectAllConverterCommands } from "./io/conversion/command-discovery";
 import { createLogger, setLogLevel } from "./utils/log";
@@ -27,6 +26,8 @@ import { isMobile } from "./utils/device";
 export default class AI3DModelWorkbench extends Plugin {
   private ps!: PluginStore;
   private convertedAssetCache!: ConvertedAssetCache;
+  private unloaded = false;
+  private headingPinObserverStarted = false;
 
   getSettings(): PluginSettings {
     return this.ps.store.getState().settings;
@@ -39,6 +40,7 @@ export default class AI3DModelWorkbench extends Plugin {
   }
 
   async onload() {
+    this.unloaded = false;
     this.ps = createPluginStore(this);
     await this.ps.load();
     this.convertedAssetCache = createConvertedAssetCache(
@@ -99,36 +101,65 @@ export default class AI3DModelWorkbench extends Plugin {
     this.registerView(DIRECT_VIEW_TYPE, (leaf) => new DirectModelView(leaf, () => this.getSettings(), this.convertedAssetCache, this.ps));
     this.registerExtensions(listSupportedModelExtensions(), DIRECT_VIEW_TYPE);
 
-    // Register ```3d and ```3dgrid code block processors
-    const { registerCodeBlockProcessor, registerGridCodeBlockProcessor } = await import("./view/inline/code-block");
     const getAnnotations = (modelPath: string) =>
       this.ps.store.getState().modelAssetProfiles[modelPath]?.annotations ?? [];
+    const [
+      { registerCodeBlockProcessor, registerGridCodeBlockProcessor },
+      { registerLivePreviewExtension },
+    ] = await Promise.all([
+      import("./view/inline/code-block"),
+      import("./view/inline/live-preview"),
+    ]);
+
+    // Register ```3d and ```3dgrid code block processors
     const cb = registerCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
     this.registerMarkdownCodeBlockProcessor(cb.id, cb.handler);
     const gridCb = registerGridCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache);
     this.registerMarkdownCodeBlockProcessor(gridCb.id, gridCb.handler);
 
     // Register Live Preview extension for ![[model.glb]] embeds
-    const { registerLivePreviewExtension } = await import("./view/inline/live-preview");
     const exts = registerLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
     for (const e of exts) {
       this.registerEditorExtension(e);
     }
 
     // Watch note headings for hover → highlight pin
-    setupHeadingPinObserver({
-      subscribeStore: (cb) => this.ps.store.subscribe(cb),
-      getModelAssetProfiles: () => this.ps.store.getState().modelAssetProfiles,
-      registerCleanup: (cleanup) => this.register(cleanup),
-      onLayoutChange: (cb) => { this.registerEvent(this.app.workspace.on("layout-change", cb)); },
+    this.app.workspace.onLayoutReady(() => {
+      window.setTimeout(() => {
+        void this.startHeadingPinObserver();
+      }, 0);
     });
   }
 
   onunload(): void {
+    this.unloaded = true;
     // Flush any pending state before the plugin is torn down so annotations,
     // registered parts, and last-generation metadata are not lost.
     this.ps.save().catch(err => console.error("[AI3D] unload save failed:", err));
     // Views are cleaned up by Obsidian calling onClose()
+  }
+
+  private async startHeadingPinObserver(): Promise<void> {
+    if (this.unloaded || this.headingPinObserverStarted) {
+      return;
+    }
+    this.headingPinObserverStarted = true;
+    try {
+      const { setupHeadingPinObserver } = await import("./view/heading-pin-observer");
+      if (this.unloaded) {
+        return;
+      }
+      // Watch note headings for hover -> highlight pin after the workspace has settled.
+      setupHeadingPinObserver({
+        subscribeStore: (cb) => this.ps.store.subscribe(cb),
+        getModelAssetProfiles: () => this.ps.store.getState().modelAssetProfiles,
+        registerCleanup: (cleanup) => this.register(cleanup),
+        onLayoutChange: (cb) => { this.registerEvent(this.app.workspace.on("layout-change", cb)); },
+      });
+    } catch (error) {
+      this.headingPinObserverStarted = false;
+      console.warn("[AI3D] Failed to start heading pin observer:", error);
+    }
   }
 
 

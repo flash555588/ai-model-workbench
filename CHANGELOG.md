@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.
 - Performance: overlap direct-view model file reads with preview backend creation so large files spend less time in the loading phase before parsing starts.
 - Performance: reuse source file stats across conversion-cache checks, reducing repeated filesystem metadata reads on slow or synced storage.
