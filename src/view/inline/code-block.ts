@@ -27,6 +27,7 @@ import {
   configureGridPreviewCanvas,
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
+import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 
 const log = createLogger("inline-code-block");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
@@ -267,85 +268,89 @@ export function registerCodeBlockProcessor(
         const loading = createLoadingOverlay(host);
 
         try {
-          const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
-          const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
           loading.setPhaseKey("loading.preparingModel");
-          const prepared = await prepareModelInput({
-            path: modelPath,
-            absolutePath,
-            preferConversionExts: listPreferredConversionExts(settings),
-            conversionManager: () => createInlineConversionManager(settings),
-            convertedAssetCache,
-            conversionOutputRoot,
-          });
-          const source = toPreviewSource(prepared);
-          const pins = getAnnotations?.(modelPath) ?? [];
-          const previewOptions = {
-            ext: source.ext,
-            annotationMode: pins.length > 0 ? "readonly" : "none",
-            rendererRollout: settings.previewRendererRollout,
-            useThreeRenderer: settings.useThreeRenderer,
-          } as const;
-          const { preview: nextPreview } = await createLoggedModelPreview(
-            log,
-            { surface: "code-block", modelPath },
-            canvas,
-            previewOptions,
-          );
-          preview = nextPreview;
-          toolbar.syncCapabilities();
-          loading.setPhaseKey("loading.loadingModel");
-          const data = await readBinaryPath(app, source.path);
-          const readFile = async (p: string) => readBinaryPath(app, p);
+          await scheduleInlinePreviewLoad(async () => {
+            if (destroyed || !host.isConnected) { loading.hide(); return; }
+            const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
+            const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+            loading.setPhaseKey("loading.preparingModel");
+            const prepared = await prepareModelInput({
+              path: modelPath,
+              absolutePath,
+              preferConversionExts: listPreferredConversionExts(settings),
+              conversionManager: () => createInlineConversionManager(settings),
+              convertedAssetCache,
+              conversionOutputRoot,
+            });
+            const source = toPreviewSource(prepared);
+            const pins = getAnnotations?.(modelPath) ?? [];
+            const previewOptions = {
+              ext: source.ext,
+              annotationMode: pins.length > 0 ? "readonly" : "none",
+              rendererRollout: settings.previewRendererRollout,
+              useThreeRenderer: settings.useThreeRenderer,
+            } as const;
+            const { preview: nextPreview } = await createLoggedModelPreview(
+              log,
+              { surface: "code-block", modelPath },
+              canvas,
+              previewOptions,
+            );
+            preview = nextPreview;
+            toolbar.syncCapabilities();
+            loading.setPhaseKey("loading.loadingModel");
+            const data = await readBinaryPath(app, source.path);
+            const readFile = async (p: string) => readBinaryPath(app, p);
 
-          if (destroyed) { loading.hide(); return; }
-          const summary = await preview.loadModel(data, source.ext, readFile, source.path);
-          loading.setProgress(100);
-          renderModelPerformanceFeedback(host, summary);
+            if (destroyed) { loading.hide(); return; }
+            const summary = await preview.loadModel(data, source.ext, readFile, source.path);
+            loading.setProgress(100);
+            renderModelPerformanceFeedback(host, summary);
 
-          if (destroyed) { loading.hide(); return; }
-          if (config.scene?.autoRotate === undefined && settings.autoRotateDefault) {
-            config.scene = { ...config.scene, autoRotate: true, autoRotateSpeed: settings.autoRotateSpeed };
-          }
-          preview.applyConfig(config);
-          preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
-          toolbar.syncCapabilities();
-
-          // Readonly annotations
-          if (pins.length > 0 && supportsAnnotationPreview(preview)) {
-            const provider = preview.getAnnotationProvider();
-            if (provider.canvas) {
-              annotationMgr = new AnnotationManager(
-                provider,
-                host,
-                "readonly",
-                pins,
-                undefined,
-                createNoteReader(app),
-                undefined,
-                {
-                  app,
-                  previewMode: settings.annotationPreviewMode,
-                  displayMode: settings.annotationDisplayMode,
-                },
-              );
-              toolbar.showAnnotateButton();
-              toolbar.updateAnnotationBadge(pins.length);
+            if (destroyed) { loading.hide(); return; }
+            if (config.scene?.autoRotate === undefined && settings.autoRotateDefault) {
+              config.scene = { ...config.scene, autoRotate: true, autoRotateSpeed: settings.autoRotateSpeed };
             }
-          }
+            preview.applyConfig(config);
+            preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
+            toolbar.syncCapabilities();
 
-          if (ext === "stl" && modelCfg.color) {
-            preview.setSTLColor?.(modelCfg.color);
-          }
-          if (ext === "stl" && modelCfg.wireframe !== undefined) {
-            preview.setWireframe?.(modelCfg.wireframe);
-          }
+            // Readonly annotations
+            if (pins.length > 0 && supportsAnnotationPreview(preview)) {
+              const provider = preview.getAnnotationProvider();
+              if (provider.canvas) {
+                annotationMgr = new AnnotationManager(
+                  provider,
+                  host,
+                  "readonly",
+                  pins,
+                  undefined,
+                  createNoteReader(app),
+                  undefined,
+                  {
+                    app,
+                    previewMode: settings.annotationPreviewMode,
+                    displayMode: settings.annotationDisplayMode,
+                  },
+                );
+                toolbar.showAnnotateButton();
+                toolbar.updateAnnotationBadge(pins.length);
+              }
+            }
 
-          if (preview.hasAnimations?.()) {
-            toolbar.showAnimButton();
-          }
+            if (ext === "stl" && modelCfg.color) {
+              preview.setSTLColor?.(modelCfg.color);
+            }
+            if (ext === "stl" && modelCfg.wireframe !== undefined) {
+              preview.setWireframe?.(modelCfg.wireframe);
+            }
 
-          loading.hide();
+            if (preview.hasAnimations?.()) {
+              toolbar.showAnimButton();
+            }
+
+            loading.hide();
+          });
         } catch (err) {
           destroyed = true;
           observer.disconnect();
@@ -475,26 +480,11 @@ export function registerGridCodeBlockProcessor(
         return;
       }
 
-      const settings = getSettings();
-      const gridLoading = createLoadingOverlay(el);
-
-      void (async () => {
-      const preparedModels: PreparedInlineModel[] = [];
-      for (const entry of config.models ?? []) {
-        try {
-          const prepared = await prepareInlineModel(app, entry, settings, convertedAssetCache);
-          preparedModels.push(prepared);
-        } catch (err) {
-          gridLoading.hide();
-          el.createDiv({
-            cls: "ai3d-inline-empty",
-            text: err instanceof Error ? err.message : String(err),
-          });
-          return;
-        }
-      }
-      const resolved: ModelConfig[] = preparedModels.map((item) => item.model);
-      let helperSourcePath = preparedModels[0]?.sourcePath ?? "";
+      const configuredModelCount = config.preset === "compose"
+        ? 1
+        : Math.max(1, config.models?.length ?? 1);
+      const firstModelEntry = config.models?.[0] ?? config.sections?.[0]?.models[0];
+      let helperSourcePath = typeof firstModelEntry === "string" ? firstModelEntry : firstModelEntry?.path ?? "";
 
       // Create grid container
       const gridHost = el.createDiv({ cls: "ai3d-grid-host" });
@@ -504,32 +494,36 @@ export function registerGridCodeBlockProcessor(
 
       // Height controlled by CSS max-height only; rowHeight sets inline height (capped by CSS max-height)
       if (typeof config.rowHeight === "number") {
-        const rows = config.preset === "compose" ? 1 : Math.ceil(resolved.length / (config.columns ?? Math.min(resolved.length, 3)));
+        const rows = config.preset === "compose"
+          ? 1
+          : Math.ceil(configuredModelCount / (config.columns ?? Math.min(configuredModelCount, 3)));
         gridHost.style.setProperty("--grid-height", `${config.rowHeight * rows}px`);
       }
 
       let renderer: PreviewGridRenderer | null = null;
       let destroyed = false;
       let loaded = false;
+      let observer: MutationObserver | null = null;
+      let gridIo: IntersectionObserver | null = null;
       attachGridPreviewCanvasShortcuts(canvas, () => destroyed ? null : renderer);
 
       const gridToolbar: HelperToolbar = createHelperButtons(el, gridHost, app, () => renderer, () => helperSourcePath, () => {
         if (destroyed) return;
         destroyed = true;
-        observer.disconnect();
-        gridIo.disconnect();
+        observer?.disconnect();
+        gridIo?.disconnect();
         renderer?.destroy();
         renderer = null;
         gridHost.remove();
       }, getSettings);
       appendMobileInlineHint(el);
 
-      const observer = new MutationObserver(() => {
+      observer = new MutationObserver(() => {
         if (destroyed) return;
         if (!el.contains(gridHost)) {
           destroyed = true;
-          observer.disconnect();
-          gridIo.disconnect();
+          observer?.disconnect();
+          gridIo?.disconnect();
           renderer?.destroy();
           renderer = null;
         }
@@ -539,131 +533,145 @@ export function registerGridCodeBlockProcessor(
       async function loadGrid() {
         if (loaded || destroyed) return;
         loaded = true;
+        const gridLoading = createLoadingOverlay(gridHost);
         gridLoading.setPhaseKey("codeBlock.renderingGrid");
         gridLoading.setProgress(-1);
 
         try {
-          const { renderer: nextRenderer } = await createLoggedGridRenderer(
-            log,
-            {
-              surface: "3dgrid",
-              preset: config.preset ?? "compare",
-              modelCount: config.models?.length ?? 0,
-            },
-            canvas,
-          );
-          renderer = nextRenderer;
-          gridToolbar.syncCapabilities();
-          const activeRenderer = renderer;
-          const readFile = async (path: string) => readBinaryPath(app, path);
-
-          if (config.preset === "compose") {
-            if (!config.sections || config.sections.length === 0) {
-              gridLoading.hide();
-              gridHost.createDiv({ cls: "ai3d-inline-empty", text: t("codeBlock.composeRequiresSections") });
-              renderer.destroy();
-              renderer = null;
-              return;
+          await scheduleInlinePreviewLoad(async () => {
+            if (destroyed || !gridHost.isConnected) { gridLoading.hide(); return; }
+            const settings = getSettings();
+            const preparedModels: PreparedInlineModel[] = [];
+            for (const entry of config.models ?? []) {
+              const prepared = await prepareInlineModel(app, entry, settings, convertedAssetCache);
+              preparedModels.push(prepared);
             }
-            const preparedSections: ComposeSection[] = [];
-            for (const section of config.sections) {
-              try {
-                if (!helperSourcePath) {
-                  const firstEntry = section.models[0];
-                  if (firstEntry) {
-                    const rawPath = typeof firstEntry === "string" ? firstEntry : firstEntry.path;
-                    helperSourcePath = resolveVaultPath(app, rawPath) ?? rawPath;
+            const resolved: ModelConfig[] = preparedModels.map((item) => item.model);
+            helperSourcePath = preparedModels[0]?.sourcePath ?? helperSourcePath;
+            const { renderer: nextRenderer } = await createLoggedGridRenderer(
+              log,
+              {
+                surface: "3dgrid",
+                preset: config.preset ?? "compare",
+                modelCount: config.models?.length ?? 0,
+              },
+              canvas,
+            );
+            renderer = nextRenderer;
+            gridToolbar.syncCapabilities();
+            const activeRenderer = renderer;
+            const readFile = async (path: string) => readBinaryPath(app, path);
+
+            if (config.preset === "compose") {
+              if (!config.sections || config.sections.length === 0) {
+                gridLoading.hide();
+                gridHost.createDiv({ cls: "ai3d-inline-empty", text: t("codeBlock.composeRequiresSections") });
+                renderer.destroy();
+                renderer = null;
+                return;
+              }
+              const preparedSections: ComposeSection[] = [];
+              for (const section of config.sections) {
+                try {
+                  if (!helperSourcePath) {
+                    const firstEntry = section.models[0];
+                    if (firstEntry) {
+                      const rawPath = typeof firstEntry === "string" ? firstEntry : firstEntry.path;
+                      helperSourcePath = resolveVaultPath(app, rawPath) ?? rawPath;
+                    }
                   }
+                  const preparedSection = await prepareInlineSection(app, section, settings, convertedAssetCache);
+                  preparedSections.push(preparedSection);
+                } catch (err) {
+                  gridLoading.hide();
+                  gridHost.createDiv({
+                    cls: "ai3d-inline-empty",
+                    text: err instanceof Error ? err.message : String(err),
+                  });
+                  activeRenderer.destroy();
+                  renderer = null;
+                  return;
                 }
-                const preparedSection = await prepareInlineSection(app, section, settings, convertedAssetCache);
-                preparedSections.push(preparedSection);
-              } catch (err) {
+              }
+              const result = composeSections(
+                preparedSections,
+                config.direction ?? "horizontal",
+                Number(config.params?.gap) || 0.02,
+                (entry) => {
+                  if (typeof entry === "string") return null;
+                  return entry;
+                },
+                getPreset,
+              );
+              if (!result) {
+                gridLoading.hide();
+                gridHost.createDiv({ cls: "ai3d-inline-empty", text: t("codeBlock.composeNoValidSections") });
+                activeRenderer.destroy();
+                renderer = null;
+                return;
+              }
+              await activeRenderer.loadWithPreset(result, readFile);
+            } else if (config.preset) {
+              const preset = getPreset(config.preset);
+              if (!preset) {
                 gridLoading.hide();
                 gridHost.createDiv({
                   cls: "ai3d-inline-empty",
-                  text: err instanceof Error ? err.message : String(err),
+                  text: formatT("codeBlock.unknownPreset", { preset: config.preset }),
                 });
                 activeRenderer.destroy();
                 renderer = null;
                 return;
               }
+              const result = preset.compute(resolved, config.params ?? {});
+              if (!result) {
+                gridLoading.hide();
+                gridHost.createDiv({
+                  cls: "ai3d-inline-empty",
+                  text: formatT("codeBlock.presetRequiresModels", {
+                    preset: config.preset,
+                    min: String(preset.minModels),
+                    max: String(preset.maxModels),
+                    count: String(resolved.length),
+                  }),
+                });
+                activeRenderer.destroy();
+                renderer = null;
+                return;
+              }
+              await activeRenderer.loadWithPreset(result, readFile);
+            } else {
+              await activeRenderer.loadModels(resolved, config, readFile);
             }
-            const result = composeSections(
-              preparedSections,
-              config.direction ?? "horizontal",
-              Number(config.params?.gap) || 0.02,
-              (entry) => {
-                if (typeof entry === "string") return null;
-                return entry;
-              },
-              getPreset,
-            );
-            if (!result) {
-              gridLoading.hide();
-              gridHost.createDiv({ cls: "ai3d-inline-empty", text: t("codeBlock.composeNoValidSections") });
-              activeRenderer.destroy();
-              renderer = null;
-              return;
-            }
-            await activeRenderer.loadWithPreset(result, readFile);
-          } else if (config.preset) {
-            const preset = getPreset(config.preset);
-            if (!preset) {
-              gridLoading.hide();
-              gridHost.createDiv({
-                cls: "ai3d-inline-empty",
-                text: formatT("codeBlock.unknownPreset", { preset: config.preset }),
-              });
-              activeRenderer.destroy();
-              renderer = null;
-              return;
-            }
-            const result = preset.compute(resolved, config.params ?? {});
-            if (!result) {
-              gridLoading.hide();
-              gridHost.createDiv({
-                cls: "ai3d-inline-empty",
-                text: formatT("codeBlock.presetRequiresModels", {
-                  preset: config.preset,
-                  min: String(preset.minModels),
-                  max: String(preset.maxModels),
-                  count: String(resolved.length),
-                }),
-              });
-              activeRenderer.destroy();
-              renderer = null;
-              return;
-            }
-            await activeRenderer.loadWithPreset(result, readFile);
-          } else {
-            await activeRenderer.loadModels(resolved, config, readFile);
-          }
 
-          if (destroyed) { gridLoading.hide(); return; }
-          gridLoading.hide();
+            if (destroyed) { gridLoading.hide(); return; }
+            gridLoading.hide();
+          });
         } catch (err) {
           destroyed = true;
-          observer.disconnect();
-          gridIo.disconnect();
+          observer?.disconnect();
+          gridIo?.disconnect();
           gridLoading.hide();
           renderer?.destroy();
           renderer = null;
           console.error("[AI3D Grid] Failed:", err);
-          gridHost.createDiv({ cls: "ai3d-inline-empty", text: formatT("codeBlock.gridFailed", { reason: String(err) }) });
+          gridHost.createDiv({
+            cls: "ai3d-inline-empty",
+            text: err instanceof Error ? err.message : formatT("codeBlock.gridFailed", { reason: String(err) }),
+          });
         }
       }
 
       // Lazy-load: only create Engine when scrolled into view
-      const gridIo = new IntersectionObserver((entries) => {
+      gridIo = new IntersectionObserver((entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            gridIo.disconnect();
+            gridIo?.disconnect();
             void loadGrid();
           }
         }
       }, { rootMargin: "200px" });
       gridIo.observe(gridHost);
-      })(); // end async IIFE
     },
   };
 }

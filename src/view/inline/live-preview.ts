@@ -29,6 +29,7 @@ import {
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
 import { transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
+import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 
 const log = createLogger("inline-live-preview");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
@@ -200,97 +201,104 @@ class ModelEmbedWidget extends WidgetType {
     generation: number,
   ): Promise<void> {
     try {
-      const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
       loading.setPhaseKey("loading.preparingModel");
-      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
-      const prepared = await prepareModelInput({
-        path: this.modelPath,
-        absolutePath,
-        preferConversionExts: listPreferredConversionExts({
-          preferObj2gltfForObj: this.preferObj2gltfForObj,
-          preferFbx2gltfForFbx: this.preferFbx2gltfForFbx,
-        }),
-        conversionManager: async () => {
-          const { createConversionManager } = await import("../../io/conversion/factory");
-          return createConversionManager({
-            enabledConverterIds: this.enabledConverterIds,
-            freecadCommand: this.freecadCommand,
-            obj2gltfCommand: this.obj2gltfCommand,
-            fbx2gltfCommand: this.fbx2gltfCommand,
-            freecadcmdCommand: this.freecadcmdCommand,
-          });
-        },
-        convertedAssetCache: this.convertedAssetCache,
-        conversionOutputRoot,
-      });
-      const pins = this.getAnnotations?.(this.modelPath) ?? [];
-      const previewOptions = {
-        ext: prepared.effectiveExt,
-        annotationMode: pins.length > 0 ? "readonly" : "none",
-        rendererRollout: this.previewRendererRollout,
-        useThreeRenderer: this.useThreeRenderer,
-      } as const;
-      const { preview } = await createLoggedModelPreview(
-        log,
-        { surface: "live-preview", modelPath: this.modelPath },
-        canvas,
-        previewOptions,
-      );
-      if (this.destroyed || generation !== this.initGeneration) {
-        preview.destroy();
-        return;
-      }
-      this.preview = preview;
-      loading.setPhaseKey("loading.loadingModel");
-      const data = await readBinaryPath(this.app, prepared.effectivePath);
-      if (this.destroyed || generation !== this.initGeneration) {
-        this.preview?.destroy();
-        this.preview = null;
-        return;
-      }
-      const summary = await this.preview.loadModel(
-        data,
-        prepared.effectiveExt,
-        (path) => readBinaryPath(this.app, path),
-        prepared.effectivePath,
-      );
-      if (this.destroyed || generation !== this.initGeneration) {
-        this.preview?.destroy();
-        this.preview = null;
-        return;
-      }
-      renderModelPerformanceFeedback(host, summary);
-
-      if (this.autoRotate) {
-        this.preview.applyConfig({
-          models: [],
-          scene: { autoRotate: true, autoRotateSpeed: 0.5 },
-        });
-      }
-
-      // Readonly annotations
-      if (pins.length > 0 && supportsAnnotationPreview(this.preview)) {
-        const provider = this.preview.getAnnotationProvider();
-        if (provider.canvas) {
-          this.annotationMgr = new AnnotationManager(
-            provider,
-            host,
-            "readonly",
-            pins,
-            undefined,
-            createNoteReader(this.app),
-            undefined,
-            {
-              app: this.app,
-              previewMode: this.annotationPreviewMode,
-              displayMode: this.annotationDisplayMode,
-            },
-          );
+      await scheduleInlinePreviewLoad(async () => {
+        if (this.destroyed || generation !== this.initGeneration || !host.isConnected) {
+          loading.hide();
+          return;
         }
-      }
+        const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
+        loading.setPhaseKey("loading.preparingModel");
+        const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+        const prepared = await prepareModelInput({
+          path: this.modelPath,
+          absolutePath,
+          preferConversionExts: listPreferredConversionExts({
+            preferObj2gltfForObj: this.preferObj2gltfForObj,
+            preferFbx2gltfForFbx: this.preferFbx2gltfForFbx,
+          }),
+          conversionManager: async () => {
+            const { createConversionManager } = await import("../../io/conversion/factory");
+            return createConversionManager({
+              enabledConverterIds: this.enabledConverterIds,
+              freecadCommand: this.freecadCommand,
+              obj2gltfCommand: this.obj2gltfCommand,
+              fbx2gltfCommand: this.fbx2gltfCommand,
+              freecadcmdCommand: this.freecadcmdCommand,
+            });
+          },
+          convertedAssetCache: this.convertedAssetCache,
+          conversionOutputRoot,
+        });
+        const pins = this.getAnnotations?.(this.modelPath) ?? [];
+        const previewOptions = {
+          ext: prepared.effectiveExt,
+          annotationMode: pins.length > 0 ? "readonly" : "none",
+          rendererRollout: this.previewRendererRollout,
+          useThreeRenderer: this.useThreeRenderer,
+        } as const;
+        const { preview } = await createLoggedModelPreview(
+          log,
+          { surface: "live-preview", modelPath: this.modelPath },
+          canvas,
+          previewOptions,
+        );
+        if (this.destroyed || generation !== this.initGeneration) {
+          preview.destroy();
+          return;
+        }
+        this.preview = preview;
+        loading.setPhaseKey("loading.loadingModel");
+        const data = await readBinaryPath(this.app, prepared.effectivePath);
+        if (this.destroyed || generation !== this.initGeneration) {
+          this.preview?.destroy();
+          this.preview = null;
+          return;
+        }
+        const summary = await this.preview.loadModel(
+          data,
+          prepared.effectiveExt,
+          (path) => readBinaryPath(this.app, path),
+          prepared.effectivePath,
+        );
+        if (this.destroyed || generation !== this.initGeneration) {
+          this.preview?.destroy();
+          this.preview = null;
+          return;
+        }
+        renderModelPerformanceFeedback(host, summary);
 
-      loading.setProgress(100);
-      loading.hide();
+        if (this.autoRotate) {
+          this.preview.applyConfig({
+            models: [],
+            scene: { autoRotate: true, autoRotateSpeed: 0.5 },
+          });
+        }
+
+        // Readonly annotations
+        if (pins.length > 0 && supportsAnnotationPreview(this.preview)) {
+          const provider = this.preview.getAnnotationProvider();
+          if (provider.canvas) {
+            this.annotationMgr = new AnnotationManager(
+              provider,
+              host,
+              "readonly",
+              pins,
+              undefined,
+              createNoteReader(this.app),
+              undefined,
+              {
+                app: this.app,
+                previewMode: this.annotationPreviewMode,
+                displayMode: this.annotationDisplayMode,
+              },
+            );
+          }
+        }
+
+        loading.setProgress(100);
+        loading.hide();
+      });
     } catch (err) {
       if (this.destroyed || generation !== this.initGeneration) {
         return;

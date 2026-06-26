@@ -11,6 +11,7 @@
 - Performance: throttle Three.js measurement preview-line raycasts to animation frames so large models do less work during pointer movement.
 - Performance: register direct file views through a lightweight lazy proxy so Direct View renderer/workbench modules load only when a model file is opened.
 - Performance: register reading-mode `3d`/`3dgrid` code blocks through lightweight lazy handlers so heavy inline preview modules load only when a rendered block needs them.
+- Performance: serialize Live Preview and reading-mode model loads through an inline preview queue and defer `3dgrid` model preparation until the grid enters the viewport, reducing startup and multi-model I/O spikes.
 - Performance: avoid forcing an unchanged plugin `data.json` rewrite during unload; only pending dirty state is flushed.
 - Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.
