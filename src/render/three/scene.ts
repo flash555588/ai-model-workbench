@@ -1862,6 +1862,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     materialIds: Set<string>,
     textureIds: Set<string>,
   ): void {
+    if (materialIds.has(material.uuid)) {
+      return;
+    }
     const record = material as unknown as Record<string, unknown>;
     for (const value of Object.values(record)) {
       if (value instanceof Texture && !textureIds.has(value.uuid)) {
@@ -1877,10 +1880,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
     }
 
-    if (!materialIds.has(material.uuid)) {
-      material.dispose();
-      materialIds.add(material.uuid);
-    }
+    material.dispose();
+    materialIds.add(material.uuid);
   }
 
   private fitCameraToObject(root: Object3D, rootBounds?: PreviewBounds): void {
