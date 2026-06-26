@@ -252,6 +252,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private axesHelper: AxesHelper | null = null;
   private bboxHelper: BoxHelper | null = null;
   private groundShadowMesh: Mesh | null = null;
+  private meshShadowFlagsPrepared = false;
   private gridHelper: GridHelper | null = null;
   private bboxEnabled = false;
   private wireframeEnabled = false;
@@ -383,10 +384,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.toneMapping = NoToneMapping;
     this.renderer.toneMappingExposure = 1;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
-    this.renderer.shadowMap.needsUpdate = true;
+    this.renderer.shadowMap.needsUpdate = false;
     this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
 
     this.scene = new Scene();
@@ -461,7 +462,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.rootObject = root;
     this.scene.add(root);
     this.invalidateMeshCache();
-    this.prepareModelForQuality(root);
+    const renderableObjects = this.getRenderableObjects(root);
+    this.prepareModelForQuality(renderableObjects);
+    this.syncShadowFeatures();
     const rootBounds = this.getRootPreviewBounds(root);
     this.updateShadowFraming(rootBounds);
     this.syncSceneHelpers();
@@ -475,7 +478,6 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.animationPlaying = true;
     }
 
-    const renderableObjects = this.getRenderableObjects(root);
     const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings, rootBounds ?? undefined);
     this.cachedGeometryQualityStats = createThreeGeometryQualityStats(root, renderableObjects, rootBounds ?? undefined);
     this.fitCameraToObject(root, rootBounds ?? undefined);
@@ -1153,6 +1155,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private markShadowDirty(): void {
+    if (!this.renderer.shadowMap.enabled) {
+      this.frameBudgetShadowDeferred = false;
+      this.renderer.shadowMap.needsUpdate = false;
+      return;
+    }
     if (this.shouldDeferShadowRefresh()) {
       this.frameBudgetShadowDeferred = true;
       return;
@@ -1182,7 +1189,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.interactivePixelRatioActive || cameraMoved || now < this.interactionPixelRatioDeadline) return;
     this.interactivePixelRatioActive = false;
     this.resetFrameBudget();
-    if (this.frameBudgetShadowDeferred) {
+    if (this.renderer.shadowMap.enabled && this.frameBudgetShadowDeferred) {
       this.frameBudgetShadowDeferred = false;
       this.renderer.shadowMap.needsUpdate = true;
     }
@@ -1411,6 +1418,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.scene.add(light);
       }
     }
+    this.syncShadowFeatures();
     this.updateShadowFraming();
     this.markShadowDirty();
     this.markDirty();
@@ -1443,6 +1451,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.syncAxisHelper(config.axis);
     }
     this.syncSceneHelpers();
+    this.syncShadowFeatures();
     this.markDirty();
   }
 
@@ -1540,18 +1549,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
     light.dispose();
   }
 
-  private prepareModelForQuality(root: Object3D): void {
+  private prepareModelForQuality(renderables: ThreeRenderableObject[]): void {
     const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-    root.traverse((object) => {
-      if (!isThreeRenderableObject(object)) return;
-      if (isMesh(object)) {
-        object.castShadow = true;
-        object.receiveShadow = true;
-      }
+    for (const object of renderables) {
       for (const material of materialList(object.material)) {
         this.prepareMaterialForQuality(material, anisotropy);
       }
-    });
+    }
   }
 
   private prepareMaterialForQuality(material: Material, anisotropy: number): void {
@@ -1560,13 +1564,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private applyShadowQuality(): void {
     const size = this.shadowMapSize();
+    let updated = false;
     for (const light of this.allLights()) {
       if (!isShadowCastingLight(light) || !light.castShadow) continue;
       light.shadow.mapSize.set(size, size);
       light.shadow.bias = -0.00012;
       light.shadow.normalBias = 0.018;
       light.shadow.needsUpdate = true;
+      updated = true;
     }
+    if (!updated) return;
+    this.syncShadowFeatures();
     this.markShadowDirty();
     this.markDirty();
   }
@@ -1578,9 +1586,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const span = Math.max(size.x, size.y, size.z, Number.EPSILON);
     const radius = Math.max(span * 1.8, 0.001);
     const centerVector = new Vector3(center.x, center.y, center.z);
+    let updated = false;
 
     for (const light of this.allLights()) {
       if (!isShadowCastingLight(light) || !light.castShadow) continue;
+      this.ensureMeshShadowFlags();
       light.shadow.mapSize.set(this.shadowMapSize(), this.shadowMapSize());
       light.shadow.bias = -0.00012;
       light.shadow.normalBias = 0.018;
@@ -1608,7 +1618,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
       }
       light.shadow.needsUpdate = true;
+      updated = true;
     }
+    if (!updated) return;
     this.markShadowDirty();
   }
 
@@ -1620,6 +1632,35 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private allLights(): Light[] {
     return [...this.defaultLights, ...this.configLights];
+  }
+
+  private hasActiveShadowFeatures(): boolean {
+    return !!this.sceneConfig.groundShadow
+      || this.allLights().some((light) => isShadowCastingLight(light) && light.castShadow);
+  }
+
+  private syncShadowFeatures(): void {
+    const enabled = this.hasActiveShadowFeatures();
+    if (this.renderer.shadowMap.enabled !== enabled) {
+      this.renderer.shadowMap.enabled = enabled;
+    }
+    if (!enabled) {
+      this.frameBudgetShadowDeferred = false;
+      this.renderer.shadowMap.needsUpdate = false;
+      return;
+    }
+    this.ensureMeshShadowFlags();
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  private ensureMeshShadowFlags(): void {
+    if (!this.rootObject || this.meshShadowFlagsPrepared) return;
+    for (const object of this.getRenderableObjects(this.rootObject)) {
+      if (!isMesh(object)) continue;
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+    this.meshShadowFlagsPrepared = true;
   }
 
   private syncSceneHelpers(): void {
@@ -1655,6 +1696,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private createGroundShadow(): void {
     if (!this.rootObject || this.groundShadowMesh) return;
+    this.ensureMeshShadowFlags();
     const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const center = getPreviewBoundsCenter(bounds);
     const boundsSize = getPreviewBoundsSize(bounds);
@@ -1758,6 +1800,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
+    this.meshShadowFlagsPrepared = false;
     this.invalidateMeshCache();
     this.markDirty();
     this.clearFocusedMesh();

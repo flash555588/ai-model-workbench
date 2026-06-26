@@ -15,6 +15,7 @@
 - Performance: defer Live Preview runtime imports for preview backends, annotation managers, conversion preparation, and load feedback until a visible embed actually starts loading.
 - Performance: register Live Preview embeds through a lightweight lazy widget so workspace startup no longer imports the full embed runtime before a model embed approaches the viewport.
 - Performance: skip full Live Preview line parsing for editor documents that do not contain model embed markers, reducing startup work for large ordinary notes.
+- Performance: defer Three.js mesh shadow flag setup and shadow-map updates until ground shadows or shadow-casting lights are active, reducing large-model load work on the default route.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.
