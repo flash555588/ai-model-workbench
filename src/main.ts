@@ -10,6 +10,18 @@ import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
 
 const log = createLogger("main");
+const POST_LAYOUT_STARTUP_DELAY_MS = 700;
+const POST_LAYOUT_IDLE_TIMEOUT_MS = 2500;
+
+type IdleDeadlineLike = {
+  didTimeout: boolean;
+  timeRemaining: () => number;
+};
+
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: (deadline: IdleDeadlineLike) => void, options?: { timeout?: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 function withErrorNotice<T>(fn: () => Promise<T>, context: string): () => void {
   return () => {
@@ -17,6 +29,44 @@ function withErrorNotice<T>(fn: () => Promise<T>, context: string): () => void {
       log.error(`Command ${context} failed`, { error: String(err) });
       new Notice(`AI3D: ${context} failed — ${String(err)}`, 5000);
     });
+  };
+}
+
+function schedulePostLayoutStartupTask(task: () => void): () => void {
+  let cancelled = false;
+  let delayHandle: number | null = null;
+  let idleHandle: number | null = null;
+  const idleWindow = window as IdleWindow;
+
+  const clearHandles = () => {
+    if (delayHandle !== null) {
+      window.clearTimeout(delayHandle);
+      delayHandle = null;
+    }
+    if (idleHandle !== null) {
+      idleWindow.cancelIdleCallback?.(idleHandle);
+      idleHandle = null;
+    }
+  };
+
+  const run = () => {
+    if (cancelled) return;
+    clearHandles();
+    task();
+  };
+
+  delayHandle = window.setTimeout(() => {
+    delayHandle = null;
+    if (idleWindow.requestIdleCallback) {
+      idleHandle = idleWindow.requestIdleCallback(run, { timeout: POST_LAYOUT_IDLE_TIMEOUT_MS });
+    } else {
+      delayHandle = window.setTimeout(run, 0);
+    }
+  }, POST_LAYOUT_STARTUP_DELAY_MS);
+
+  return () => {
+    cancelled = true;
+    clearHandles();
   };
 }
 
@@ -112,11 +162,23 @@ export default class AI3DModelWorkbench extends Plugin {
     this.registerMarkdownCodeBlockProcessor(gridCb.id, gridCb.handler);
 
     // Watch note headings for hover → highlight pin
+    this.register(this.ps.store.subscribe(() => {
+      if (this.unloaded || this.headingPinObserverStarted || !this.hasHeadingLinkedAnnotations()) {
+        return;
+      }
+      void this.startHeadingPinObserver();
+    }));
+
     this.app.workspace.onLayoutReady(() => {
-      window.setTimeout(() => {
+      if (this.unloaded) {
+        return;
+      }
+      this.register(schedulePostLayoutStartupTask(() => {
         void this.registerLivePreviewExtension(getAnnotations);
-        void this.startHeadingPinObserver();
-      }, 0);
+        if (this.hasHeadingLinkedAnnotations()) {
+          void this.startHeadingPinObserver();
+        }
+      }));
     });
   }
 
@@ -148,6 +210,16 @@ export default class AI3DModelWorkbench extends Plugin {
       this.headingPinObserverStarted = false;
       console.warn("[AI3D] Failed to start heading pin observer:", error);
     }
+  }
+
+  private hasHeadingLinkedAnnotations(): boolean {
+    const profiles = this.ps.store.getState().modelAssetProfiles;
+    for (const profile of Object.values(profiles)) {
+      if (profile.annotations.some((pin) => typeof pin.headingRef === "string" && pin.headingRef.trim().length > 0)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async registerLivePreviewExtension(getAnnotations: (modelPath: string) => AnnotationPin[]): Promise<void> {
