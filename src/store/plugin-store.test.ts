@@ -352,7 +352,10 @@ describe("createPluginStore persistence", () => {
       agentPlan: null,
       lastKnowledgeGeneration: null,
     };
-    const { plugin } = createFakePlugin(undefined, saved);
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
     const pluginStore = createPluginStore(plugin);
 
     await pluginStore.load();
@@ -361,6 +364,12 @@ describe("createPluginStore persistence", () => {
     expect(parts).toHaveLength(256);
     expect(parts.some((part) => part.partId === "reviewed-part")).toBe(true);
     expect(parts.some((part) => part.partId === "component-part")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    expect(normalizedSaves[0].modelAssetProfiles["models/large.glb"]?.registeredParts).toHaveLength(256);
   });
 
   it("strips transient registered matches and quickly persists normalized profiles", async () => {
