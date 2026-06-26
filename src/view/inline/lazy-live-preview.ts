@@ -5,12 +5,16 @@
 
 import type { App } from "obsidian";
 import { EditorView, Decoration, WidgetType } from "@codemirror/view";
-import { Prec, StateField, RangeSet, type Range } from "@codemirror/state";
+import { Prec, StateField, RangeSet, type Range, type Text } from "@codemirror/state";
 import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { AnnotationPin, PluginSettings } from "../../domain/models";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { resolveVaultPath } from "../../utils/resolve-path";
-import { transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
+import {
+  docMayContainModelEmbed,
+  LIVE_PREVIEW_EMBED_MARKER,
+  transactionMayAffectModelEmbeds,
+} from "./live-preview-embed-scan";
 
 type LivePreviewModule = typeof import("./live-preview");
 type LivePreviewWidget = InstanceType<LivePreviewModule["ModelEmbedWidget"]>;
@@ -183,29 +187,35 @@ function findEmbeds(
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
-  const doc = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
+  const doc: Text = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
   const ranges: Range<Decoration>[] = [];
+  if (!docMayContainModelEmbed(doc)) {
+    return ranges;
+  }
 
-  for (let i = 1; i <= doc.lines; i++) {
-    const line = doc.line(i);
-    const text = line.text;
+  let lineFrom = 0;
+  for (const text of doc.iterLines()) {
+    const nextLineFrom = lineFrom + text.length + 1;
 
-    if (!text.includes("![")) continue;
+    if (!text.includes(LIVE_PREVIEW_EMBED_MARKER)) {
+      lineFrom = nextLineFrom;
+      continue;
+    }
 
     let pos = 0;
     while (pos < text.length) {
-      const start = text.indexOf("![[", pos);
+      const start = text.indexOf(LIVE_PREVIEW_EMBED_MARKER, pos);
       if (start === -1) break;
 
       if (start > 0 && text[start - 1] === "\\") {
-        pos = start + 3;
+        pos = start + LIVE_PREVIEW_EMBED_MARKER.length;
         continue;
       }
 
-      const end = text.indexOf("]]", start + 3);
+      const end = text.indexOf("]]", start + LIVE_PREVIEW_EMBED_MARKER.length);
       if (end === -1) break;
 
-      const raw = text.slice(start + 3, end);
+      const raw = text.slice(start + LIVE_PREVIEW_EMBED_MARKER.length, end);
       const parts = raw.split("|");
       const filename = parts[0].trim();
 
@@ -254,11 +264,12 @@ function findEmbeds(
             getAnnotations,
           ),
           block: true,
-        }).range(line.from + start, line.from + end + 2),
+        }).range(lineFrom + start, lineFrom + end + 2),
       );
 
       pos = end + 2;
     }
+    lineFrom = nextLineFrom;
   }
 
   return ranges;

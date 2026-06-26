@@ -5,7 +5,7 @@
 
 import type { App } from "obsidian";
 import { EditorView, Decoration, WidgetType } from "@codemirror/view";
-import { Prec, StateField, RangeSet, Range } from "@codemirror/state";
+import { Prec, StateField, RangeSet, Range, type Text } from "@codemirror/state";
 import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
@@ -21,7 +21,11 @@ import {
   attachModelPreviewCanvasShortcuts,
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
-import { transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
+import {
+  docMayContainModelEmbed,
+  LIVE_PREVIEW_EMBED_MARKER,
+  transactionMayAffectModelEmbeds,
+} from "./live-preview-embed-scan";
 import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 
 const log = createLogger("inline-live-preview");
@@ -387,30 +391,36 @@ function findEmbeds(
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
-  const doc = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
+  const doc: Text = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
   const ranges: Range<Decoration>[] = [];
+  if (!docMayContainModelEmbed(doc)) {
+    return ranges;
+  }
 
-  for (let i = 1; i <= doc.lines; i++) {
-    const line = doc.line(i);
-    const text = line.text;
+  let lineFrom = 0;
+  for (const text of doc.iterLines()) {
+    const nextLineFrom = lineFrom + text.length + 1;
 
-    if (!text.includes("![")) continue;
+    if (!text.includes(LIVE_PREVIEW_EMBED_MARKER)) {
+      lineFrom = nextLineFrom;
+      continue;
+    }
 
     let pos = 0;
     while (pos < text.length) {
-      const start = text.indexOf("![[", pos);
+      const start = text.indexOf(LIVE_PREVIEW_EMBED_MARKER, pos);
       if (start === -1) break;
 
       // Skip escaped embeds: \![[model.glb]]
       if (start > 0 && text[start - 1] === "\\") {
-        pos = start + 3;
+        pos = start + LIVE_PREVIEW_EMBED_MARKER.length;
         continue;
       }
 
-      const end = text.indexOf("]]", start + 3);
+      const end = text.indexOf("]]", start + LIVE_PREVIEW_EMBED_MARKER.length);
       if (end === -1) break;
 
-      const raw = text.slice(start + 3, end);
+      const raw = text.slice(start + LIVE_PREVIEW_EMBED_MARKER.length, end);
       const parts = raw.split("|");
       const filename = parts[0].trim();
 
@@ -437,9 +447,6 @@ function findEmbeds(
         continue;
       }
 
-      const from = line.from + start;
-      const to = line.from + end + 2;
-
       ranges.push(
         Decoration.replace({
           widget: new ModelEmbedWidget(
@@ -463,11 +470,12 @@ function findEmbeds(
             getAnnotations,
           ),
           block: true,
-        }).range(from, to),
+        }).range(lineFrom + start, lineFrom + end + 2),
       );
 
       pos = end + 2;
     }
+    lineFrom = nextLineFrom;
   }
 
   return ranges;

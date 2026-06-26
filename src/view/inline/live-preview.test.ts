@@ -1,6 +1,6 @@
 import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
-import { transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
+import { docMayContainModelEmbed, transactionMayAffectModelEmbeds } from "./live-preview-embed-scan";
 
 function changeDoc(doc: string, from: number, to: number, insert = "") {
   const state = EditorState.create({ doc });
@@ -8,6 +8,22 @@ function changeDoc(doc: string, from: number, to: number, insert = "") {
 }
 
 describe("transactionMayAffectModelEmbeds", () => {
+  it("quickly rejects documents without live preview embed markers", () => {
+    const doc = EditorState.create({
+      doc: Array.from({ length: 500 }, (_, index) => `Plain paragraph ${index}`).join("\n"),
+    }).doc;
+
+    expect(docMayContainModelEmbed(doc)).toBe(false);
+  });
+
+  it("detects live preview embed markers before line parsing", () => {
+    const doc = EditorState.create({
+      doc: "Intro\n![[models/cube.glb]]\nMore text",
+    }).doc;
+
+    expect(docMayContainModelEmbed(doc)).toBe(true);
+  });
+
   it("ignores ordinary text edits away from model embeds", () => {
     const doc = [
       "Intro paragraph",

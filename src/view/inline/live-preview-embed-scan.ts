@@ -1,9 +1,22 @@
 import type { Text, Transaction } from "@codemirror/state";
 
-const LIVE_PREVIEW_EMBED_MARKER = "![[";
+export const LIVE_PREVIEW_EMBED_MARKER = "![[";
 
 function lineMayContainModelEmbed(text: string): boolean {
   return text.includes(LIVE_PREVIEW_EMBED_MARKER);
+}
+
+export function docMayContainModelEmbed(doc: Text): boolean {
+  let previousTail = "";
+  for (const chunk of doc.iter()) {
+    if (!chunk) continue;
+    const candidate = previousTail ? previousTail + chunk : chunk;
+    if (candidate.includes(LIVE_PREVIEW_EMBED_MARKER)) {
+      return true;
+    }
+    previousTail = candidate.slice(-(LIVE_PREVIEW_EMBED_MARKER.length - 1));
+  }
+  return false;
 }
 
 function clampDocPosition(doc: Text, position: number): number {
