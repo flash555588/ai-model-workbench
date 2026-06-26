@@ -489,4 +489,58 @@ describe("createPluginStore persistence", () => {
     expect(persistedPart?.registeredMatches).toBeUndefined();
     expect(persistedPart?.meshRefs).toHaveLength(16);
   });
+
+  it("compacts persisted registered part number tuples during load", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "part-1",
+            assetId: "models/board.glb",
+            name: "U1",
+            source: "component",
+            meshRefs: ["U1-body"],
+            materialRefs: [],
+            bbox: [0.022000000000000006, 0.016399999999999998, 0.0015009999999989988],
+            center: [0.049657099314199, 0.033020066040132, 0.002336656972313501],
+            confidence: 0.82,
+            observations: [],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            reviewed: false,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const part = pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts?.[0];
+    expect(part?.bbox).toEqual([0.022, 0.0164, 0.001501]);
+    expect(part?.center).toEqual([0.0496571, 0.0330201, 0.00233666]);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    const persistedPart = normalizedSaves[0].modelAssetProfiles["models/board.glb"]?.registeredParts?.[0];
+    expect(persistedPart?.bbox).toEqual([0.022, 0.0164, 0.001501]);
+    expect(persistedPart?.center).toEqual([0.0496571, 0.0330201, 0.00233666]);
+  });
 });

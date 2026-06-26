@@ -2,6 +2,7 @@ import type { Plugin } from "obsidian";
 import type { ModelAssetFormat, ModelAssetProfile, ModelLoadStrategy, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
+import { compactPersistedNumberTuple, isCompactPersistedNumber } from "../utils/compact-number";
 
 export interface PluginStore {
   store: Store<PluginState>;
@@ -237,11 +238,13 @@ function isNormalizedStringArray(value: unknown, maxEntries = Number.POSITIVE_IN
 function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
   if (!Array.isArray(value) || value.length < 3) return undefined;
   const tuple = value.slice(0, 3).map((entry) => Number(entry));
-  return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
+  return tuple.every(Number.isFinite) ? compactPersistedNumberTuple(tuple) : undefined;
 }
 
 function isNormalizedNumberTuple(value: unknown): value is [number, number, number] {
-  return Array.isArray(value) && value.length === 3 && value.every((entry) => Number.isFinite(entry));
+  return Array.isArray(value) &&
+    value.length === 3 &&
+    value.every((entry) => Number.isFinite(entry) && isCompactPersistedNumber(Number(entry)));
 }
 
 function normalizePartSource(value: unknown): PartRecord["source"] {
@@ -382,7 +385,9 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
     if (
       (Array.isArray(record.meshRefs) && record.meshRefs.length > MAX_REGISTERED_PART_MESH_REFS) ||
       (Array.isArray(record.materialRefs) && record.materialRefs.length > MAX_REGISTERED_PART_MATERIAL_REFS) ||
-      (Array.isArray(record.observations) && record.observations.length > MAX_REGISTERED_PART_OBSERVATIONS)
+      (Array.isArray(record.observations) && record.observations.length > MAX_REGISTERED_PART_OBSERVATIONS) ||
+      (record.bbox !== undefined && !isNormalizedNumberTuple(record.bbox)) ||
+      (record.center !== undefined && !isNormalizedNumberTuple(record.center))
     ) {
       changed = true;
     }

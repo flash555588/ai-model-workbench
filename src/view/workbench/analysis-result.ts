@@ -15,6 +15,7 @@ import type {
   RegisteredPartMatch,
 } from "../../domain/models";
 import { getPortableStem } from "../../utils/resolve-path";
+import { compactPersistedNumberTuple } from "../../utils/compact-number";
 
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
 const MAX_REGISTERED_MATCHES_PER_PART = 3;
@@ -100,7 +101,7 @@ function normalizeModelLoadStrategy(
 }
 
 function toVectorTuple(point: { x: number; y: number; z: number }): [number, number, number] {
-  return [point.x, point.y, point.z];
+  return compactPersistedNumberTuple([point.x, point.y, point.z]);
 }
 
 function limitPartRefs(values: readonly string[], maxEntries: number): string[] {

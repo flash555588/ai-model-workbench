@@ -17,6 +17,7 @@ import type { ModelPreview } from "../../render/preview/types";
 import { escapeHtml } from "../../utils/escape-html";
 import { createLogger } from "../../utils/log";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
+import { compactPersistedNumberTuple } from "../../utils/compact-number";
 
 const log = createLogger("knowledge-note");
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
@@ -869,7 +870,7 @@ function normalizeStringArray(value: unknown, maxEntries = Number.POSITIVE_INFIN
 function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
   if (!Array.isArray(value) || value.length < 3) return undefined;
   const tuple = value.slice(0, 3).map((entry) => Number(entry));
-  return tuple.every(Number.isFinite) ? [tuple[0], tuple[1], tuple[2]] : undefined;
+  return tuple.every(Number.isFinite) ? compactPersistedNumberTuple(tuple) : undefined;
 }
 
 function normalizePartSource(value: unknown): PartRecord["source"] {
