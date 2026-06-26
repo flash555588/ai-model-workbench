@@ -240,7 +240,10 @@ function isReusableModelAssetProfile(profile: Partial<ModelAssetProfile>): profi
   return Array.isArray(profile.tags) &&
     typeof profile.notes === "string" &&
     Array.isArray(profile.annotations) &&
-    (profile.registeredParts === undefined || Array.isArray(profile.registeredParts)) &&
+    (
+      profile.registeredParts === undefined ||
+      (Array.isArray(profile.registeredParts) && profile.registeredParts.length <= MAX_REGISTERED_PARTS_PER_PROFILE)
+    ) &&
     isNormalizedOptionalString(profile.analysisVersion) &&
     isNormalizedOptionalString(profile.reportNotePath) &&
     isNormalizedOptionalString(profile.analysisSidecarPath) &&

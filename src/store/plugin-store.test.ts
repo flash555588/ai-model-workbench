@@ -370,6 +370,65 @@ describe("createPluginStore persistence", () => {
     expect(saveData).not.toHaveBeenCalled();
   });
 
+  it("normalizes schema-marked profiles that still contain oversized registered part lists", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const createPart = (index: number, partial: Partial<PartRecord> = {}): PartRecord => ({
+      partId: `part-${index}`,
+      assetId: "models/oversized.glb",
+      name: `mesh-${index}`,
+      source: "mesh",
+      meshRefs: [`mesh-${index}`],
+      materialRefs: [],
+      confidence: 0.2,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: false,
+      ...partial,
+    });
+    const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/oversized.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [
+            ...Array.from({ length: 300 }, (_value, index) => createPart(index)),
+            createPart(1000, { partId: "reviewed-part", name: "Reviewed part", reviewed: true }),
+            createPart(1001, { partId: "component-part", name: "Component", source: "component", confidence: 0.82 }),
+          ],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const parts = pluginStore.store.getState().modelAssetProfiles["models/oversized.glb"]?.registeredParts ?? [];
+    expect(parts).toHaveLength(256);
+    expect(parts.some((part) => part.partId === "reviewed-part")).toBe(true);
+    expect(parts.some((part) => part.partId === "component-part")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    expect(normalizedSaves[0].stateSchemaVersion).toBe(1);
+    expect(normalizedSaves[0].modelAssetProfiles["models/oversized.glb"]?.registeredParts).toHaveLength(256);
+  });
+
   it("persists the current schema marker once for legacy compact state", async () => {
     const now = "2026-06-22T00:00:00.000Z";
     const saved: PersistedPluginState = {

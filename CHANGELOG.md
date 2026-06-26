@@ -25,6 +25,7 @@
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.
+- Performance: normalize schema-marked but oversized registered-part lists on load so anomalous large `data.json` profiles are compacted back under the startup budget.
 - Performance: cache Three.js root bounds and pre-index grouped part descendants so large converted models do less repeated scene traversal after loading.
 - Performance: reuse Three.js child-mesh descendant indexes for picking, evidence grouping, and disassembly setup so large assemblies avoid repeated subtree scans during selection.
 - Performance: reuse shared Three.js focus-dim materials across meshes with the same source material, reducing material churn when focusing parts in large assemblies.
