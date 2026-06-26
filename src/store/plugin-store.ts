@@ -46,6 +46,7 @@ const INITIAL_STATE: PluginState = {
 
 const MAX_REGISTERED_PARTS_PER_PROFILE = 256;
 const NORMALIZED_STATE_SAVE_DELAY_MS = 50;
+const PERSISTED_STATE_SCHEMA_VERSION = 1;
 
 export function createPluginStore(plugin: Plugin): PluginStore {
   const store = createStore<PluginState>(INITIAL_STATE);
@@ -71,6 +72,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   function snapshotPersistedState(): PersistedPluginState {
     const s = store.getState();
     return {
+      stateSchemaVersion: PERSISTED_STATE_SCHEMA_VERSION,
       settings: s.settings,
       convertedAssetRecords: s.convertedAssetRecords,
       modelAssetProfiles: s.modelAssetProfiles,
@@ -157,7 +159,10 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       const saved = (await plugin.loadData()) as PersistedPluginState | null;
       if (!saved) return;
       localeLoadedFromSaved = !!saved.settings?.locale;
-      const { profiles, changed: profilesChanged } = normalizeModelAssetProfiles(saved.modelAssetProfiles);
+      const schemaCurrent = saved.stateSchemaVersion === PERSISTED_STATE_SCHEMA_VERSION;
+      const { profiles, changed: profilesChanged } = normalizeModelAssetProfiles(saved.modelAssetProfiles, {
+        trustPersistedSchema: schemaCurrent,
+      });
       store.setState({
         settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
         convertedAssetRecords: saved.convertedAssetRecords ?? [],
@@ -166,7 +171,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
         agentPlan: saved.agentPlan ?? null,
         lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
       });
-      if (profilesChanged) {
+      if (profilesChanged || !schemaCurrent) {
         dirtyRevision += 1;
         if (saveTimer) window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
@@ -197,6 +202,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
 
 function normalizeModelAssetProfiles(
   saved: PersistedPluginState["modelAssetProfiles"] | undefined,
+  options: { trustPersistedSchema?: boolean } = {},
 ): { profiles: Record<string, ModelAssetProfile>; changed: boolean } {
   if (!saved || typeof saved !== "object") {
     return { profiles: {}, changed: false };
@@ -206,6 +212,10 @@ function normalizeModelAssetProfiles(
   let changed = false;
   for (const [path, profile] of Object.entries(saved as Record<string, Partial<ModelAssetProfile> | null | undefined>)) {
     if (!profile || typeof profile !== "object") continue;
+    if (options.trustPersistedSchema && isReusableModelAssetProfile(profile)) {
+      profiles[path] = profile;
+      continue;
+    }
     const now = new Date().toISOString();
     const registeredParts = normalizeRegisteredParts(profile.registeredParts, path);
     changed = changed || registeredParts.changed;
@@ -224,6 +234,20 @@ function normalizeModelAssetProfiles(
     };
   }
   return { profiles, changed };
+}
+
+function isReusableModelAssetProfile(profile: Partial<ModelAssetProfile>): profile is ModelAssetProfile {
+  return Array.isArray(profile.tags) &&
+    typeof profile.notes === "string" &&
+    Array.isArray(profile.annotations) &&
+    (profile.registeredParts === undefined || Array.isArray(profile.registeredParts)) &&
+    isNormalizedOptionalString(profile.analysisVersion) &&
+    isNormalizedOptionalString(profile.reportNotePath) &&
+    isNormalizedOptionalString(profile.analysisSidecarPath) &&
+    isNormalizedOptionalString(profile.knowledgeIndexPath) &&
+    (profile.previewImagePaths === undefined || Array.isArray(profile.previewImagePaths)) &&
+    typeof profile.createdAt === "string" &&
+    typeof profile.updatedAt === "string";
 }
 
 function normalizeStringArray(value: unknown, maxEntries = Number.POSITIVE_INFINITY): string[] {

@@ -1,7 +1,7 @@
 import type { Plugin } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../domain/constants";
-import type { ModelPreviewSummary, PartRecord, PersistedPluginState } from "../domain/models";
+import type { ModelAssetProfile, ModelPreviewSummary, PartRecord, PersistedPluginState } from "../domain/models";
 import { createPluginStore } from "./plugin-store";
 
 interface Deferred<T = void> {
@@ -93,6 +93,7 @@ describe("createPluginStore persistence", () => {
     await settlePromises();
 
     expect(saveData).toHaveBeenCalledTimes(1);
+    expect(saved[0].stateSchemaVersion).toBe(1);
     expect(saved[0].settings.locale).toBe("zh-CN");
     expect(saved[0].settings.defaultCanvasHeight).toBe(512);
   });
@@ -268,6 +269,7 @@ describe("createPluginStore persistence", () => {
   it("does not rewrite unchanged state during load", async () => {
     const now = "2026-06-22T00:00:00.000Z";
     const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
       settings: { ...DEFAULT_SETTINGS },
       convertedAssetRecords: [],
       modelAssetProfiles: {
@@ -337,18 +339,20 @@ describe("createPluginStore persistence", () => {
       notePath: "Parts/U1.md",
       reviewed: false,
     }];
+    const profile: ModelAssetProfile = {
+      tags: [],
+      notes: "",
+      annotations: [],
+      registeredParts,
+      createdAt: now,
+      updatedAt: now,
+    };
     const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
       settings: { ...DEFAULT_SETTINGS },
       convertedAssetRecords: [],
       modelAssetProfiles: {
-        "models/board.glb": {
-          tags: [],
-          notes: "",
-          annotations: [],
-          registeredParts,
-          createdAt: now,
-          updatedAt: now,
-        },
+        "models/board.glb": profile,
       },
       agentDraft: "",
       agentPlan: null,
@@ -361,8 +365,42 @@ describe("createPluginStore persistence", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await settlePromises();
 
+    expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]).toBe(profile);
     expect(pluginStore.store.getState().modelAssetProfiles["models/board.glb"]?.registeredParts).toBe(registeredParts);
     expect(saveData).not.toHaveBeenCalled();
+  });
+
+  it("persists the current schema marker once for legacy compact state", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/board.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    expect(normalizedSaves[0].stateSchemaVersion).toBe(1);
   });
 
   it("limits oversized registered part lists while keeping reviewed and component records", async () => {
@@ -627,6 +665,7 @@ describe("createPluginStore persistence", () => {
   it("keeps reviewed registered part observations during compaction", async () => {
     const now = "2026-06-22T00:00:00.000Z";
     const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
       settings: { ...DEFAULT_SETTINGS },
       convertedAssetRecords: [],
       modelAssetProfiles: {

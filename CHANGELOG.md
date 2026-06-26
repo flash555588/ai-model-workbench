@@ -20,6 +20,7 @@
 - Performance: compact saved registered-part mesh references to representative samples, reducing `data.json` size and startup parsing work for large converted assemblies while preserving component identity fields.
 - Performance: compact persisted registered-part bounding boxes and centers to stable significant digits, removing floating-point tails from `data.json` without dropping tiny-part scale precision.
 - Performance: strip derived automatic registered-part observation text from persisted profiles while preserving structured component, format-lineage, material, count, and reviewed-note fields.
+- Performance: stamp compact plugin state with a schema marker so future workspace startup can skip repeated deep registered-part compatibility scans.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.

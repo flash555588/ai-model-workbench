@@ -98,6 +98,7 @@ export interface ModelEvidenceFormatLineage {
 // ── Persisted Plugin State ───────────────────────────────────────
 
 export interface PersistedPluginState {
+  stateSchemaVersion?: number;
   settings: PluginSettings;
   convertedAssetRecords: ConvertedAssetRecord[];
   modelAssetProfiles: Record<string, ModelAssetProfile>;
