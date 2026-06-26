@@ -8,20 +8,13 @@ import { EditorView, Decoration, WidgetType } from "@codemirror/view";
 import { Prec, StateField, RangeSet, Range } from "@codemirror/state";
 import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
-import { AnnotationManager } from "../../render/preview/annotations";
-import { createLoggedModelPreview } from "../../render/preview/selection";
+import type { AnnotationManager } from "../../render/preview/annotations";
 import type { ModelPreview } from "../../render/preview/types";
-import { supportsAnnotationPreview } from "../../render/preview/types";
 import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
-import { prepareModelInput } from "../../io/model-pipeline";
-import { listPreferredConversionExts } from "../../io/formats/route-preferences";
 import { createLoadingOverlay, type LoadingOverlay } from "./loading-overlay";
-import { createNoteReader } from "../../utils/note-reader";
 import { createStagedDiv, createStagedEl } from "../../utils/dom";
-import { describeModelLoadFailure, isMissingConverterError } from "../../io/conversion/errors";
 import { isMobile } from "../../utils/device";
-import { renderModelLoadFailure, renderModelPerformanceFeedback } from "../model-load-feedback";
 import { t } from "../../i18n";
 import { createLogger } from "../../utils/log";
 import {
@@ -207,6 +200,23 @@ class ModelEmbedWidget extends WidgetType {
           loading.hide();
           return;
         }
+        const [
+          { prepareModelInput },
+          { listPreferredConversionExts },
+          { createLoggedModelPreview },
+          { supportsAnnotationPreview },
+          { AnnotationManager: AnnotationManagerCtor },
+          { createNoteReader },
+          { renderModelPerformanceFeedback },
+        ] = await Promise.all([
+          import("../../io/model-pipeline"),
+          import("../../io/formats/route-preferences"),
+          import("../../render/preview/selection"),
+          import("../../render/preview/types"),
+          import("../../render/preview/annotations"),
+          import("../../utils/note-reader"),
+          import("../model-load-feedback"),
+        ]);
         const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
         loading.setPhaseKey("loading.preparingModel");
         const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
@@ -279,7 +289,7 @@ class ModelEmbedWidget extends WidgetType {
         if (pins.length > 0 && supportsAnnotationPreview(this.preview)) {
           const provider = this.preview.getAnnotationProvider();
           if (provider.canvas) {
-            this.annotationMgr = new AnnotationManager(
+            this.annotationMgr = new AnnotationManagerCtor(
               provider,
               host,
               "readonly",
@@ -308,6 +318,13 @@ class ModelEmbedWidget extends WidgetType {
       loading.hide();
       error.remove();
       host.replaceChildren();
+      const [
+        { describeModelLoadFailure, isMissingConverterError },
+        { renderModelLoadFailure },
+      ] = await Promise.all([
+        import("../../io/conversion/errors"),
+        import("../model-load-feedback"),
+      ]);
       const failure = describeModelLoadFailure(err);
       if (isMissingConverterError(err)) {
         console.warn("[AI3D] Live Preview blocked by converter settings:", failure.message);
