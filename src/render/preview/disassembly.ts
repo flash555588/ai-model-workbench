@@ -32,7 +32,7 @@ export interface PreviewDisassemblyAdapter<TPart, TTransform, TDragState> {
 class PreviewDisassemblySessionController<TPart, TTransform, TDragState> implements PreviewDisassemblyController {
   private static readonly DRAG_START_DISTANCE = 4;
   private readonly adapter: PreviewDisassemblyAdapter<TPart, TTransform, TDragState>;
-  private readonly originals = new Map<number | string, TTransform>();
+  private readonly originals = new Map<number | string, { part: TPart; transform: TTransform }>();
   private unsubscribe: (() => void) | null = null;
   private active = false;
   private drag: TDragState | null = null;
@@ -43,9 +43,6 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
 
   constructor(adapter: PreviewDisassemblyAdapter<TPart, TTransform, TDragState>) {
     this.adapter = adapter;
-    for (const part of adapter.getParts()) {
-      this.originals.set(adapter.getPartId(part), adapter.captureTransform(part));
-    }
   }
 
   isEnabled(): boolean {
@@ -82,11 +79,9 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
   reset(): void {
     this.finishDrag();
     this.setSelected(null);
-    for (const part of this.adapter.getParts()) {
+    for (const { part, transform } of this.originals.values()) {
       if (this.adapter.isDisposed(part)) continue;
-      const original = this.originals.get(this.adapter.getPartId(part));
-      if (!original) continue;
-      this.adapter.restoreTransform(part, original);
+      this.adapter.restoreTransform(part, transform);
     }
     this.activePointerId = null;
     this.adapter.requestRender?.();
@@ -128,6 +123,7 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
       const pending = this.pendingDrag;
       this.pendingDrag = null;
       if (this.adapter.isDisposed(pending.part)) return;
+      this.captureOriginalTransform(pending.part);
       this.drag = this.adapter.beginDrag(pending.part, pending.event);
     }
     if (!this.drag) return;
@@ -160,6 +156,14 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
     this.selected = part;
     this.frameCount = 0;
     this.adapter.setSelected(part);
+  }
+
+  private captureOriginalTransform(part: TPart): void {
+    const id = this.adapter.getPartId(part);
+    if (this.originals.has(id)) {
+      return;
+    }
+    this.originals.set(id, { part, transform: this.adapter.captureTransform(part) });
   }
 }
 

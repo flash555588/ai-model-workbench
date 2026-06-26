@@ -192,6 +192,7 @@ function findEmbeds(
   if (!docMayContainModelEmbed(doc)) {
     return ranges;
   }
+  const resolvedPathCache = new Map<string, string | null>();
 
   let lineFrom = 0;
   for (const text of doc.iterLines()) {
@@ -235,7 +236,11 @@ function findEmbeds(
         }
       }
 
-      const modelPath = resolveVaultPath(app, filename);
+      let modelPath = resolvedPathCache.get(filename);
+      if (modelPath === undefined) {
+        modelPath = resolveVaultPath(app, filename);
+        resolvedPathCache.set(filename, modelPath);
+      }
       if (!modelPath) {
         pos = end + 2;
         continue;
