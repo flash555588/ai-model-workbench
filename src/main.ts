@@ -3,7 +3,8 @@ import type { PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
-import { DirectModelView, DIRECT_VIEW_TYPE } from "./view/direct-view";
+import { LazyDirectModelView } from "./view/lazy-direct-view";
+import { DIRECT_VIEW_TYPE } from "./view/direct-view-type";
 import { ModelFileSuggestModal } from "./view/model-file-suggest-modal";
 import { AI3DSettingTab } from "./settings";
 import { createLogger, setLogLevel } from "./utils/log";
@@ -97,7 +98,7 @@ export default class AI3DModelWorkbench extends Plugin {
 
     // Register direct file view for all supported formats. Conversion-capable formats
     // will be routed through the shared model pipeline inside DirectModelView.
-    this.registerView(DIRECT_VIEW_TYPE, (leaf) => new DirectModelView(leaf, () => this.getSettings(), this.convertedAssetCache, this.ps));
+    this.registerView(DIRECT_VIEW_TYPE, (leaf) => new LazyDirectModelView(leaf, () => this.getSettings(), this.convertedAssetCache, this.ps));
     this.registerExtensions(listSupportedModelExtensions(), DIRECT_VIEW_TYPE);
 
     const getAnnotations = (modelPath: string) =>

@@ -22,8 +22,7 @@ import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-matc
 import { createDirectViewLayout } from "./direct-view-layout";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
-
-export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
+import { DIRECT_VIEW_TYPE } from "./direct-view-type";
 
 const log = createLogger("direct-view");
 const DEFERRED_EVIDENCE_DELAY_MS = 450;
