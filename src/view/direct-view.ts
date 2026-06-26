@@ -1,6 +1,6 @@
 import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
 import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, ModelPartSummary, PartRecord } from "../domain/models";
-import { AnnotationManager } from "../render/preview/annotations";
+import type { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
 import { createHelperButtons } from "./inline/helper-buttons";
@@ -10,7 +10,6 @@ import { prepareModelInput } from "../io/model-pipeline";
 import { toPreviewSource, type PreviewSource } from "../io/preview/preview-source";
 import { readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
 import { listPreferredConversionExts } from "../io/formats/route-preferences";
-import { createNoteReader, createHeadingSearch } from "../utils/note-reader";
 import { createLoadingOverlay } from "./inline/loading-overlay";
 import { describeModelLoadFailure, isMissingConverterError } from "../io/conversion/errors";
 import { formatT, t } from "../i18n";
@@ -461,49 +460,8 @@ export class DirectModelView extends FileView {
       });
       loading.setProgress(100);
 
-      // Set up annotation manager (edit mode)
-      const provider = this.preview.getAnnotationProvider();
-      if (provider.canvas) {
-        const profile = this.ps.store.getState().modelAssetProfiles[file.path];
-        const initialPins = profile?.annotations ?? [];
-        const noteReader = createNoteReader(this.app);
-        const headingSearch = createHeadingSearch(this.app);
-        this.annotationMgr = new AnnotationManager(
-          provider,
-          host,
-          "edit",
-          initialPins,
-          (pins) => {
-            this.ps.updateModelProfile(file.path, (_existing) => ({ annotations: pins }));
-            // Update badge count
-            toolbar.updateAnnotationBadge(pins.length);
-          },
-          noteReader,
-          headingSearch,
-          {
-            app: this.app,
-            previewMode: this.getSettings().annotationPreviewMode,
-            displayMode: this.getSettings().annotationDisplayMode,
-          },
-        );
-
-        // Show annotate button with badge
-        toolbar.showAnnotateButton();
-        toolbar.updateAnnotationBadge(initialPins.length);
-
-        // Wire pick callback
-        this.preview.onPick((result) => {
-          if (!this.annotationMode || !this.annotationMgr) return;
-          const screenX = result.screenX;
-          const screenY = result.screenY;
-          const worldPos = this.preview?.getPickWorldPoint(result) ?? null;
-          if (!worldPos) return;
-
-          this.annotationMgr.showEditor(screenX, screenY, worldPos);
-        });
-      }
-
       loading.hide();
+      void this.setupAnnotationManager(file.path, gen, host, toolbar);
       this.scheduleDeferredEvidenceRegistration(file.path, gen, summary);
     } catch (err) {
       if (gen !== this.loadGeneration) return;
@@ -524,6 +482,69 @@ export class DirectModelView extends FileView {
       renderModelLoadFailure(host, failure);
     } finally {
       loading.hide();
+    }
+  }
+
+  private async setupAnnotationManager(
+    modelPath: string,
+    generation: number,
+    host: HTMLElement,
+    toolbar: ReturnType<typeof createHelperButtons> | null,
+  ): Promise<void> {
+    const preview = this.preview;
+    if (!preview) {
+      return;
+    }
+    const provider = preview.getAnnotationProvider();
+    if (!provider.canvas) {
+      return;
+    }
+
+    try {
+      const [{ AnnotationManager }, { createHeadingSearch, createNoteReader }] = await Promise.all([
+        import("../render/preview/annotations"),
+        import("../utils/note-reader"),
+      ]);
+      if (generation !== this.loadGeneration || this.preview !== preview || this.workbenchModelPath !== modelPath || !host.isConnected) {
+        return;
+      }
+
+      const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
+      const initialPins = profile?.annotations ?? [];
+      const noteReader = createNoteReader(this.app);
+      const headingSearch = createHeadingSearch(this.app);
+      this.annotationMgr = new AnnotationManager(
+        provider,
+        host,
+        "edit",
+        initialPins,
+        (pins) => {
+          this.ps.updateModelProfile(modelPath, (_existing) => ({ annotations: pins }));
+          toolbar?.updateAnnotationBadge(pins.length);
+        },
+        noteReader,
+        headingSearch,
+        {
+          app: this.app,
+          previewMode: this.getSettings().annotationPreviewMode,
+          displayMode: this.getSettings().annotationDisplayMode,
+        },
+      );
+
+      toolbar?.showAnnotateButton();
+      toolbar?.updateAnnotationBadge(initialPins.length);
+
+      preview.onPick((result) => {
+        if (!this.annotationMode || !this.annotationMgr) return;
+        const screenX = result.screenX;
+        const screenY = result.screenY;
+        const worldPos = this.preview?.getPickWorldPoint(result) ?? null;
+        if (!worldPos) return;
+
+        this.annotationMgr.showEditor(screenX, screenY, worldPos);
+      });
+    } catch (error) {
+      console.warn("[AI3D] Direct view annotation runtime failed to load:", error);
     }
   }
 
