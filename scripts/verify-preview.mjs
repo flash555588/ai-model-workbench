@@ -972,9 +972,7 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   }, null, 2));
 }
 
-async function verifyThreeDisassemblyDragResponsive(page, route, pickPoint) {
-  if (route?.backend !== "three") return;
-
+async function verifyDisassemblyDragResponsive(page, pickPoint) {
   const setup = await page.evaluate(() => {
     const preview = window.__ai3dPreview;
     const canvas = document.querySelector("#preview-canvas");
@@ -993,7 +991,7 @@ async function verifyThreeDisassemblyDragResponsive(page, route, pickPoint) {
     };
   });
 
-  assert(!setup.skipped, "Three disassembly verification could not access the preview");
+  assert(!setup.skipped, "Disassembly verification could not access the preview");
   assert(setup.enabled === true, "Disassembly mode did not turn on");
 
   await page.mouse.move(pickPoint.clientX, pickPoint.clientY);
@@ -1019,8 +1017,8 @@ async function verifyThreeDisassemblyDragResponsive(page, route, pickPoint) {
     };
   });
 
-  assert(!result.skipped, "Three disassembly verification could not read the canvas after drag");
-  assert(setup.before !== result.after, "Disassembly drag did not refresh the Three canvas immediately");
+  assert(!result.skipped, "Disassembly verification could not read the canvas after drag");
+  assert(setup.before !== result.after, "Disassembly drag did not refresh the canvas immediately");
 }
 
 async function saveFailureArtifacts(page, browserMessages, error) {
@@ -1177,7 +1175,7 @@ async function verify() {
     await verifyFocusSelectionAfterExistingPick(page, selectedPartMarkdown);
     await verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedPartMarkdown);
     if (verifyMode === "basic") {
-      await verifyThreeDisassemblyDragResponsive(page, state.route, {
+      await verifyDisassemblyDragResponsive(page, {
         clientX: selectedPartPick.clientX,
         clientY: selectedPartPick.clientY,
       });

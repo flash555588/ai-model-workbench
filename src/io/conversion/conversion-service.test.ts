@@ -1,0 +1,183 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { ConvertedAssetRecord } from "../../domain/models";
+import type { ConvertedAssetCache } from "../cache/converted-asset-cache";
+import { CONVERTED_ASSET_CACHE_VERSION } from "../cache/converted-asset-cache";
+import type { FormatCapability } from "../formats/types";
+import type { ConversionManager } from "./manager";
+
+const fsMocks = vi.hoisted(() => ({
+  access: vi.fn(),
+  mkdir: vi.fn(),
+  stat: vi.fn(),
+}));
+
+vi.mock("../../utils/node-shim", () => ({
+  F_OK: 0,
+  access: fsMocks.access,
+  mkdir: fsMocks.mkdir,
+  pathBasename: (path: string, ext?: string) => {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    return ext && name.endsWith(ext) ? name.slice(0, -ext.length) : name;
+  },
+  pathExtname: (path: string) => {
+    const name = path.split(/[\\/]/).pop() ?? "";
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 ? name.slice(dot) : "";
+  },
+  pathJoin: (...segments: string[]) => segments.join("/").replace(/\/+/g, "/"),
+  stat: fsMocks.stat,
+}));
+
+import { convertForPreview } from "./conversion-service";
+
+const capability: FormatCapability = {
+  ext: "step",
+  family: "cad",
+  strategy: "convert",
+  converterId: "freecad",
+  outputFormat: "glb",
+  enabled: true,
+};
+
+function createManager(): ConversionManager {
+  return {
+    canConvert: vi.fn(() => true),
+    getConverterCacheIdentity: vi.fn(async () => {
+      throw new Error("converter identity probe should not run for reusable outputs");
+    }),
+    convert: vi.fn(async () => {
+      throw new Error("conversion should not run for reusable outputs");
+    }),
+  } as unknown as ConversionManager;
+}
+
+function mockReusableConvertedOutput(sourcePath: string, outputPath: string): void {
+  fsMocks.access.mockResolvedValue(undefined);
+  fsMocks.stat.mockImplementation(async (path: string) => ({
+    size: path === outputPath ? 1024 : 2048,
+    mtimeMs: path === outputPath ? 200 : 100,
+  }));
+}
+
+describe("convertForPreview", () => {
+  beforeEach(() => {
+    fsMocks.access.mockReset();
+    fsMocks.mkdir.mockReset();
+    fsMocks.stat.mockReset();
+    fsMocks.mkdir.mockResolvedValue(undefined);
+  });
+
+  it("reuses an existing converted output without probing converter identity", async () => {
+    const sourcePath = "/vault/models/board.step";
+    const outputPath = "/vault/models/board.ai3d-converted.glb";
+    const manager = createManager();
+    const cache = {
+      get: vi.fn(() => undefined),
+      set: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as ConvertedAssetCache;
+    mockReusableConvertedOutput(sourcePath, outputPath);
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: manager,
+      convertedAssetCache: cache,
+    });
+
+    expect(result).toEqual({
+      effectivePath: outputPath,
+      effectiveExt: "glb",
+      warnings: ["Using existing conversion output."],
+    });
+    expect(manager.getConverterCacheIdentity).not.toHaveBeenCalled();
+    expect(manager.convert).not.toHaveBeenCalled();
+    expect(cache.set).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePath,
+      outputPath,
+      converterCacheKey: "freecad",
+    }));
+  });
+
+  it("reuses a cached conversion record without probing converter identity", async () => {
+    const sourcePath = "/vault/models/plate.step";
+    const outputPath = "/vault/models/plate.ai3d-converted.glb";
+    const manager = createManager();
+    const record: ConvertedAssetRecord = {
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId: "freecad",
+      converterCacheKey: "freecad:old",
+      sourcePath,
+      sourceExt: "step",
+      targetExt: "glb",
+      outputPath,
+      outputExt: "glb",
+      warnings: ["Previous warning"],
+      createdAt: Date.now(),
+    };
+    const cache = {
+      get: vi.fn(() => record),
+      set: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as ConvertedAssetCache;
+    mockReusableConvertedOutput(sourcePath, outputPath);
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: manager,
+      convertedAssetCache: cache,
+    });
+
+    expect(result).toEqual({
+      effectivePath: outputPath,
+      effectiveExt: "glb",
+      warnings: ["Previous warning", "Using cached conversion output."],
+    });
+    expect(manager.getConverterCacheIdentity).not.toHaveBeenCalled();
+    expect(manager.convert).not.toHaveBeenCalled();
+    expect(cache.delete).not.toHaveBeenCalled();
+  });
+
+  it("writes new conversions to the configured output root", async () => {
+    const sourcePath = "/vault/models/board.step";
+    const outputRoot = "/vault/.obsidian/ai-model-workbench/converted-assets";
+    const manager = {
+      canConvert: vi.fn(() => true),
+      getConverterCacheIdentity: vi.fn(async () => ({ converterId: "freecad", cacheKey: "freecad:v2" })),
+      convert: vi.fn(async (req: { outputPath?: string }) => ({
+        outputPath: req.outputPath ?? "/unexpected.glb",
+        outputExt: "glb",
+        fromCache: false,
+        warnings: [],
+      })),
+    } as unknown as ConversionManager;
+    const cache = {
+      get: vi.fn(() => undefined),
+      set: vi.fn(),
+      delete: vi.fn(),
+    } as unknown as ConvertedAssetCache;
+    fsMocks.stat.mockRejectedValue(new Error("missing"));
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: manager,
+      convertedAssetCache: cache,
+      outputRoot,
+    });
+
+    expect(fsMocks.mkdir).toHaveBeenCalledWith(outputRoot, { recursive: true });
+    expect(manager.convert).toHaveBeenCalledWith(expect.objectContaining({
+      outputPath: expect.stringMatching(/^\/vault\/\.obsidian\/ai-model-workbench\/converted-assets\/board-[a-f0-9]{8}\.ai3d-converted\.glb$/),
+    }));
+    expect(result.effectivePath).toMatch(/^\/vault\/\.obsidian\/ai-model-workbench\/converted-assets\/board-[a-f0-9]{8}\.ai3d-converted\.glb$/);
+    expect(cache.set).toHaveBeenCalledWith(expect.objectContaining({
+      outputPath: result.effectivePath,
+      converterCacheKey: "freecad:v2",
+    }));
+  });
+});

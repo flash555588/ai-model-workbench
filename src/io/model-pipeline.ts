@@ -16,6 +16,7 @@ export interface PrepareModelInput {
   preferConversionExts?: readonly string[];
   conversionManager?: ConversionManager;
   convertedAssetCache?: ConvertedAssetCache;
+  conversionOutputRoot?: string;
 }
 
 export interface PreparedModel {
@@ -85,6 +86,7 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
       capability: conversionCapability,
       conversionManager: input.conversionManager,
       convertedAssetCache: input.convertedAssetCache,
+      outputRoot: input.conversionOutputRoot,
     });
 
     log.info("conversion completed", {

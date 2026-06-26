@@ -34,7 +34,7 @@ describe("createDirectViewPreviewOptions", () => {
     expect(route.reason).toBe("glb direct view edit preview");
   });
 
-  it("keeps converted GLB outputs on the conservative workbench path", () => {
+  it("routes converted GLB outputs through the Three edit path", () => {
     const options = createDirectViewPreviewOptions(
       makeSettings(),
       makeSource({
@@ -46,9 +46,9 @@ describe("createDirectViewPreviewOptions", () => {
     );
     const route = resolvePreviewRoute(options);
 
-    expect(options.requireWorkbenchFeatures).toBe(true);
-    expect(route.backend).toBe("babylon");
-    expect(route.reason).toContain("requireWorkbenchFeatures=true");
+    expect(options.requireWorkbenchFeatures).toBe(false);
+    expect(route.backend).toBe("three");
+    expect(route.reason).toBe("glb direct view edit preview");
   });
 
   it("uses the guarded Three workbench route only when the experimental file-view setting is enabled", () => {

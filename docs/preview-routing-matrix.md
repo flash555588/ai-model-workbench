@@ -23,7 +23,7 @@ The table below assumes the default rollout setting: `Reading + file view (Recom
 | Live Preview embed | readonly annotations present | Three.js | readonly annotations use the Three annotation provider |
 | Direct file view | `GLB/GLTF/STL/PLY/OBJ` single-model edit view | Three.js | `ext ∈ THREE_FORMATS`, `annotationMode=edit`, `allowEditModeOnThree=true` |
 | Direct file view | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` direct view still routes to Babylon |
-| Direct file view | conversion-backed output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Babylon.js | converted inputs keep `requireWorkbenchFeatures=true` unless an explicit Three workbench route is enabled |
+| Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Three.js | converted GLB outputs use the same edit-preview fast path; full workbench and `3dgrid` stay conservative |
 | Workbench | any current model | Babylon.js | `requireWorkbenchFeatures=true`; retained on Babylon after phase-3 evaluation |
 | `3dgrid` | compare / gallery / compose / preset layouts | Babylon.js | retained on Babylon after phase-4 decision |
 
@@ -37,10 +37,10 @@ The runtime route decision is intentionally conservative:
 
 - Three.js is the fast path for all common single-model formats (GLB, GLTF, STL, PLY, OBJ) across reading surfaces and direct view, including annotation overlays.
 - Babylon.js remains the intentional capability path for:
-  - workbench edit annotations and features
+  - full workbench features outside the direct file edit-preview path
   - grid layouts
   - SPLAT format
-  - conversion-backed formats (via GLB pipeline)
+  - conversion-backed formats when the effective output is not a Three-supported single-model asset
 
 The shared route helper lives in `src/render/preview/routing.ts`.
 The phase-3 / phase-4 decision note lives in `docs/workbench-3dgrid-feasibility-note.md`.
@@ -87,7 +87,7 @@ This automation covers:
 Manual checks remain required for:
 
 - `3dgrid`
-- real workbench conversion-chain inputs and full knowledge-panel workflow
+- real conversion-chain inputs and full knowledge-panel workflow
 - `GLTF` assets with external resources
 
 ### 1. Simple inline `GLB` -> Three.js

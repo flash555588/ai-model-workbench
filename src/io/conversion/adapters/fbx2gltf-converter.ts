@@ -1,5 +1,5 @@
 import type { ConversionRequest, ConversionResult, ModelConverter } from "../types";
-import { F_OK, access, readFile } from "../../../utils/node-shim";
+import { F_OK, access, mkdir, readFile } from "../../../utils/node-shim";
 import { pathDirname as dirname, pathBasename as basename, pathExtname as extname, pathJoin as join, pathIsAbsolute as isAbsolute } from "../../../utils/node-shim";
 import { execFile } from "../../../utils/node-shim";
 import { createLogger } from "../../../utils/log";
@@ -60,7 +60,8 @@ export class Fbx2GltfConverter implements ModelConverter {
     const invocation = await resolveConverterInvocation(this.id, this.configuredCommand);
     const sourceDir = dirname(req.sourcePath);
     const name = basename(req.sourcePath, extname(req.sourcePath));
-    const outputPath = join(sourceDir, `${name}.ai3d-converted.glb`);
+    const outputPath = req.outputPath ?? join(sourceDir, `${name}.ai3d-converted.glb`);
+    await mkdir(dirname(outputPath), { recursive: true });
 
     log.info("run FBX2glTF conversion", {
       sourcePath: req.sourcePath,

@@ -4,9 +4,18 @@
 
 - Rendering: include Three.js PLY point clouds in summary, part evidence, picking, measurement, material audit, and disposal paths without faking triangle counts.
 - Rendering: keep Three.js orthographic camera, shadow, and grid helper scales tied to real tiny-model bounds instead of a one-unit floor.
+- Rendering: promote Three.js and Babylon picks on converted component child meshes to their parent registered component/group so selection, focus, and disassembly dragging do not collapse to a single surface fragment.
+- Rendering: preserve Three.js component world transforms when entering disassembly drag so nested converted GLB parts no longer jump to the scene origin or change orientation.
+- Performance: open large converted models faster by reusing fresh `.ai3d-converted.glb` outputs before probing converter identity and by deferring direct-view evidence registration until after the preview is visible.
+- Performance: route conversion-backed GLB direct file views through Three.js and avoid extra full-buffer copies during GLB parsing.
+- Performance: cap automatic registered-part writes for highly fragmented models so large imports do not keep growing the plugin state file with low-value surface shards.
+- Performance: normalize oversized saved registered-part lists on load, keeping reviewed, note-linked, component, and grouped records first.
+- Conversion: write new converted GLB outputs to `.obsidian/ai-model-workbench/converted-assets` while continuing to reuse existing side-by-side `.ai3d-converted.glb` files.
+- UI: always dismiss direct-view and Live Preview loading overlays when a preview load is interrupted, avoiding stale dark shields during rapid reloads or verification runs.
 - Knowledge: merge generic tiny mesh fragments into a lower-confidence detail cluster so imported models keep meaningful small parts without over-splitting renderer noise.
 - Knowledge: preserve part-splitting format lineage across direct and converted formats, including source format, rendered format, and direct/convert strategy in reports, sidecars, draft input, and registered part profiles.
 - Docs: trim redundant English and Chinese README quick-start, install, and platform-support copy, and split detailed usage/workflow syntax into dedicated docs.
+- Docs: add a user-facing `0.6.0+` update log covering Three.js fidelity, smoothness, small-part evidence, knowledge workflow, conversion diagnostics, and release gates.
 
 ## 0.6.1 - 2026-06-25
 

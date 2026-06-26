@@ -102,10 +102,11 @@ export class AssimpConverter implements ModelConverter {
     const invocation = await resolveConverterInvocation(this.id, this.configuredCommand);
     const sourceDir = dirname(req.sourcePath);
     const name = basename(req.sourcePath, extname(req.sourcePath));
-    const outputPath = join(sourceDir, `${name}.ai3d-converted.glb`);
+    const outputPath = req.outputPath ?? join(sourceDir, `${name}.ai3d-converted.glb`);
     const scriptDir = join(tmpdir(), "ai3d-mesh-convert");
     const scriptPath = join(scriptDir, `${name}-${Date.now()}.py`);
 
+    await mkdir(dirname(outputPath), { recursive: true });
     await mkdir(scriptDir, { recursive: true });
     await writeFile(scriptPath, buildTrimeshScript(req.sourcePath, outputPath), "utf8");
 

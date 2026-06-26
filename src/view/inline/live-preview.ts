@@ -31,6 +31,7 @@ import {
 } from "./preview-canvas-accessibility";
 
 const log = createLogger("inline-live-preview");
+const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 // ── Widget ────────────────────────────────────────────────────────
 
@@ -177,6 +178,7 @@ class ModelEmbedWidget extends WidgetType {
         freecadcmdCommand: this.freecadcmdCommand,
       });
       loading.setPhaseKey("loading.preparingModel");
+      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
       const prepared = await prepareModelInput({
         path: this.modelPath,
         absolutePath,
@@ -186,6 +188,7 @@ class ModelEmbedWidget extends WidgetType {
         }),
         conversionManager,
         convertedAssetCache: this.convertedAssetCache,
+        conversionOutputRoot,
       });
       const pins = this.getAnnotations?.(this.modelPath) ?? [];
       const previewOptions = {
@@ -271,6 +274,8 @@ class ModelEmbedWidget extends WidgetType {
         console.error("[AI3D] Live Preview failed:", err);
       }
       renderModelLoadFailure(host, failure);
+    } finally {
+      loading.hide();
     }
   }
 

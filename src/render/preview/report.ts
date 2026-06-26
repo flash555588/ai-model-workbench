@@ -36,6 +36,29 @@ function getDisplayText(value: string | null | undefined, fallback = "-"): strin
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+function formatPartSource(source: ModelPartSummary["source"]): string | null {
+  if (!source) return null;
+  if (source === "detail-cluster") return "Detail cluster";
+  return source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+function formatPartLineage(part: ModelPartSummary): string | null {
+  if (!part.sourceFormat && !part.effectiveFormat && !part.loadStrategy) {
+    return null;
+  }
+  const sourceFormat = part.sourceFormat ?? part.effectiveFormat ?? "unknown";
+  const effectiveFormat = part.effectiveFormat ?? sourceFormat;
+  const strategy = part.loadStrategy ?? (sourceFormat !== effectiveFormat ? "convert" : "direct");
+  return `${sourceFormat.toUpperCase()}${effectiveFormat !== sourceFormat ? ` -> ${effectiveFormat.toUpperCase()}` : ""} (${strategy})`;
+}
+
+function formatMeshRefs(meshNames: readonly string[] | undefined, limit = 8): string | null {
+  if (!meshNames?.length) return null;
+  const head = meshNames.slice(0, limit).join(", ");
+  const remaining = meshNames.length - limit;
+  return remaining > 0 ? `${head}, +${remaining} more` : head;
+}
+
 function buildPreviewSummaryRows(
   summary: ModelPreviewSummary,
   options: PreviewSummaryTableOptions = {},
@@ -140,11 +163,38 @@ export function createPreviewPartInfoMarkdown(
   lines.push("| Property | Value |");
   lines.push("|----------|-------|");
   lines.push(`| Mesh | ${escapePreviewMarkdownTableCell(getDisplayText(part.name))} |`);
+  const source = formatPartSource(part.source);
+  if (source) {
+    lines.push(`| Source | ${escapePreviewMarkdownTableCell(source)} |`);
+  }
+  if (part.childCount !== undefined && part.childCount > 1) {
+    lines.push(`| Child Meshes | ${part.childCount.toLocaleString()} |`);
+  }
+  if (part.componentId) {
+    lines.push(`| Component ID | ${escapePreviewMarkdownTableCell(part.componentId)} |`);
+  }
+  if (part.occurrenceId) {
+    lines.push(`| Occurrence ID | ${escapePreviewMarkdownTableCell(part.occurrenceId)} |`);
+  }
+  if (part.partNumber) {
+    lines.push(`| Part Number | ${escapePreviewMarkdownTableCell(part.partNumber)} |`);
+  }
+  if (part.componentPath) {
+    lines.push(`| Component Path | ${escapePreviewMarkdownTableCell(part.componentPath)} |`);
+  }
+  const lineage = formatPartLineage(part);
+  if (lineage) {
+    lines.push(`| Format Lineage | ${escapePreviewMarkdownTableCell(lineage)} |`);
+  }
   lines.push(`| Triangles | ${part.triangleCount.toLocaleString()} |`);
   lines.push(`| Vertices | ${part.vertexCount.toLocaleString()} |`);
   lines.push(`| Material | ${escapePreviewMarkdownTableCell(getDisplayText(part.materialName))} |`);
   lines.push(`| Bounding Size | ${formatPreviewWorldPoint(part.boundingSize)} |`);
   lines.push(`| Center | ${formatPreviewWorldPoint(part.center, { separator: ", " })} |`);
+  const meshRefs = formatMeshRefs(part.meshNames);
+  if (meshRefs && part.childCount !== 1) {
+    lines.push(`| Mesh Refs | ${escapePreviewMarkdownTableCell(meshRefs)} |`);
+  }
   lines.push("");
   return lines.join("\n");
 }

@@ -23,9 +23,13 @@ function canUseExperimentalThreeWorkbench(settings: PluginSettings, source: Prev
 }
 
 function canUseThreeDirectFileView(source: PreviewSource): boolean {
-  return source.strategy === "direct"
-    && THREE_DIRECT_VIEW_FORMATS.has(source.ext)
-    && THREE_DIRECT_VIEW_FORMATS.has(source.sourceExt);
+  if (!THREE_DIRECT_VIEW_FORMATS.has(source.ext)) {
+    return false;
+  }
+  if (source.strategy === "direct") {
+    return THREE_DIRECT_VIEW_FORMATS.has(source.sourceExt);
+  }
+  return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
 }
 
 export function createDirectViewPreviewOptions(

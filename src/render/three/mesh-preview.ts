@@ -174,6 +174,127 @@ export function createThreeRenderablePartPreviewSummary(
   });
 }
 
+function collectChildRenderableMeshes(object: Object3D, renderableSet: ReadonlySet<Mesh>): Mesh[] {
+  const meshes: Mesh[] = [];
+  object.traverse((child) => {
+    if (isThreeMesh(child) && renderableSet.has(child)) {
+      meshes.push(child);
+    }
+  });
+  return meshes;
+}
+
+function isGenericWrapperName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return /^(scene|root|model|group|node|object|assembly|component)[-_\s.]?\d*$/i.test(normalized)
+    || normalized === "__root__";
+}
+
+function isGeneratedThreeMeshBucketName(name: string): boolean {
+  return /->\d+(?:[_\s.-]*primitive\d*)?$/i.test(name.trim());
+}
+
+export function createThreeObjectPartPreviewSummary(
+  object: Object3D,
+  root: Object3D | null,
+  renderableMeshes?: readonly Mesh[],
+): ModelPartSummary {
+  if (isThreeRenderableObject(object)) {
+    return createThreeRenderablePartPreviewSummary(object, root);
+  }
+
+  object.updateWorldMatrix(true, true);
+  const renderableSet = new Set(renderableMeshes ?? []);
+  if (renderableSet.size === 0) {
+    object.traverse((child) => {
+      if (isThreeMesh(child)) {
+        renderableSet.add(child);
+      }
+    });
+  }
+  const childMeshes = collectChildRenderableMeshes(object, renderableSet);
+  const bounds = new Box3();
+  const materialNames = new Set<string>();
+  let triangleCount = 0;
+  let vertexCount = 0;
+
+  for (const mesh of childMeshes) {
+    mesh.updateWorldMatrix(true, false);
+    bounds.union(new Box3().setFromObject(mesh));
+    triangleCount += getThreeTriangleCount(mesh);
+    vertexCount += getThreeVertexCount(mesh);
+    for (const material of getThreeMaterialList(mesh.material)) {
+      const name = describeThreeMaterial(material);
+      if (name) materialNames.add(name);
+    }
+  }
+
+  if (childMeshes.length === 0) {
+    bounds.setFromObject(object);
+  }
+
+  const fallbackName = getThreeObjectDisplayName(object, `group-${object.id}`);
+  const identity = extractPreviewComponentIdentity(object.userData, {
+    name: fallbackName,
+    path: root ? getThreeObjectComponentPath(root, object) : fallbackName,
+  });
+
+  return createPreviewPartSummary({
+    name: getPartDisplayName(identity, fallbackName),
+    triangleCount,
+    vertexCount,
+    materialName: createPreviewMaterialSummaryLabel(materialNames),
+    boundingSize: getPreviewBoundsSize({
+      min: toPreviewWorldPoint(bounds.min),
+      max: toPreviewWorldPoint(bounds.max),
+    }),
+    center: getPreviewBoundsCenter({
+      min: toPreviewWorldPoint(bounds.min),
+      max: toPreviewWorldPoint(bounds.max),
+    }),
+    source: identity.hasExplicitIdentity ? "component" : "group",
+    meshNames: childMeshes.map((mesh) => getThreeObjectDisplayName(mesh, `mesh-${mesh.id}`)),
+    childCount: childMeshes.length,
+    componentId: identity.componentId,
+    occurrenceId: identity.occurrenceId,
+    partNumber: identity.partNumber,
+    componentPath: identity.componentPath,
+  });
+}
+
+export function findThreeSelectablePartObject(
+  root: Object3D,
+  renderable: ThreeRenderableObject,
+  renderableMeshes: readonly Mesh[],
+): Object3D {
+  const renderableSet = new Set(renderableMeshes);
+  let fallbackGroup: Object3D | null = null;
+  let fallbackExplicitObject: Object3D | null = null;
+  let current = renderable.parent;
+  while (current && current !== root) {
+    const childMeshes = collectChildRenderableMeshes(current, renderableSet);
+    if (childMeshes.length > 0 && childMeshes.length < renderableMeshes.length) {
+      const rawObjectName = current.name ?? "";
+      const fallbackName = getThreeObjectDisplayName(current, `group-${current.id}`);
+      const identity = extractPreviewComponentIdentity(current.userData, {
+        name: fallbackName,
+        path: getThreeObjectComponentPath(root, current),
+      });
+      if (identity.hasExplicitIdentity) {
+        if (!isGeneratedThreeMeshBucketName(rawObjectName)) {
+          return current;
+        }
+        fallbackExplicitObject ??= current;
+      }
+      if (!fallbackGroup && childMeshes.length > 1 && fallbackName.trim() && !isGenericWrapperName(fallbackName)) {
+        fallbackGroup = current;
+      }
+    }
+    current = current.parent;
+  }
+  return fallbackGroup ?? fallbackExplicitObject ?? renderable;
+}
+
 export function createThreeGroupedPartCandidates(
   root: Object3D,
   renderableMeshes: readonly Mesh[],

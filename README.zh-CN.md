@@ -59,7 +59,7 @@
 - 带单位校准和 Markdown 导出的测量记录
 - 更可靠的知识生成状态、诊断、转换缓存和发布验证门禁
 
-完整发布日志见 [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md)、[docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
+滚动更新日志见 [docs/release-notes/0.6.0-plus.md](docs/release-notes/0.6.0-plus.md)，版本发布日志见 [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md)、[docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

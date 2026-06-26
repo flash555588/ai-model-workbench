@@ -205,7 +205,7 @@ future agent notes can refer to the same requirement over time.
 - User value: When conversion fails, users should see an actionable explanation without exposing private local command paths in copied diagnostics.
 - Scope:
   - Converter discovery, error classification, timeout handling, and diagnostics.
-  - Cache reuse decisions for existing `.ai3d-converted.glb` files.
+  - Cache reuse decisions for hidden converted outputs and existing side-by-side `.ai3d-converted.glb` files.
   - Sanitized support reports.
 - Out of scope:
   - Bundling heavy converter binaries.
@@ -213,7 +213,7 @@ future agent notes can refer to the same requirement over time.
 - Acceptance criteria:
   - Missing converter UI tells the user which converter id is required.
   - Timeout does not block preview indefinitely.
-  - Existing `.ai3d-converted.glb` is reused only when newer than source.
+  - New converted outputs are written under `.obsidian/ai-model-workbench/converted-assets`; existing side-by-side `.ai3d-converted.glb` files are reused only when newer than source.
   - Unsafe converter command paths are rejected before execution.
   - Diagnostics omit draft service URL and converter command paths.
   - Diagnostics redact vault-relative paths unless explicitly requested.

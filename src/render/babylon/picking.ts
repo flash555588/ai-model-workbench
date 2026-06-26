@@ -23,28 +23,32 @@ export function setupPicking(
   scene: Scene,
   onPick: (result: PickResult) => void,
   shouldHighlight: () => boolean = () => true,
+  resolveHighlightMeshes: (mesh: AbstractMesh) => readonly AbstractMesh[] = (mesh) => [mesh],
 ): () => void {
   const highlightLayer = new HighlightLayer("ai3d-pick-highlight", scene);
   const highlightColor = new Color3(0.15, 0.45, 1.0);
-  let outlinedMesh: AbstractMesh | null = null;
+  let outlinedMeshes: AbstractMesh[] = [];
 
   function clearHighlight() {
     highlightLayer.removeAllMeshes();
-    if (outlinedMesh && !outlinedMesh.isDisposed()) {
-      outlinedMesh.renderOutline = false;
-      outlinedMesh.outlineWidth = 0;
+    for (const outlinedMesh of outlinedMeshes) {
+      if (!outlinedMesh.isDisposed()) {
+        outlinedMesh.renderOutline = false;
+        outlinedMesh.outlineWidth = 0;
+      }
     }
-    outlinedMesh = null;
+    outlinedMeshes = [];
   }
 
-  function applyHighlight(mesh: AbstractMesh) {
-    if (mesh.isDisposed()) return;
-    // @ts-expect-error Babylon HighlightLayer accepts AbstractMesh at runtime.
-    highlightLayer.addMesh(mesh as unknown, highlightColor);
-    mesh.renderOutline = true;
-    mesh.outlineColor = highlightColor;
-    mesh.outlineWidth = 0.045;
-    outlinedMesh = mesh;
+  function applyHighlight(meshes: readonly AbstractMesh[]) {
+    outlinedMeshes = meshes.filter((mesh) => !mesh.isDisposed());
+    for (const mesh of outlinedMeshes) {
+      // @ts-expect-error Babylon HighlightLayer accepts AbstractMesh at runtime.
+      highlightLayer.addMesh(mesh as unknown, highlightColor);
+      mesh.renderOutline = true;
+      mesh.outlineColor = highlightColor;
+      mesh.outlineWidth = 0.045;
+    }
   }
 
   const observer = scene.onPointerObservable.add((pointerInfo) => {
@@ -57,9 +61,12 @@ export function setupPicking(
     const pickInfo = pointerInfo.pickInfo;
     if (pickInfo?.hit && pickInfo.pickedMesh) {
       if (shouldHighlight()) {
-        if (outlinedMesh !== pickInfo.pickedMesh) {
+        const highlightMeshes = resolveHighlightMeshes(pickInfo.pickedMesh).filter((mesh) => !mesh.isDisposed());
+        const sameHighlight = outlinedMeshes.length === highlightMeshes.length
+          && outlinedMeshes.every((mesh, index) => mesh === highlightMeshes[index]);
+        if (!sameHighlight) {
           clearHighlight();
-          applyHighlight(pickInfo.pickedMesh);
+          applyHighlight(highlightMeshes);
         }
       } else {
         clearHighlight();

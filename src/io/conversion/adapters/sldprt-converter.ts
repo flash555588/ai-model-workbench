@@ -227,10 +227,11 @@ export class SldprtConverter implements ModelConverter {
     const invocation = await resolveConverterInvocation("freecadcmd", this.configuredCommand);
     const sourceDir = dirname(req.sourcePath);
     const name = basename(req.sourcePath, extname(req.sourcePath));
-    const outputPath = join(sourceDir, `${name}.ai3d-converted.glb`);
+    const outputPath = req.outputPath ?? join(sourceDir, `${name}.ai3d-converted.glb`);
     const scriptDir = join(tmpdir(), "ai3d-sldprt");
     const scriptPath = join(scriptDir, `${name}-${Date.now()}.py`);
 
+    await mkdir(dirname(outputPath), { recursive: true });
     await mkdir(scriptDir, { recursive: true });
     await writeFile(scriptPath, buildFreeCadScript(req.sourcePath, outputPath), "utf8");
 

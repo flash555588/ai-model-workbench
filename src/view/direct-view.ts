@@ -27,6 +27,9 @@ import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from ".
 export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
+const DEFERRED_EVIDENCE_DELAY_MS = 450;
+const MAX_AUTO_REGISTERED_PARTS = 256;
+const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 import { createDefaultProfile } from "../store/plugin-store";
 
@@ -61,6 +64,30 @@ function mergeAutoRegisteredPart(previous: PartRecord | undefined, next: PartRec
     inferredFunctions: previous.inferredFunctions.length > 0 ? previous.inferredFunctions : next.inferredFunctions,
     knowledgeTags: previous.knowledgeTags.length > 0 ? previous.knowledgeTags : next.knowledgeTags,
   };
+}
+
+function getAutoRegisteredPartRank(part: PartRecord): number {
+  if (part.reviewed || part.notePath) return 0;
+  if (part.source === "component") return 1;
+  if (part.source === "group") return 2;
+  if (part.source === "detail-cluster") return 3;
+  return 4;
+}
+
+function limitAutoRegisteredParts(parts: PartRecord[]): PartRecord[] {
+  if (parts.length <= MAX_AUTO_REGISTERED_PARTS) {
+    return parts;
+  }
+
+  return [...parts]
+    .sort((left, right) => {
+      const rankDelta = getAutoRegisteredPartRank(left) - getAutoRegisteredPartRank(right);
+      if (rankDelta !== 0) return rankDelta;
+      const confidenceDelta = (right.confidence ?? 0) - (left.confidence ?? 0);
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return (right.childCount ?? 0) - (left.childCount ?? 0);
+    })
+    .slice(0, MAX_AUTO_REGISTERED_PARTS);
 }
 
 function createEvidenceFormatLineage(source: PreviewSource): ModelEvidenceFormatLineage {
@@ -115,6 +142,9 @@ export class DirectModelView extends FileView {
   private workbenchModelPath: string | null = null;
   private workbenchEvidenceLineage: ModelEvidenceFormatLineage | null = null;
   private workbenchSourceWarnings: string[] = [];
+  private workbenchEvidenceModelPath: string | null = null;
+  private workbenchEvidence: ModelEvidence | null = null;
+  private evidenceRegistrationTimer: number | null = null;
   private sidebarContent: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
@@ -151,6 +181,7 @@ export class DirectModelView extends FileView {
   }
 
   onClose(): Promise<void> {
+    this.clearDeferredEvidenceRegistration();
     if (this.escHandler) {
       activeDocument.removeEventListener("keydown", this.escHandler);
       this.escHandler = null;
@@ -165,6 +196,7 @@ export class DirectModelView extends FileView {
   private async loadModel(file: TFile): Promise<void> {
     const gen = ++this.loadGeneration;
     const mobile = isMobile();
+    this.clearDeferredEvidenceRegistration();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     this.workbenchPanel = null;
@@ -173,6 +205,8 @@ export class DirectModelView extends FileView {
     this.workbenchModelPath = null;
     this.workbenchEvidenceLineage = null;
     this.workbenchSourceWarnings = [];
+    this.workbenchEvidenceModelPath = null;
+    this.workbenchEvidence = null;
     this.sidebarContent = null;
     this.preview?.destroy();
     this.preview = null;
@@ -240,6 +274,7 @@ export class DirectModelView extends FileView {
       const settings = this.getSettings();
       const conversionManager = createConversionManager(settings);
       const absolutePath = resolveVaultAbsolutePath(this.app, file.path) ?? undefined;
+      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
       loading.setPhaseKey("loading.preparingModel");
       const prepared = await prepareModelInput({
         path: file.path,
@@ -247,6 +282,7 @@ export class DirectModelView extends FileView {
         preferConversionExts: listPreferredConversionExts(settings),
         conversionManager,
         convertedAssetCache: this.convertedAssetCache,
+        conversionOutputRoot,
       });
       if (gen !== this.loadGeneration) {
         new Notice(t("directWorkbench.modelLoadInterrupted"));
@@ -271,8 +307,6 @@ export class DirectModelView extends FileView {
       host.dataset.ai3dRouteReason = created.route.reason;
       toolbar?.syncCapabilities();
       const summary = created.summary;
-      const evidence = this.getCurrentModelEvidence();
-      this.registerModelPartsFromEvidence(file.path, evidence);
       renderModelPerformanceFeedback(host, summary);
       this.workbenchPanel = workbenchPanel;
       this.workbenchSummary = summary;
@@ -336,6 +370,7 @@ export class DirectModelView extends FileView {
       }
 
       loading.hide();
+      this.scheduleDeferredEvidenceRegistration(file.path, gen);
     } catch (err) {
       if (gen !== this.loadGeneration) return;
       loading.hide();
@@ -353,6 +388,8 @@ export class DirectModelView extends FileView {
         this.ps.clearModelPreview();
       }
       renderModelLoadFailure(host, failure);
+    } finally {
+      loading.hide();
     }
   }
 
@@ -371,14 +408,59 @@ export class DirectModelView extends FileView {
     const existingByKey = new Map(
       (existingProfile.registeredParts ?? []).map((part) => [createPartMergeKey(part), part]),
     );
-    const registeredParts = nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part));
+    const registeredParts = limitAutoRegisteredParts(
+      nextParts.map((part) => mergeAutoRegisteredPart(existingByKey.get(createPartMergeKey(part)), part)),
+    );
 
     this.ps.updateModelProfile(modelPath, (_existing) => ({ registeredParts }));
   }
 
+  private clearDeferredEvidenceRegistration(): void {
+    if (this.evidenceRegistrationTimer !== null) {
+      window.clearTimeout(this.evidenceRegistrationTimer);
+      this.evidenceRegistrationTimer = null;
+    }
+  }
+
+  private scheduleDeferredEvidenceRegistration(modelPath: string, generation: number): void {
+    this.clearDeferredEvidenceRegistration();
+    this.evidenceRegistrationTimer = window.setTimeout(() => {
+      this.evidenceRegistrationTimer = null;
+      if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath) {
+        return;
+      }
+
+      try {
+        const evidence = this.getCurrentModelEvidence();
+        this.registerModelPartsFromEvidence(modelPath, evidence);
+        if (generation === this.loadGeneration && this.workbenchModelPath === modelPath) {
+          this.refreshWorkbenchPanel();
+        }
+      } catch (error) {
+        console.warn("[AI3D] Deferred model evidence capture failed:", error);
+      }
+    }, DEFERRED_EVIDENCE_DELAY_MS);
+  }
+
   private getCurrentModelEvidence(): ModelEvidence | null {
+    const modelPath = this.workbenchModelPath;
+    if (modelPath && this.workbenchEvidenceModelPath === modelPath) {
+      return this.workbenchEvidence;
+    }
+
     const evidence = this.preview?.getModelEvidence?.() ?? null;
-    return evidence ? applyEvidenceFormatLineage(evidence, this.workbenchEvidenceLineage, this.workbenchSourceWarnings) : null;
+    const nextEvidence = evidence
+      ? applyEvidenceFormatLineage(evidence, this.workbenchEvidenceLineage, this.workbenchSourceWarnings)
+      : null;
+    if (modelPath) {
+      this.workbenchEvidenceModelPath = modelPath;
+      this.workbenchEvidence = nextEvidence;
+    }
+    return nextEvidence;
+  }
+
+  private getCachedModelEvidence(modelPath: string): ModelEvidence | null {
+    return this.workbenchEvidenceModelPath === modelPath ? this.workbenchEvidence : null;
   }
 
   private createKnowledgePreviewAdapter(): Pick<AnnotationPreview, "captureSnapshot" | "getModelEvidence"> | null {
@@ -538,9 +620,13 @@ export class DirectModelView extends FileView {
       body.createDiv({ cls: "ai3d-direct-workbench-empty", text: t(messageKey) });
     };
 
-    const evidence = this.getCurrentModelEvidence();
+    const evidence = this.getCachedModelEvidence(modelPath);
     if (!evidence?.parts.length) {
-      renderEmpty("directWorkbench.registeredUnavailable");
+      if (this.workbenchEvidenceModelPath === modelPath) {
+        renderEmpty("directWorkbench.registeredUnavailable");
+      } else {
+        body.createDiv({ cls: "ai3d-direct-workbench-empty", text: t("directWorkbench.registeredLoading") });
+      }
       return;
     }
 
@@ -620,7 +706,7 @@ export class DirectModelView extends FileView {
     );
 
     try {
-      const summary = await created.preview.loadModel(data.slice(0), source.ext, (path) => readBinaryPath(this.app, path), source.path);
+      const summary = await created.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
       return { preview: created.preview, summary, route: created.route };
     } catch (error) {
       created.preview.destroy();
@@ -639,7 +725,7 @@ export class DirectModelView extends FileView {
         fallbackOptions,
       );
       try {
-        const summary = await fallback.preview.loadModel(data.slice(0), source.ext, (path) => readBinaryPath(this.app, path), source.path);
+        const summary = await fallback.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
         return { preview: fallback.preview, summary, route: fallback.route };
       } catch (fallbackError) {
         fallback.preview.destroy();

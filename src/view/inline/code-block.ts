@@ -30,6 +30,7 @@ import {
 } from "./preview-canvas-accessibility";
 
 const log = createLogger("inline-code-block");
+const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 interface PreparedInlineModel {
   sourcePath: string;
@@ -63,6 +64,7 @@ async function prepareInlineModel(
   }
 
   const absolutePath = resolveVaultAbsolutePath(app, sourcePath) ?? undefined;
+  const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
   const conversionManager = createConversionManager(settings);
   const prepared = await prepareModelInput({
     path: sourcePath,
@@ -70,6 +72,7 @@ async function prepareInlineModel(
     preferConversionExts: listPreferredConversionExts(settings),
     conversionManager,
     convertedAssetCache,
+    conversionOutputRoot,
   });
   const source = toPreviewSource(prepared);
 
@@ -262,6 +265,7 @@ export function registerCodeBlockProcessor(
 
         try {
           const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
+          const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
           const conversionManager = createConversionManager(settings);
           loading.setPhaseKey("loading.preparingModel");
           const prepared = await prepareModelInput({
@@ -270,6 +274,7 @@ export function registerCodeBlockProcessor(
             preferConversionExts: listPreferredConversionExts(settings),
             conversionManager,
             convertedAssetCache,
+            conversionOutputRoot,
           });
           const source = toPreviewSource(prepared);
           const pins = getAnnotations?.(modelPath) ?? [];

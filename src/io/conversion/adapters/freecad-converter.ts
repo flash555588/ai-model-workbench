@@ -64,10 +64,11 @@ export class FreecadConverter implements ModelConverter {
     const invocation = await resolveConverterInvocation(this.id, this.configuredCommand);
     const sourceDir = dirname(req.sourcePath);
     const name = basename(req.sourcePath, extname(req.sourcePath));
-    const outputPath = join(sourceDir, `${name}.ai3d-converted.glb`);
+    const outputPath = req.outputPath ?? join(sourceDir, `${name}.ai3d-converted.glb`);
     const scriptDir = join(tmpdir(), "ai3d-freecad");
     const scriptPath = join(scriptDir, `${name}-${Date.now()}.py`);
 
+    await mkdir(dirname(outputPath), { recursive: true });
     await mkdir(scriptDir, { recursive: true });
     await writeFile(scriptPath, buildCadScript(req.sourcePath, outputPath, req.sourceExt), "utf8");
 

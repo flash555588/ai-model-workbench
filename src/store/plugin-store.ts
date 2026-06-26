@@ -36,6 +36,8 @@ const INITIAL_STATE: PluginState = {
   lastKnowledgeGeneration: null,
 };
 
+const MAX_REGISTERED_PARTS_PER_PROFILE = 256;
+
 export function createPluginStore(plugin: Plugin): PluginStore {
   const store = createStore<PluginState>(INITIAL_STATE);
 
@@ -227,6 +229,30 @@ function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefin
   return value === "direct" || value === "convert" ? value : undefined;
 }
 
+function getRegisteredPartRank(part: PartRecord): number {
+  if (part.reviewed || part.notePath) return 0;
+  if (part.source === "component") return 1;
+  if (part.source === "group") return 2;
+  if (part.source === "detail-cluster") return 3;
+  return 4;
+}
+
+function limitRegisteredParts(parts: PartRecord[]): PartRecord[] {
+  if (parts.length <= MAX_REGISTERED_PARTS_PER_PROFILE) {
+    return parts;
+  }
+
+  return [...parts]
+    .sort((left, right) => {
+      const rankDelta = getRegisteredPartRank(left) - getRegisteredPartRank(right);
+      if (rankDelta !== 0) return rankDelta;
+      const confidenceDelta = right.confidence - left.confidence;
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return (right.childCount ?? 0) - (left.childCount ?? 0);
+    })
+    .slice(0, MAX_REGISTERED_PARTS_PER_PROFILE);
+}
+
 function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): PartRecord[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -276,7 +302,8 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): Part
     });
   }
 
-  return parts.length > 0 ? parts : undefined;
+  const limitedParts = limitRegisteredParts(parts);
+  return limitedParts.length > 0 ? limitedParts : undefined;
 }
 
 function normalizeKnowledgeGenerationRecord(

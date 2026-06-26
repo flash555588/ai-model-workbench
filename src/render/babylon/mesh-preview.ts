@@ -18,6 +18,7 @@ import type { PreviewMeshBreakdownRow } from "../preview/report";
 import { createPreviewModelSummary, createPreviewPartSummary } from "../preview/summary";
 
 export type BabylonComponentMetadataMap = ReadonlyMap<string, unknown>;
+export type BabylonSelectablePartNode = AbstractMesh | TransformNode;
 
 const EMPTY_COMPONENT_METADATA: BabylonComponentMetadataMap = new Map();
 
@@ -137,6 +138,103 @@ export function createBabylonPartPreviewSummary(
     partNumber: identity.partNumber,
     componentPath: identity.componentPath,
   });
+}
+
+function collectBabylonChildRenderableMeshes(node: TransformNode, renderableSet: ReadonlySet<AbstractMesh>): AbstractMesh[] {
+  return node.getChildMeshes(false).filter((mesh) => renderableSet.has(mesh));
+}
+
+function isGenericBabylonWrapperName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return /^(scene|root|model|group|node|object|assembly|component|__root__)[-_\s.]?\d*$/i.test(normalized);
+}
+
+function isGeneratedBabylonMeshBucketName(name: string): boolean {
+  return /->\d+(?:[_\s.-]*primitive\d*)?$/i.test(name.trim());
+}
+
+export function createBabylonNodePartPreviewSummary(
+  node: BabylonSelectablePartNode,
+  renderableMeshes: readonly AbstractMesh[],
+  componentMetadata: BabylonComponentMetadataMap = EMPTY_COMPONENT_METADATA,
+): ModelPartSummary {
+  if (renderableMeshes.includes(node as AbstractMesh)) {
+    return createBabylonPartPreviewSummary(node as AbstractMesh, componentMetadata);
+  }
+
+  const renderableSet = new Set(renderableMeshes);
+  const childMeshes = collectBabylonChildRenderableMeshes(node, renderableSet);
+  const nodePosition = toPreviewWorldPoint(node.getAbsolutePosition());
+  const bounds = getBabylonMeshesPreviewBounds(childMeshes) ?? createPreviewBounds(nodePosition, nodePosition);
+  const materialNames = new Set<string>();
+  let triangleCount = 0;
+  let vertexCount = 0;
+  for (const mesh of childMeshes) {
+    triangleCount += getBabylonTriangleCount(mesh);
+    vertexCount += getBabylonVertexCount(mesh);
+    if (mesh.material?.name) {
+      materialNames.add(mesh.material.name);
+    }
+  }
+
+  const name = getBabylonNodeDisplayName(node, `component-${node.uniqueId}`);
+  const metadata = mergeBabylonMetadataFallback(node.metadata, componentMetadata.get(`node:${name}`));
+  const identity = extractPreviewComponentIdentity(metadata, {
+    name,
+    path: getBabylonComponentPath(node),
+  });
+
+  return createPreviewPartSummary({
+    name: getPartDisplayName(identity, name),
+    triangleCount,
+    vertexCount,
+    materialName: createPreviewMaterialSummaryLabel(materialNames),
+    boundingSize: getPreviewBoundsSize(bounds),
+    center: getPreviewBoundsCenter(bounds),
+    source: identity.hasExplicitIdentity ? "component" : "group",
+    meshNames: childMeshes.map((mesh) => mesh.name || `mesh-${mesh.uniqueId}`),
+    childCount: childMeshes.length,
+    componentId: identity.componentId,
+    occurrenceId: identity.occurrenceId,
+    partNumber: identity.partNumber,
+    componentPath: identity.componentPath,
+  });
+}
+
+export function findBabylonSelectablePartNode(
+  root: AbstractMesh,
+  renderable: AbstractMesh,
+  renderableMeshes: readonly AbstractMesh[],
+  componentMetadata: BabylonComponentMetadataMap = EMPTY_COMPONENT_METADATA,
+): BabylonSelectablePartNode {
+  const renderableSet = new Set(renderableMeshes);
+  let fallbackGroup: TransformNode | null = null;
+  let fallbackExplicitNode: TransformNode | null = null;
+  let current = renderable.parent;
+  while (current && current !== root) {
+    const node = current as TransformNode;
+    const childMeshes = collectBabylonChildRenderableMeshes(node, renderableSet);
+    if (childMeshes.length > 0 && childMeshes.length < renderableMeshes.length) {
+      const rawNodeName = node.name ?? "";
+      const nodeName = getBabylonNodeDisplayName(node, `component-${node.uniqueId}`);
+      const metadata = mergeBabylonMetadataFallback(node.metadata, componentMetadata.get(`node:${nodeName}`));
+      const identity = extractPreviewComponentIdentity(metadata, {
+        name: nodeName,
+        path: getBabylonComponentPath(node),
+      });
+      if (identity.hasExplicitIdentity) {
+        if (!isGeneratedBabylonMeshBucketName(rawNodeName)) {
+          return node;
+        }
+        fallbackExplicitNode ??= node;
+      }
+      if (!fallbackGroup && childMeshes.length > 1 && nodeName.trim() && !isGenericBabylonWrapperName(nodeName)) {
+        fallbackGroup = node;
+      }
+    }
+    current = node.parent;
+  }
+  return fallbackGroup ?? fallbackExplicitNode ?? renderable;
 }
 
 export function createBabylonGroupedPartCandidates(

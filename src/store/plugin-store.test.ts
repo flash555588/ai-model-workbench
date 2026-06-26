@@ -1,7 +1,7 @@
 import type { Plugin } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../domain/constants";
-import type { PersistedPluginState } from "../domain/models";
+import type { PartRecord, PersistedPluginState } from "../domain/models";
 import { createPluginStore } from "./plugin-store";
 
 interface Deferred<T = void> {
@@ -221,5 +221,62 @@ describe("createPluginStore persistence", () => {
       effectiveFormat: "glb",
       loadStrategy: "convert",
     });
+  });
+
+  it("limits oversized registered part lists while keeping reviewed and component records", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const createPart = (index: number, partial: Partial<PartRecord> = {}): PartRecord => ({
+      partId: `part-${index}`,
+      assetId: "models/large.glb",
+      name: `mesh-${index}`,
+      source: "mesh",
+      meshRefs: [`mesh-${index}`],
+      materialRefs: [],
+      confidence: 0.2,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: false,
+      ...partial,
+    });
+    const manyMeshParts = Array.from({ length: 300 }, (_value, index) => createPart(index));
+    const reviewedPart = createPart(1000, {
+      partId: "reviewed-part",
+      name: "Reviewed part",
+      reviewed: true,
+    });
+    const componentPart = createPart(1001, {
+      partId: "component-part",
+      name: "U4",
+      source: "component",
+      componentId: "U4",
+      confidence: 0.82,
+    });
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/large.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [...manyMeshParts, reviewedPart, componentPart],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const parts = pluginStore.store.getState().modelAssetProfiles["models/large.glb"]?.registeredParts ?? [];
+    expect(parts).toHaveLength(256);
+    expect(parts.some((part) => part.partId === "reviewed-part")).toBe(true);
+    expect(parts.some((part) => part.partId === "component-part")).toBe(true);
   });
 });

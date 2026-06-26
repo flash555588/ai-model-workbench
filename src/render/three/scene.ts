@@ -107,8 +107,10 @@ import { shouldContinueThreeRenderLoop, ThreeSmoothnessTracker } from "./smoothn
 import {
   createThreeGroupedPartCandidates,
   createThreeModelPreviewSummary,
+  createThreeObjectPartPreviewSummary,
   createThreeRenderableInfoBreakdown,
   createThreeRenderablePartPreviewSummary,
+  findThreeSelectablePartObject,
   getThreeMaterialList as materialList,
   getThreeRenderableMaterialNames,
   getThreeObjectPreviewBounds as getObjectPreviewBounds,
@@ -146,6 +148,15 @@ interface ThreeDisposalAudit {
   textureCount: number;
   objectCount: number;
   timestamp: number;
+}
+
+function isObjectOrDescendant(candidate: Object3D, target: Object3D): boolean {
+  let current: Object3D | null = candidate;
+  while (current) {
+    if (current === target) return true;
+    current = current.parent;
+  }
+  return false;
 }
 
 function createEmptyTextureAudit(): ThreeTextureAudit {
@@ -246,8 +257,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private wireframeOriginalMaterials = new Map<number, Material | Material[]>();
   private sceneConfig: SceneConfig = {};
   private focusSelectionEnabled = false;
-  private focusedMesh: Mesh | null = null;
-  private highlightedMesh: Mesh | null = null;
+  private focusedObject: Object3D | null = null;
+  private highlightedObject: Object3D | null = null;
   private selectionHelper: BoxHelper | null = null;
   private focusHelper: BoxHelper | null = null;
   private mixer: AnimationMixer | null = null;
@@ -589,11 +600,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
-    const mesh = this.focusedMesh
-      ?? (isMesh(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
-    if (mesh) return createThreeRenderablePartPreviewSummary(mesh, this.rootObject);
-    const renderable = isThreeRenderableObject(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null;
-    return renderable ? createThreeRenderablePartPreviewSummary(renderable, this.rootObject) : null;
+    const object = this.focusedObject
+      ?? (this._lastPickResult.mesh instanceof Object3D ? this._lastPickResult.mesh : null);
+    if (!object) return null;
+    const renderableMeshes = this.rootObject ? this.getRenderableMeshes(this.rootObject) : [];
+    return createThreeObjectPartPreviewSummary(object, this.rootObject, renderableMeshes);
   }
 
   exportSelectedPartInfo(): string {
@@ -606,7 +617,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return toPreviewWorldPoint(result.pickedPoint as { x: number; y: number; z: number });
     }
 
-    if (isThreeRenderableObject(result.mesh)) {
+    if (result.mesh instanceof Object3D) {
       return getPreviewBoundsCenter(getObjectPreviewBounds(result.mesh));
     }
 
@@ -652,8 +663,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearFocusedMesh();
     } else {
       this.clearSelectionHighlight();
-      if (this._lastPickResult.mesh instanceof Mesh) {
-        this.setFocusedMesh(this._lastPickResult.mesh);
+      if (this._lastPickResult.mesh instanceof Object3D) {
+        this.setFocusedObject(this._lastPickResult.mesh);
       }
     }
     this.markDirty();
@@ -988,6 +999,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.scene,
       this.camera,
       this.renderer.domElement,
+      this.rootObject,
       meshes,
       this.controls,
       () => {
@@ -1690,9 +1702,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
     const renderable = isThreeRenderableObject(hit?.object) ? hit.object : null;
-    const mesh = renderable instanceof Mesh ? renderable : null;
+    const selectable = renderable
+      ? findThreeSelectablePartObject(this.rootObject, renderable, this.getRenderableMeshes(this.rootObject))
+      : null;
     const result: PreviewPickResult = {
-      mesh: renderable,
+      mesh: selectable,
       pickedPoint: hit?.point?.clone() ?? null,
       screenX: event.clientX,
       screenY: event.clientY,
@@ -1704,15 +1718,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return;
     }
 
-    if (this.focusSelectionEnabled && mesh) {
+    if (this.focusSelectionEnabled && selectable) {
       this.clearSelectionHighlight();
-      if (this.focusedMesh !== mesh) {
-        this.setFocusedMesh(mesh);
+      if (this.focusedObject !== selectable) {
+        this.setFocusedObject(selectable);
       }
     } else if (this.focusSelectionEnabled) {
       this.clearSelectionHighlight();
     } else {
-      this.updateSelectionHighlight(mesh);
+      this.updateSelectionHighlight(selectable);
     }
     this._onPickCallbacks.forEach((callback) => callback(result));
   }
@@ -1978,34 +1992,36 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.scene.add(this.bboxHelper);
   }
 
-  private updateSelectionHighlight(mesh: Mesh | null): void {
-    if (!this.rootObject || !mesh) {
+  private updateSelectionHighlight(object: Object3D | null): void {
+    if (!this.rootObject || !object) {
       this.clearSelectionHighlight();
       return;
     }
-    if (this.highlightedMesh === mesh && this.selectionHelper) {
+    if (this.highlightedObject === object && this.selectionHelper) {
       return;
     }
 
     this.selectionHelper?.removeFromParent();
-    this.selectionHelper = new BoxHelper(mesh, 0x4a9eff);
+    this.selectionHelper = new BoxHelper(object, 0x4a9eff);
     this.scene.add(this.selectionHelper);
-    this.highlightedMesh = mesh;
+    this.highlightedObject = object;
     this.markDirty();
   }
 
-  private setFocusedMesh(mesh: Mesh | null): void {
-    if (!this.rootObject || !mesh) {
+  private setFocusedObject(object: Object3D | null): void {
+    if (!this.rootObject || !object) {
       this.clearFocusedMesh();
       return;
     }
-    if (this.focusedMesh === mesh) return;
+    if (this.focusedObject === object) return;
 
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
-    if (!renderableMeshes.includes(mesh)) {
+    const selectedMeshes = renderableMeshes.filter((candidate) => isObjectOrDescendant(candidate, object));
+    if (selectedMeshes.length === 0 && !isThreeRenderableObject(object)) {
       this.clearFocusedMesh();
       return;
     }
+    const selectedMeshSet = new Set(selectedMeshes);
     this.restoreFocusedMaterials();
     this.disposeFocusDimMaterials();
 
@@ -2014,7 +2030,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.originalMaterials.set(candidate.id, candidate.material);
       }
 
-      if (candidate === mesh) {
+      if (selectedMeshSet.has(candidate)) {
         candidate.material = this.originalMaterials.get(candidate.id) ?? candidate.material;
         continue;
       }
@@ -2026,9 +2042,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
 
     this.focusHelper?.removeFromParent();
-    this.focusHelper = new BoxHelper(mesh, 0x2ec4ff);
+    this.focusHelper = new BoxHelper(object, 0x2ec4ff);
     this.scene.add(this.focusHelper);
-    this.focusedMesh = mesh;
+    this.focusedObject = object;
     this.markDirty();
   }
 
@@ -2038,7 +2054,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.originalMaterials.clear();
     this.focusHelper?.removeFromParent();
     this.focusHelper = null;
-    this.focusedMesh = null;
+    this.focusedObject = null;
     this.markDirty();
   }
 
@@ -2062,7 +2078,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private clearSelectionHighlight(): void {
     this.selectionHelper?.removeFromParent();
     this.selectionHelper = null;
-    this.highlightedMesh = null;
+    this.highlightedObject = null;
     this.markDirty();
   }
 

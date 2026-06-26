@@ -133,7 +133,7 @@ export async function loadThreeGLTF(
   }
 
   // .glb binary path
-  const gltf = await loader.parseAsync(data.slice(0), "");
+  const gltf = await loader.parseAsync(data, "");
   const root = gltf.scene || gltf.scenes?.[0];
   if (!root) throw new Error("GLB did not contain a scene");
   return { scene: root, animations: gltf.animations, warnings };

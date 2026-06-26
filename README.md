@@ -59,7 +59,7 @@ Release highlights:
 - Calibrated measurement records with Markdown export
 - More reliable knowledge-generation state, diagnostics, conversion cache handling, and release gates
 
-See [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md), [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+See [docs/release-notes/0.6.0-plus.md](docs/release-notes/0.6.0-plus.md) for the rolling `0.6.0+` update log, plus [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md), [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md), and [CHANGELOG.md](CHANGELOG.md) for versioned release notes.
 
 ---
 

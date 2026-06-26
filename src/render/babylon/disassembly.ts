@@ -1,6 +1,7 @@
 import type { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh.js";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import type { Nullable } from "@babylonjs/core/types.js";
 import type { Node } from "@babylonjs/core/node.js";
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
@@ -19,83 +20,155 @@ import {
   toPreviewWorldPoint,
 } from "../preview/geometry";
 import {
+  findBabylonSelectablePartNode,
+  getBabylonMeshesPreviewBounds,
+  type BabylonComponentMetadataMap,
+  type BabylonSelectablePartNode,
+} from "./mesh-preview";
+import {
   createPreviewDisassemblyController,
   type PreviewDisassemblyAdapter,
   type PreviewDisassemblyController,
   type PreviewDisassemblySubscriptions,
 } from "../preview/disassembly";
 
+export interface BabylonDisassemblyPart {
+  id: number;
+  node: BabylonSelectablePartNode;
+  meshes: AbstractMesh[];
+}
+
 interface PartTransform {
   parent: Nullable<Node>;
   position: Vector3;
   rotation: Vector3;
-  rotationQuaternion: AbstractMesh["rotationQuaternion"];
+  rotationQuaternion: Quaternion | null;
   scaling: Vector3;
 }
 
 interface DragState {
-  mesh: AbstractMesh;
+  part: BabylonDisassemblyPart;
   mode: "move" | "rotate";
   plane: PreviewPlane;
   startPoint: Vector3;
   startPosition: Vector3;
-  startRotationQuaternion: AbstractMesh["rotationQuaternion"];
+  startRotationQuaternion: Quaternion | null;
   pivot: Vector3;
   pointerX: number;
   pointerY: number;
 }
 
+function isBabylonDisassemblyPart(value: unknown): value is BabylonDisassemblyPart {
+  return !!value && typeof value === "object" && "node" in value && "meshes" in value;
+}
+
+function getNodeUniqueId(node: BabylonSelectablePartNode): number {
+  return (node as TransformNode).uniqueId;
+}
+
+function isNodeDisposed(node: BabylonSelectablePartNode): boolean {
+  const maybeDisposed = node as BabylonSelectablePartNode & { isDisposed?: () => boolean };
+  return typeof maybeDisposed.isDisposed === "function" ? maybeDisposed.isDisposed() : false;
+}
+
+function getPartCenter(part: BabylonDisassemblyPart): Vector3 {
+  const bounds = getBabylonMeshesPreviewBounds(part.meshes);
+  if (!bounds) {
+    return part.node.getAbsolutePosition().clone();
+  }
+  return new Vector3(
+    (bounds.min.x + bounds.max.x) / 2,
+    (bounds.min.y + bounds.max.y) / 2,
+    (bounds.min.z + bounds.max.z) / 2,
+  );
+}
+
+export function createBabylonDisassemblyParts(
+  root: AbstractMesh,
+  meshes: readonly AbstractMesh[],
+  componentMetadata?: BabylonComponentMetadataMap,
+): BabylonDisassemblyPart[] {
+  const byNode = new Map<BabylonSelectablePartNode, BabylonDisassemblyPart>();
+  for (const mesh of meshes) {
+    const node = findBabylonSelectablePartNode(root, mesh, meshes, componentMetadata);
+    let part = byNode.get(node);
+    if (!part) {
+      part = { id: getNodeUniqueId(node), node, meshes: [] };
+      byNode.set(node, part);
+    }
+    part.meshes.push(mesh);
+  }
+  return Array.from(byNode.values());
+}
+
 class BabylonDisassemblyAdapter
-  implements PreviewDisassemblyAdapter<AbstractMesh, PartTransform, DragState> {
+  implements PreviewDisassemblyAdapter<BabylonDisassemblyPart, PartTransform, DragState> {
   private static readonly BBOX_VISIBLE = new Color3(0.25, 0.7, 1);
   private static readonly BBOX_OCCLUDED = new Color3(0.1, 0.25, 0.4);
 
   private readonly scene: Scene;
   private readonly camera: ArcRotateCamera;
   private readonly meshes: AbstractMesh[];
+  private readonly parts: BabylonDisassemblyPart[];
+  private readonly meshToPart = new Map<number, BabylonDisassemblyPart>();
   private readonly occlusionDirection = Vector3.Zero();
   private readonly occlusionRay = new Ray(Vector3.Zero(), Vector3.Zero(), 1);
   private lastOccluded = false;
-  private selected: AbstractMesh | null = null;
+  private selected: BabylonDisassemblyPart | null = null;
   private partPointerActive = false;
   private activePointerId: number | null = null;
 
-  constructor(scene: Scene, camera: ArcRotateCamera, meshes: AbstractMesh[]) {
+  constructor(
+    scene: Scene,
+    camera: ArcRotateCamera,
+    root: AbstractMesh,
+    meshes: AbstractMesh[],
+    componentMetadata?: BabylonComponentMetadataMap,
+  ) {
     this.scene = scene;
     this.camera = camera;
     this.meshes = meshes;
+    this.parts = createBabylonDisassemblyParts(root, meshes, componentMetadata);
+    for (const part of this.parts) {
+      for (const mesh of part.meshes) {
+        this.meshToPart.set(mesh.uniqueId, part);
+      }
+    }
     this.setBoundingBoxColor(BabylonDisassemblyAdapter.BBOX_VISIBLE);
   }
 
-  getParts(): readonly AbstractMesh[] {
-    return this.meshes;
+  getParts(): readonly BabylonDisassemblyPart[] {
+    return this.parts;
   }
 
-  getPartId(part: AbstractMesh): number {
-    return part.uniqueId;
+  getPartId(part: BabylonDisassemblyPart): number {
+    return part.id;
   }
 
-  isDisposed(part: AbstractMesh): boolean {
-    return part.isDisposed();
+  isDisposed(part: BabylonDisassemblyPart): boolean {
+    return isNodeDisposed(part.node) || part.meshes.every((mesh) => mesh.isDisposed());
   }
 
-  captureTransform(part: AbstractMesh): PartTransform {
+  captureTransform(part: BabylonDisassemblyPart): PartTransform {
     return {
-      parent: part.parent,
-      position: part.position.clone(),
-      rotation: part.rotation.clone(),
-      rotationQuaternion: part.rotationQuaternion?.clone() ?? null,
-      scaling: part.scaling.clone(),
+      parent: part.node.parent,
+      position: part.node.position.clone(),
+      rotation: part.node.rotation.clone(),
+      rotationQuaternion: part.node.rotationQuaternion?.clone() ?? null,
+      scaling: part.node.scaling.clone(),
     };
   }
 
-  restoreTransform(part: AbstractMesh, transform: PartTransform): void {
-    part.setParent(transform.parent);
-    part.position.copyFrom(transform.position);
-    part.rotation.copyFrom(transform.rotation);
-    part.rotationQuaternion = transform.rotationQuaternion?.clone() ?? null;
-    part.scaling.copyFrom(transform.scaling);
-    part.computeWorldMatrix(true);
+  restoreTransform(part: BabylonDisassemblyPart, transform: PartTransform): void {
+    part.node.setParent(transform.parent);
+    part.node.position.copyFrom(transform.position);
+    part.node.rotation.copyFrom(transform.rotation);
+    part.node.rotationQuaternion = transform.rotationQuaternion?.clone() ?? null;
+    part.node.scaling.copyFrom(transform.scaling);
+    part.node.computeWorldMatrix(true);
+    for (const mesh of part.meshes) {
+      mesh.computeWorldMatrix(true);
+    }
   }
 
   subscribe(subscriptions: PreviewDisassemblySubscriptions): () => void {
@@ -170,31 +243,35 @@ class BabylonDisassemblyAdapter
     };
   }
 
-  resolvePart(target: unknown): AbstractMesh | null {
+  resolvePart(target: unknown): BabylonDisassemblyPart | null {
+    if (isBabylonDisassemblyPart(target)) {
+      return this.parts.includes(target) ? target : null;
+    }
     if (!target || typeof target !== "object") return null;
-    if (this.isMeshInSet(target as AbstractMesh)) {
-      return target as AbstractMesh;
-    }
-    const parent = (target as AbstractMesh).parent;
-    if (parent && "uniqueId" in parent && this.isMeshInSet(parent as AbstractMesh)) {
-      return parent as AbstractMesh;
-    }
-    return null;
+    return this.meshToPart.get((target as AbstractMesh).uniqueId) ?? null;
   }
 
-  setSelected(part: AbstractMesh | null): void {
-    if (this.selected && !this.selected.isDisposed()) {
-      this.selected.showBoundingBox = false;
+  setSelected(part: BabylonDisassemblyPart | null): void {
+    if (this.selected) {
+      for (const mesh of this.selected.meshes) {
+        if (!mesh.isDisposed()) {
+          mesh.showBoundingBox = false;
+        }
+      }
     }
     this.selected = part;
     this.lastOccluded = false;
     this.setBoundingBoxColor(BabylonDisassemblyAdapter.BBOX_VISIBLE);
-    if (this.selected && !this.selected.isDisposed()) {
-      this.selected.showBoundingBox = true;
+    if (this.selected && !this.isDisposed(this.selected)) {
+      for (const mesh of this.selected.meshes) {
+        if (!mesh.isDisposed()) {
+          mesh.showBoundingBox = true;
+        }
+      }
     }
   }
 
-  beginDrag(part: AbstractMesh, event: PointerEvent): DragState | null {
+  beginDrag(part: BabylonDisassemblyPart, event: PointerEvent): DragState | null {
     const startPoint = this.getPointOnDragPlane(part, event);
     if (!startPoint) {
       return null;
@@ -204,15 +281,18 @@ class BabylonDisassemblyAdapter
     event.stopPropagation();
     this.scene.getEngine().getRenderingCanvas()?.classList.add("ai3d-disassembly-dragging");
 
-    part.setParent(null);
-    part.computeWorldMatrix(true);
-
-    if (event.shiftKey && !part.rotationQuaternion) {
-      part.rotationQuaternion = Quaternion.FromEulerVector(part.rotation);
-      part.rotation.set(0, 0, 0);
+    part.node.setParent(null);
+    part.node.computeWorldMatrix(true);
+    for (const mesh of part.meshes) {
+      mesh.computeWorldMatrix(true);
     }
 
-    const pivot = part.getBoundingInfo().boundingBox.centerWorld.clone();
+    if (event.shiftKey && !part.node.rotationQuaternion) {
+      part.node.rotationQuaternion = Quaternion.FromEulerVector(part.node.rotation);
+      part.node.rotation.set(0, 0, 0);
+    }
+
+    const pivot = getPartCenter(part);
     const plane = createPreviewPlane(
       toPreviewWorldPoint(startPoint),
       toPreviewWorldPoint(this.camera.getForwardRay().direction),
@@ -221,12 +301,12 @@ class BabylonDisassemblyAdapter
       return null;
     }
     const dragState: DragState = {
-      mesh: part,
+      part,
       mode: event.shiftKey ? "rotate" : "move",
       plane,
       startPoint,
-      startPosition: part.position.clone(),
-      startRotationQuaternion: part.rotationQuaternion?.clone() ?? null,
+      startPosition: part.node.position.clone(),
+      startRotationQuaternion: part.node.rotationQuaternion?.clone() ?? null,
       pivot,
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -249,8 +329,11 @@ class BabylonDisassemblyAdapter
     if (!point) return;
 
     const offset = point.subtract(state.startPoint);
-    state.mesh.position = state.startPosition.add(offset);
-    state.mesh.computeWorldMatrix(true);
+    state.part.node.position = state.startPosition.add(offset);
+    state.part.node.computeWorldMatrix(true);
+    for (const mesh of state.part.meshes) {
+      mesh.computeWorldMatrix(true);
+    }
   }
 
   endDrag(state: DragState | null): void {
@@ -259,8 +342,8 @@ class BabylonDisassemblyAdapter
     if (!state) return;
   }
 
-  updateSelectionOcclusion(part: AbstractMesh): void {
-    const center = part.getBoundingInfo().boundingBox.centerWorld;
+  updateSelectionOcclusion(part: BabylonDisassemblyPart): void {
+    const center = getPartCenter(part);
     const cameraPosition = this.camera.position;
     const lineOfSight = createPreviewLineOfSight(
       toPreviewWorldPoint(cameraPosition),
@@ -292,10 +375,6 @@ class BabylonDisassemblyAdapter
     }
   }
 
-  private isMeshInSet(mesh: AbstractMesh): boolean {
-    return this.meshes.includes(mesh);
-  }
-
   private setBoundingBoxColor(color: Color3): void {
     const renderer = this.scene.getBoundingBoxRenderer?.();
     if (!renderer) return;
@@ -322,19 +401,22 @@ class BabylonDisassemblyAdapter
     if (!result) {
       return;
     }
-    state.mesh.position = new Vector3(result.position.x, result.position.y, result.position.z);
-    state.mesh.rotationQuaternion = new Quaternion(
+    state.part.node.position = new Vector3(result.position.x, result.position.y, result.position.z);
+    state.part.node.rotationQuaternion = new Quaternion(
       result.rotationQuaternion.x,
       result.rotationQuaternion.y,
       result.rotationQuaternion.z,
       result.rotationQuaternion.w,
     );
-    state.mesh.rotation.set(0, 0, 0);
-    state.mesh.computeWorldMatrix(true);
+    state.part.node.rotation.set(0, 0, 0);
+    state.part.node.computeWorldMatrix(true);
+    for (const mesh of state.part.meshes) {
+      mesh.computeWorldMatrix(true);
+    }
   }
 
-  private getPointOnDragPlane(mesh: AbstractMesh, event: PointerEvent): Vector3 | null {
-    const center = mesh.getBoundingInfo().boundingBox.centerWorld.clone();
+  private getPointOnDragPlane(part: BabylonDisassemblyPart, event: PointerEvent): Vector3 | null {
+    const center = getPartCenter(part);
     const plane = createPreviewPlane(
       toPreviewWorldPoint(center),
       toPreviewWorldPoint(this.camera.getForwardRay().direction),
@@ -363,7 +445,11 @@ class BabylonDisassemblyAdapter
 export function createBabylonDisassemblyController(
   scene: Scene,
   camera: ArcRotateCamera,
+  root: AbstractMesh,
   meshes: AbstractMesh[],
+  componentMetadata?: BabylonComponentMetadataMap,
 ): PreviewDisassemblyController {
-  return createPreviewDisassemblyController(new BabylonDisassemblyAdapter(scene, camera, meshes));
+  return createPreviewDisassemblyController(
+    new BabylonDisassemblyAdapter(scene, camera, root, meshes, componentMetadata),
+  );
 }

@@ -35,7 +35,7 @@ import { ensureLoadersRegistered } from "./loaders/register";
 import { loadSTLBuffer } from "./loaders/stl-loader";
 import { loadPLYBuffer } from "./loaders/ply-loader";
 import { setExplode, resetExplode } from "./explode";
-import { setupPicking, type PickResult } from "./picking";
+import { setupPicking } from "./picking";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
@@ -46,7 +46,10 @@ import {
   createBabylonGroupedPartCandidates,
   createBabylonMeshInfoBreakdown,
   createBabylonModelPreviewSummary,
+  createBabylonNodePartPreviewSummary,
   createBabylonPartPreviewSummary,
+  findBabylonSelectablePartNode,
+  type BabylonSelectablePartNode,
   getBabylonRenderableMeshes,
   getBabylonRenderablePreviewBounds,
   getBabylonVertexCount,
@@ -112,6 +115,24 @@ function isGaussianSplattingMesh(mesh: AbstractMesh): boolean {
 
 function isBabylonMesh(value: unknown): value is AbstractMesh {
   return !!value && typeof value === "object" && "getBoundingInfo" in value;
+}
+
+function isBabylonSelectablePartNode(value: unknown): value is BabylonSelectablePartNode {
+  return value instanceof TransformNode;
+}
+
+function isBabylonNodeDisposed(node: BabylonSelectablePartNode): boolean {
+  const maybeDisposed = node as BabylonSelectablePartNode & { isDisposed?: () => boolean };
+  return typeof maybeDisposed.isDisposed === "function" ? maybeDisposed.isDisposed() : false;
+}
+
+function isBabylonNodeOrDescendant(candidate: AbstractMesh, target: BabylonSelectablePartNode): boolean {
+  let current: TransformNode | null = candidate;
+  while (current) {
+    if (current === target) return true;
+    current = current.parent as TransformNode | null;
+  }
+  return false;
 }
 
 function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
@@ -197,7 +218,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private gizmoEnabled = false;
   private disassembly: PreviewDisassemblyController | null = null;
   private focusSelectionEnabled = false;
-  private focusedMesh: AbstractMesh | null = null;
+  private focusedNode: BabylonSelectablePartNode | null = null;
   private readonly originalMeshVisibility = new Map<number, number>();
   private bboxMesh: Mesh | null = null;
   private bboxEnabled = false;
@@ -207,7 +228,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private animPlaying = false;
   private initialCamera = { alpha: Math.PI / 4, beta: Math.PI / 3, radius: 5, target: Vector3.Zero() };
   private focusWorldPointFrame = 0;
-  private _lastPickResult: PickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
+  private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
@@ -269,7 +290,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.disassembly = createBabylonDisassemblyController(
         this.scene,
         this.camera,
+        this.rootMesh,
         this.getRenderableMeshes(this.rootMesh),
+        this.gltfComponentMetadata,
       );
     }
     return this.disassembly;
@@ -502,12 +525,26 @@ export class BabylonModelPreview implements WorkbenchPreview {
         this.addMeasurementPoint(toBabylonVector3(result.pickedPoint));
         return;
       }
-      this._lastPickResult = result;
-      if (this.focusSelectionEnabled && result.mesh) {
-        this.setFocusedMesh(result.mesh);
+      const selectable = result.mesh && this.rootMesh
+        ? findBabylonSelectablePartNode(
+          this.rootMesh,
+          result.mesh,
+          this.getRenderableMeshes(this.rootMesh),
+          this.gltfComponentMetadata,
+        )
+        : null;
+      const previewResult: PreviewPickResult = {
+        mesh: selectable,
+        pickedPoint: result.pickedPoint,
+        screenX: result.screenX,
+        screenY: result.screenY,
+      };
+      this._lastPickResult = previewResult;
+      if (this.focusSelectionEnabled && selectable) {
+        this.setFocusedNode(selectable);
       }
-      this._onPickCallbacks.forEach(cb => cb(result));
-    }, () => !this.focusSelectionEnabled);
+      this._onPickCallbacks.forEach(cb => cb(previewResult));
+    }, () => !this.focusSelectionEnabled, (mesh) => this.resolvePickHighlightMeshes(mesh));
     this.ensureDisassemblyController();
 
     return this.createModelSummary(this.rootMesh);
@@ -955,7 +992,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!this.focusSelectionEnabled) {
       this.clearFocusedMesh();
     } else if (this._lastPickResult.mesh) {
-      this.setFocusedMesh(this._lastPickResult.mesh);
+      this.setFocusedNode(this._lastPickResult.mesh as BabylonSelectablePartNode);
     }
     return this.focusSelectionEnabled;
   }
@@ -1038,10 +1075,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   getSelectedPartInfo(): ModelPartSummary | null {
-    const mesh = this.focusedMesh ?? this._lastPickResult.mesh;
-    const renderable = mesh ? this.findRenderableMesh(mesh) : null;
-    if (!renderable || renderable.isDisposed()) return null;
-    return createBabylonPartPreviewSummary(renderable, this.gltfComponentMetadata);
+    if (!this.rootMesh) return null;
+    const node = this.focusedNode ?? (isBabylonSelectablePartNode(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
+    if (!node || isBabylonNodeDisposed(node)) return null;
+    return createBabylonNodePartPreviewSummary(node, this.getRenderableMeshes(this.rootMesh), this.gltfComponentMetadata);
   }
 
   exportSelectedPartInfo(): string {
@@ -1054,9 +1091,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
       return toPreviewWorldPoint(result.pickedPoint as { x: number; y: number; z: number });
     }
 
-    if (isBabylonMesh(result.mesh)) {
-      const center = result.mesh.getBoundingInfo().boundingBox.centerWorld;
-      return toPreviewWorldPoint(center);
+    if (this.rootMesh && isBabylonSelectablePartNode(result.mesh)) {
+      const part = createBabylonNodePartPreviewSummary(result.mesh, this.getRenderableMeshes(this.rootMesh), this.gltfComponentMetadata);
+      return part.center;
     }
 
     return null;
@@ -1316,32 +1353,51 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return getBabylonRenderablePreviewBounds(root, this.loadedMeshes);
   }
 
-  private setFocusedMesh(mesh: AbstractMesh | null): void {
+  private resolvePickHighlightMeshes(mesh: AbstractMesh): AbstractMesh[] {
+    if (!this.rootMesh) return [mesh];
+    const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    const selectable = findBabylonSelectablePartNode(
+      this.rootMesh,
+      mesh,
+      renderableMeshes,
+      this.gltfComponentMetadata,
+    );
+    const selectedMeshes = renderableMeshes.filter((candidate) => isBabylonNodeOrDescendant(candidate, selectable));
+    return selectedMeshes.length > 0 ? selectedMeshes : [mesh];
+  }
+
+  private setFocusedNode(node: BabylonSelectablePartNode | null): void {
     if (!this.rootMesh) return;
-    const target = mesh ? this.findRenderableMesh(mesh) : null;
-    if (!target || target.isDisposed()) {
+    const target = node ? this.findSelectableNode(node) : null;
+    if (!target || isBabylonNodeDisposed(target)) {
       this.clearFocusedMesh();
       return;
     }
-    if (this.focusedMesh === target) return;
+    if (this.focusedNode === target) return;
 
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
+    const selectedMeshes = renderableMeshes.filter((candidate) => isBabylonNodeOrDescendant(candidate, target));
+    if (selectedMeshes.length === 0) {
+      this.clearFocusedMesh();
+      return;
+    }
+    const selectedMeshSet = new Set(selectedMeshes);
     for (const candidate of renderableMeshes) {
       if (!this.originalMeshVisibility.has(candidate.uniqueId)) {
         this.originalMeshVisibility.set(candidate.uniqueId, candidate.visibility);
       }
-      const selected = candidate === target;
+      const selected = selectedMeshSet.has(candidate);
       candidate.visibility = selected ? 1 : FOCUS_DIM_VISIBILITY;
       candidate.renderOutline = selected;
       candidate.outlineColor = new Color3(0.18, 0.76, 1);
       candidate.outlineWidth = selected ? 0.045 : 0;
     }
-    this.focusedMesh = target;
+    this.focusedNode = target;
   }
 
   private clearFocusedMesh(): void {
     if (!this.rootMesh) {
-      this.focusedMesh = null;
+      this.focusedNode = null;
       return;
     }
 
@@ -1354,18 +1410,21 @@ export class BabylonModelPreview implements WorkbenchPreview {
       mesh.outlineWidth = 0;
     }
     this.originalMeshVisibility.clear();
-    this.focusedMesh = null;
+    this.focusedNode = null;
   }
 
-  private findRenderableMesh(mesh: AbstractMesh): AbstractMesh | null {
+  private findSelectableNode(node: BabylonSelectablePartNode): BabylonSelectablePartNode | null {
     if (!this.rootMesh) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
-    if (renderableMeshes.includes(mesh)) return mesh;
+    if (renderableMeshes.includes(node as AbstractMesh)) return node;
+    if (renderableMeshes.some((mesh) => isBabylonNodeOrDescendant(mesh, node))) return node;
+    if (!isBabylonMesh(node)) return null;
 
-    let parent = mesh.parent;
+    let parent = node.parent;
     while (parent && "uniqueId" in parent) {
-      const parentMesh = parent as AbstractMesh;
-      if (renderableMeshes.includes(parentMesh)) return parentMesh;
+      const parentNode = parent as BabylonSelectablePartNode;
+      if (renderableMeshes.includes(parentNode as AbstractMesh)) return parentNode;
+      if (renderableMeshes.some((mesh) => isBabylonNodeOrDescendant(mesh, parentNode))) return parentNode;
       parent = parent.parent;
     }
 
