@@ -1,5 +1,5 @@
 import { Notice, Plugin, TFile } from "obsidian";
-import type { PluginSettings } from "./domain/models";
+import type { AnnotationPin, PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
 import { createPluginStore, type PluginStore } from "./store/plugin-store";
@@ -102,13 +102,8 @@ export default class AI3DModelWorkbench extends Plugin {
 
     const getAnnotations = (modelPath: string) =>
       this.ps.store.getState().modelAssetProfiles[modelPath]?.annotations ?? [];
-    const [
-      { registerLazyCodeBlockProcessor, registerLazyGridCodeBlockProcessor },
-      { registerLazyLivePreviewExtension },
-    ] = await Promise.all([
-      import("./view/inline/lazy-code-block"),
-      import("./view/inline/lazy-live-preview"),
-    ]);
+    const { registerLazyCodeBlockProcessor, registerLazyGridCodeBlockProcessor } =
+      await import("./view/inline/lazy-code-block");
 
     // Register ```3d and ```3dgrid code block processors
     const cb = registerLazyCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
@@ -116,15 +111,10 @@ export default class AI3DModelWorkbench extends Plugin {
     const gridCb = registerLazyGridCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache);
     this.registerMarkdownCodeBlockProcessor(gridCb.id, gridCb.handler);
 
-    // Register Live Preview extension for ![[model.glb]] embeds
-    const exts = registerLazyLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
-    for (const e of exts) {
-      this.registerEditorExtension(e);
-    }
-
     // Watch note headings for hover → highlight pin
     this.app.workspace.onLayoutReady(() => {
       window.setTimeout(() => {
+        void this.registerLivePreviewExtension(getAnnotations);
         void this.startHeadingPinObserver();
       }, 0);
     });
@@ -160,7 +150,23 @@ export default class AI3DModelWorkbench extends Plugin {
     }
   }
 
-
+  private async registerLivePreviewExtension(getAnnotations: (modelPath: string) => AnnotationPin[]): Promise<void> {
+    if (this.unloaded) {
+      return;
+    }
+    try {
+      const { registerLazyLivePreviewExtension } = await import("./view/inline/lazy-live-preview");
+      if (this.unloaded) {
+        return;
+      }
+      const exts = registerLazyLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
+      for (const e of exts) {
+        this.registerEditorExtension(e);
+      }
+    } catch (error) {
+      console.warn("[AI3D] Failed to register Live Preview model embeds:", error);
+    }
+  }
 
   private importModel(): void {
     void this.showImportModelModal().catch((error: unknown) => {

@@ -14,6 +14,7 @@
 - Performance: serialize Live Preview and reading-mode model loads through an inline preview queue and defer `3dgrid` model preparation until the grid enters the viewport, reducing startup and multi-model I/O spikes.
 - Performance: defer Live Preview runtime imports for preview backends, annotation managers, conversion preparation, and load feedback until a visible embed actually starts loading.
 - Performance: register Live Preview embeds through a lightweight lazy widget so workspace startup no longer imports the full embed runtime before a model embed approaches the viewport.
+- Performance: defer Live Preview editor-extension registration until the workspace layout is ready, keeping CodeMirror model-embed setup off the plugin startup critical path.
 - Performance: skip full Live Preview line parsing for editor documents that do not contain model embed markers, reducing startup work for large ordinary notes.
 - Performance: defer Three.js mesh shadow flag setup and shadow-map updates until ground shadows or shadow-casting lights are active, reducing large-model load work on the default route.
 - Performance: keep the heading-pin DOM observer disabled until at least one annotation is bound to a note heading, avoiding startup-wide heading scans in vaults without heading-linked model pins.
