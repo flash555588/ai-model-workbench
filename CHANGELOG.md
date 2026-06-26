@@ -30,6 +30,7 @@
 - Performance: reuse shared Three.js focus-dim materials across meshes with the same source material, reducing material churn when focusing parts in large assemblies.
 - Performance: defer Three.js geometry quality snapshots and direct-view registered-part match previews so large models become interactive before diagnostic and cross-model matching work runs.
 - Performance: capture disassembly original transforms only for dragged parts and cache repeated Live Preview embed path resolution, reducing large-assembly interaction and workspace editor setup work.
+- Performance: update Three.js focus selection incrementally so switching selected parts in large assemblies no longer restores and re-dims every mesh.
 - Performance: avoid forcing an unchanged plugin `data.json` rewrite during unload; only pending dirty state is flushed.
 - Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: read absolute-path model files without an extra full-buffer copy when Node returns a whole file buffer, reducing memory spikes for large converted GLB assets.

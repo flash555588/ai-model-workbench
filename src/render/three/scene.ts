@@ -256,6 +256,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private previewLine: Line | null = null;
   private previewLineUpdateHandle = 0;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
+  private readonly focusedSelectedMeshes = new Map<number, Mesh>();
   private readonly focusDimMaterialCache = new ThreeFocusDimMaterialCache();
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
@@ -2075,28 +2076,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearFocusedMesh();
       return;
     }
-    const selectedMeshSet = new Set(selectedMeshes);
-    this.restoreFocusedMaterials();
-    this.disposeFocusDimMaterials();
 
-    for (const candidate of renderableMeshes) {
-      if (!this.originalMaterials.has(candidate.id)) {
-        this.originalMaterials.set(candidate.id, candidate.material);
-      }
-
-      if (selectedMeshSet.has(candidate)) {
-        candidate.material = this.originalMaterials.get(candidate.id) ?? candidate.material;
-        continue;
-      }
-
-      const originalMaterial = this.originalMaterials.get(candidate.id) ?? candidate.material;
-      candidate.material = this.focusDimMaterialCache.get(originalMaterial);
+    if (this.originalMaterials.size === 0) {
+      this.applyInitialFocusMaterials(renderableMeshes, selectedMeshes);
+    } else {
+      this.applyFocusSelectionDelta(selectedMeshes);
     }
 
     this.focusHelper?.removeFromParent();
     this.focusHelper = new BoxHelper(object, 0x2ec4ff);
     this.scene.add(this.focusHelper);
     this.focusedObject = object;
+    this.focusedSelectedMeshes.clear();
+    for (const mesh of selectedMeshes) {
+      this.focusedSelectedMeshes.set(mesh.id, mesh);
+    }
     this.markDirty();
   }
 
@@ -2104,6 +2098,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.restoreFocusedMaterials();
     this.disposeFocusDimMaterials();
     this.originalMaterials.clear();
+    this.focusedSelectedMeshes.clear();
     this.focusHelper?.removeFromParent();
     this.focusHelper = null;
     this.focusedObject = null;
@@ -2117,6 +2112,39 @@ export class ThreeModelPreview implements WorkbenchPreview {
       if (originalMaterial) {
         mesh.material = originalMaterial;
       }
+    }
+  }
+
+  private applyInitialFocusMaterials(renderableMeshes: readonly Mesh[], selectedMeshes: readonly Mesh[]): void {
+    const selectedMeshIds = new Set(selectedMeshes.map((mesh) => mesh.id));
+    for (const candidate of renderableMeshes) {
+      this.originalMaterials.set(candidate.id, candidate.material);
+      if (selectedMeshIds.has(candidate.id)) {
+        continue;
+      }
+      candidate.material = this.focusDimMaterialCache.get(candidate.material);
+    }
+  }
+
+  private applyFocusSelectionDelta(selectedMeshes: readonly Mesh[]): void {
+    const selectedMeshIds = new Set(selectedMeshes.map((mesh) => mesh.id));
+    for (const [id, mesh] of this.focusedSelectedMeshes) {
+      if (selectedMeshIds.has(id)) {
+        continue;
+      }
+      const originalMaterial = this.originalMaterials.get(id) ?? mesh.material;
+      if (!this.originalMaterials.has(id)) {
+        this.originalMaterials.set(id, originalMaterial);
+      }
+      mesh.material = this.focusDimMaterialCache.get(originalMaterial);
+    }
+
+    for (const mesh of selectedMeshes) {
+      const originalMaterial = this.originalMaterials.get(mesh.id) ?? mesh.material;
+      if (!this.originalMaterials.has(mesh.id)) {
+        this.originalMaterials.set(mesh.id, originalMaterial);
+      }
+      mesh.material = originalMaterial;
     }
   }
 
