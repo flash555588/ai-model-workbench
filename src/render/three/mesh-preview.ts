@@ -12,6 +12,7 @@ import {
   createPreviewBounds,
   getPreviewBoundsCenter,
   getPreviewBoundsSize,
+  type PreviewBounds,
 } from "../preview/bounds";
 import { extractPreviewComponentIdentity, type PreviewComponentIdentity } from "../preview/component-identity";
 import {
@@ -185,6 +186,23 @@ function collectChildRenderableMeshes(object: Object3D, renderableSet: ReadonlyS
   return meshes;
 }
 
+function createChildRenderableMeshMap(root: Object3D, renderableMeshes: readonly Mesh[]): Map<Object3D, Mesh[]> {
+  const byObject = new Map<Object3D, Mesh[]>();
+  for (const mesh of renderableMeshes) {
+    let current = mesh.parent;
+    while (current && current !== root) {
+      let childMeshes = byObject.get(current);
+      if (!childMeshes) {
+        childMeshes = [];
+        byObject.set(current, childMeshes);
+      }
+      childMeshes.push(mesh);
+      current = current.parent;
+    }
+  }
+  return byObject;
+}
+
 function isGenericWrapperName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   return /^(scene|root|model|group|node|object|assembly|component)[-_\s.]?\d*$/i.test(normalized)
@@ -300,7 +318,7 @@ export function createThreeGroupedPartCandidates(
   root: Object3D,
   renderableMeshes: readonly Mesh[],
 ): PreviewGroupedPartCandidates<Mesh> {
-  const renderableSet = new Set(renderableMeshes);
+  const childMeshMap = createChildRenderableMeshMap(root, renderableMeshes);
   const parts: ModelPartSummary[] = [];
   const groupedMeshes = new Set<Mesh>();
   const candidates: Array<{
@@ -313,12 +331,7 @@ export function createThreeGroupedPartCandidates(
     if (object === root || isThreeMesh(object)) {
       return;
     }
-    const childMeshes: Mesh[] = [];
-    object.traverse((child) => {
-      if (isThreeMesh(child) && renderableSet.has(child)) {
-        childMeshes.push(child);
-      }
-    });
+    const childMeshes = childMeshMap.get(object) ?? [];
     if (childMeshes.length < 2 || childMeshes.length === renderableMeshes.length) {
       const identity = extractPreviewComponentIdentity(object.userData, {
         name: getThreeObjectDisplayName(object, `component-${object.id}`),
@@ -392,10 +405,11 @@ export function createThreeModelPreviewSummary(
   root: Object3D,
   renderableObjects: readonly ThreeRenderableObject[],
   resourceWarnings: readonly string[] = [],
+  rootBounds?: PreviewBounds,
 ): ModelPreviewSummary {
   return createPreviewModelSummary({
     rootName: root.name || "__root__",
-    boundingSize: getPreviewBoundsSize(getThreeObjectPreviewBounds(root)),
+    boundingSize: getPreviewBoundsSize(rootBounds ?? getThreeObjectPreviewBounds(root)),
     meshes: renderableObjects.map((object) => ({
       triangleCount: getThreeTriangleCount(object),
       vertexCount: getThreeVertexCount(object),
@@ -408,6 +422,7 @@ export function createThreeModelPreviewSummary(
 export function createThreeGeometryQualityStats(
   root: Object3D | null,
   renderableObjects: readonly ThreeRenderableObject[],
+  rootBounds?: PreviewBounds,
 ): PreviewQualitySnapshot["geometry"] {
   if (!root) {
     return {
@@ -419,7 +434,7 @@ export function createThreeGeometryQualityStats(
     };
   }
 
-  const modelSize = getPreviewBoundsSize(getThreeObjectPreviewBounds(root));
+  const modelSize = getPreviewBoundsSize(rootBounds ?? getThreeObjectPreviewBounds(root));
   const modelSpan = Math.max(modelSize.x, modelSize.y, modelSize.z);
   const smallPartThreshold = Math.max(modelSpan * 0.04, Number.EPSILON);
   let pointCloudCount = 0;

@@ -165,6 +165,39 @@ describe("three mesh preview helpers", () => {
     });
   });
 
+  it("keeps nested grouped part candidates attached to their descendant meshes", () => {
+    const root = new Object3D();
+    const parent = new Object3D();
+    parent.name = "connector-assembly";
+    const child = new Object3D();
+    child.name = "pin-bank";
+    const meshA = createBox("pin-a", "gold");
+    const meshB = createBox("pin-b", "gold");
+    const meshC = createBox("socket", "plastic");
+    const meshD = createBox("latch", "steel");
+    const board = createBox("board", "fr4");
+    meshB.position.set(1, 0, 0);
+    meshC.position.set(4, 0, 0);
+    meshD.position.set(6, 0, 0);
+    board.position.set(12, 0, 0);
+    child.add(meshA, meshB);
+    parent.add(child, meshC, meshD);
+    root.add(parent, board);
+
+    const candidates = createThreeGroupedPartCandidates(root, [meshA, meshB, meshC, meshD, board]);
+
+    expect(candidates.groupedMeshes.has(meshA)).toBe(true);
+    expect(candidates.groupedMeshes.has(meshB)).toBe(true);
+    expect(candidates.groupedMeshes.has(meshC)).toBe(true);
+    expect(candidates.groupedMeshes.has(meshD)).toBe(true);
+    expect(candidates.groupedMeshes.has(board)).toBe(false);
+    expect(candidates.parts.map((part) => part.name)).toEqual(["pin-bank", "connector-assembly"]);
+    expect(candidates.parts.map((part) => part.meshNames)).toEqual([
+      ["pin-a", "pin-b"],
+      ["socket", "latch"],
+    ]);
+  });
+
   it("promotes picked child meshes to their explicit converted component", () => {
     const root = new Object3D();
     const component = new Object3D();

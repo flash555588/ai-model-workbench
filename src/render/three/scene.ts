@@ -61,6 +61,7 @@ import { isMobile } from "../../utils/device";
 import {
   getPreviewBoundsCenter,
   getPreviewBoundsSize,
+  type PreviewBounds,
 } from "../preview/bounds";
 import { createPreviewPerspectiveCameraFit } from "../preview/camera-fit";
 import {
@@ -293,6 +294,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private cachedMeshRoot: Object3D | null = null;
   private cachedRenderables: ThreeRenderableObject[] | null = null;
   private cachedRenderableRoot: Object3D | null = null;
+  private cachedRootPreviewBounds: PreviewBounds | null = null;
+  private cachedRootPreviewBoundsObject: Object3D | null = null;
   private cachedGeometryQualityStats: PreviewQualitySnapshot["geometry"] | null = null;
   private cameraAnimHandle = 0;
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
@@ -459,7 +462,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.scene.add(root);
     this.invalidateMeshCache();
     this.prepareModelForQuality(root);
-    this.updateShadowFraming();
+    const rootBounds = this.getRootPreviewBounds(root);
+    this.updateShadowFraming(rootBounds);
     this.syncSceneHelpers();
     this.markDirty();
 
@@ -472,9 +476,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
 
     const renderableObjects = this.getRenderableObjects(root);
-    const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings);
-    this.cachedGeometryQualityStats = createThreeGeometryQualityStats(root, renderableObjects);
-    this.fitCameraToObject(root);
+    const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings, rootBounds ?? undefined);
+    this.cachedGeometryQualityStats = createThreeGeometryQualityStats(root, renderableObjects, rootBounds ?? undefined);
+    this.fitCameraToObject(root, rootBounds ?? undefined);
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
     }
@@ -574,7 +578,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
   exportModelInfo(modelPath?: string): string {
     if (!this.rootObject) return "";
     const renderableObjects = this.getRenderableObjects(this.rootObject);
-    const summary = createThreeModelPreviewSummary(this.rootObject, renderableObjects, this.resourceWarnings);
+    const summary = createThreeModelPreviewSummary(
+      this.rootObject,
+      renderableObjects,
+      this.resourceWarnings,
+      this.getRootPreviewBounds() ?? undefined,
+    );
     const name = modelPath ? getPortableBasename(modelPath) || summary.rootName : summary.rootName;
     return createPreviewModelInfoMarkdown({
       title: name,
@@ -594,7 +603,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
       groupedMeshes: new Set<ThreeRenderableObject>(groupedPartCandidates.groupedMeshes),
     };
     return createPreviewEvidence({
-      summary: createThreeModelPreviewSummary(this.rootObject, renderableObjects, this.resourceWarnings),
+      summary: createThreeModelPreviewSummary(
+        this.rootObject,
+        renderableObjects,
+        this.resourceWarnings,
+        this.getRootPreviewBounds() ?? undefined,
+      ),
       renderableMeshes: renderableObjects,
       groupedPartCandidates: groupedRenderableCandidates,
       createMeshPart: (object) => createThreeRenderablePartPreviewSummary(object, this.rootObject),
@@ -950,6 +964,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setExplode(factor: number, axis: PreviewAxis): void {
     if (!this.rootObject) return;
     setThreeExplode(this.rootObject, factor, axis);
+    this.invalidateRootBoundsCache();
     this.markShadowDirty();
     this.markDirty();
   }
@@ -957,6 +972,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   resetExplode(): void {
     if (!this.rootObject) return;
     resetThreeExplode(this.rootObject);
+    this.invalidateRootBoundsCache();
     this.markShadowDirty();
     this.markDirty();
   }
@@ -988,6 +1004,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   resetDisassembly(): void {
     this.disassembly?.reset();
+    this.invalidateRootBoundsCache();
   }
 
   isDisassemblyEnabled(): boolean {
@@ -1008,6 +1025,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       meshes,
       this.controls,
       () => {
+        this.invalidateRootBoundsCache();
         this.markShadowDirty();
         this.markDirty();
       },
@@ -1270,7 +1288,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private computeOrthographicViewSpan(): number {
     if (!this.rootObject) return 2;
-    const bounds = getObjectPreviewBounds(this.rootObject);
+    const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const size = getPreviewBoundsSize(bounds);
     return Math.max(Math.max(size.x, size.y, size.z, Number.EPSILON) * 1.2, 0.001);
   }
@@ -1553,13 +1571,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
-  private updateShadowFraming(): void {
-    if (!this.rootObject) return;
-    const box = new Box3().setFromObject(this.rootObject);
-    const center = box.getCenter(new Vector3());
-    const size = box.getSize(new Vector3());
+  private updateShadowFraming(bounds = this.getRootPreviewBounds()): void {
+    if (!this.rootObject || !bounds) return;
+    const center = getPreviewBoundsCenter(bounds);
+    const size = getPreviewBoundsSize(bounds);
     const span = Math.max(size.x, size.y, size.z, Number.EPSILON);
     const radius = Math.max(span * 1.8, 0.001);
+    const centerVector = new Vector3(center.x, center.y, center.z);
 
     for (const light of this.allLights()) {
       if (!isShadowCastingLight(light) || !light.castShadow) continue;
@@ -1572,11 +1590,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
         if (direction.lengthSq() < 0.001) {
           direction.set(4, 7, 5);
         }
-        light.target.position.copy(center);
+        light.target.position.copy(centerVector);
         if (!light.target.parent) {
           this.scene.add(light.target);
         }
-        light.position.copy(center).add(direction.normalize().multiplyScalar(radius * 2.4));
+        light.position.copy(centerVector).add(direction.normalize().multiplyScalar(radius * 2.4));
 
         if (light.shadow.camera instanceof OrthographicCamera) {
           const camera = light.shadow.camera;
@@ -1637,7 +1655,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private createGroundShadow(): void {
     if (!this.rootObject || this.groundShadowMesh) return;
-    const bounds = getObjectPreviewBounds(this.rootObject);
+    const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const center = getPreviewBoundsCenter(bounds);
     const boundsSize = getPreviewBoundsSize(bounds);
     const span = Math.max(boundsSize.x, boundsSize.z, Number.EPSILON);
@@ -1669,7 +1687,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private createGrid(): void {
     if (!this.rootObject || this.gridHelper) return;
-    const bounds = getObjectPreviewBounds(this.rootObject);
+    const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const center = getPreviewBoundsCenter(bounds);
     const boundsSize = getPreviewBoundsSize(bounds);
     const span = Math.max(boundsSize.x, boundsSize.z, Number.EPSILON);
@@ -1836,8 +1854,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
   }
 
-  private fitCameraToObject(root: Object3D): void {
-    const bounds = getObjectPreviewBounds(root);
+  private fitCameraToObject(root: Object3D, rootBounds?: PreviewBounds): void {
+    const bounds = rootBounds ?? this.getRootPreviewBounds(root) ?? getObjectPreviewBounds(root);
     const fit = createPreviewPerspectiveCameraFit(bounds);
     this.initialTarget.set(fit.target.x, fit.target.y, fit.target.z);
     this.initialPosition.set(fit.position.x, fit.position.y, fit.position.z);
@@ -1957,6 +1975,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.cachedGeometryQualityStats = createThreeGeometryQualityStats(
         this.rootObject,
         this.getRenderableObjects(this.rootObject),
+        this.getRootPreviewBounds() ?? undefined,
       );
     }
     return this.cachedGeometryQualityStats;
@@ -1967,7 +1986,23 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedMeshRoot = null;
     this.cachedRenderables = null;
     this.cachedRenderableRoot = null;
+    this.invalidateRootBoundsCache();
+  }
+
+  private invalidateRootBoundsCache(): void {
+    this.cachedRootPreviewBounds = null;
+    this.cachedRootPreviewBoundsObject = null;
     this.cachedGeometryQualityStats = null;
+  }
+
+  private getRootPreviewBounds(root: Object3D | null = this.rootObject): PreviewBounds | null {
+    if (!root) return null;
+    if (this.cachedRootPreviewBounds && this.cachedRootPreviewBoundsObject === root) {
+      return this.cachedRootPreviewBounds;
+    }
+    this.cachedRootPreviewBounds = getObjectPreviewBounds(root);
+    this.cachedRootPreviewBoundsObject = root;
+    return this.cachedRootPreviewBounds;
   }
 
   private ensureBoundingBoxHelper(): void {
@@ -2069,7 +2104,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private getMeasurementMarkerSize(): number {
     if (!this.rootObject) return 0.02;
-    const bounds = getObjectPreviewBounds(this.rootObject);
+    const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const size = getPreviewBoundsSize(bounds);
     const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
     return maxSpan * 0.015;
