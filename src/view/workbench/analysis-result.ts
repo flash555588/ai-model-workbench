@@ -19,6 +19,8 @@ import { getPortableStem } from "../../utils/resolve-path";
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
 const MAX_REGISTERED_MATCHES_PER_PART = 3;
 const REGISTERED_PART_MATCH_THRESHOLD = 0.58;
+const MAX_PART_MESH_REFS = 64;
+const MAX_PART_MATERIAL_REFS = 16;
 const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
   "glb",
   "gltf",
@@ -38,6 +40,12 @@ const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
 ]);
 
 const SUPPORTED_LOAD_STRATEGIES = new Set(["direct", "convert"]);
+
+interface RegisteredPartMatchCandidate {
+  part: PartRecord;
+  nameTokens: Set<string>;
+  meshTokens: Set<string>;
+}
 
 export interface BuildLocalAnalysisOptions {
   modelPath: string;
@@ -93,6 +101,12 @@ function normalizeModelLoadStrategy(
 
 function toVectorTuple(point: { x: number; y: number; z: number }): [number, number, number] {
   return [point.x, point.y, point.z];
+}
+
+function limitPartRefs(values: readonly string[], maxEntries: number): string[] {
+  return values
+    .filter((value) => value.trim().length > 0)
+    .slice(0, maxEntries);
 }
 
 function sanitizePartIdSegment(value: string): string {
@@ -166,15 +180,24 @@ function identifierMatches(left?: string | null, right?: string | null): boolean
   return !!leftValue && !!rightValue && leftValue === rightValue;
 }
 
-function buildRegisteredPartMatches(part: PartRecord, registeredParts: readonly PartRecord[]): RegisteredPartMatch[] {
+function createRegisteredPartMatchCandidates(registeredParts: readonly PartRecord[]): RegisteredPartMatchCandidate[] {
+  return registeredParts.map((part) => ({
+    part,
+    nameTokens: tokenSet(part.name),
+    meshTokens: tokenSet(part.meshRefs.join(" ")),
+  }));
+}
+
+function buildRegisteredPartMatches(part: PartRecord, candidates: readonly RegisteredPartMatchCandidate[]): RegisteredPartMatch[] {
   const partNameTokens = tokenSet(part.name);
   const partMeshTokens = tokenSet(part.meshRefs.join(" "));
-  const matches = registeredParts
-    .filter((candidate) => candidate.assetId !== part.assetId || candidate.partId !== part.partId)
-    .flatMap((candidate): RegisteredPartMatch[] => {
+  const matches = candidates
+    .filter((candidate) => candidate.part.assetId !== part.assetId || candidate.part.partId !== part.partId)
+    .flatMap((candidateInfo): RegisteredPartMatch[] => {
+      const candidate = candidateInfo.part;
       const reasons: string[] = [];
-      const nameScore = overlapRatio(partNameTokens, tokenSet(candidate.name));
-      const meshScore = overlapRatio(partMeshTokens, tokenSet(candidate.meshRefs.join(" ")));
+      const nameScore = overlapRatio(partNameTokens, candidateInfo.nameTokens);
+      const meshScore = overlapRatio(partMeshTokens, candidateInfo.meshTokens);
       const sizeScore = dimensionsSimilarity(part.bbox, candidate.bbox);
       const sameCategory = !!part.category && !!candidate.category && part.category === candidate.category;
       const sameMaterial = materialMatches(part.materialName, candidate.materialName);
@@ -220,8 +243,9 @@ function attachRegisteredPartMatches(parts: readonly PartRecord[], registeredPar
   if (registeredParts.length === 0) {
     return parts.map((part) => ({ ...part }));
   }
+  const candidates = createRegisteredPartMatchCandidates(registeredParts);
   return parts.map((part) => {
-    const registeredMatches = buildRegisteredPartMatches(part, registeredParts);
+    const registeredMatches = buildRegisteredPartMatches(part, candidates);
     return registeredMatches.length > 0 ? { ...part, registeredMatches } : { ...part };
   });
 }
@@ -321,9 +345,12 @@ export function buildPartRecordsFromEvidence(
       partNumber: part.partNumber,
       componentPath: part.componentPath,
       category: inferPartCategory(part),
-      meshRefs: part.meshNames?.length ? [...part.meshNames] : [part.name || `mesh-${index + 1}`],
+      meshRefs: limitPartRefs(
+        part.meshNames?.length ? part.meshNames : [part.name || `mesh-${index + 1}`],
+        MAX_PART_MESH_REFS,
+      ),
       childCount: part.childCount,
-      materialRefs: part.materialName ? [part.materialName] : [],
+      materialRefs: limitPartRefs(part.materialName ? [part.materialName] : [], MAX_PART_MATERIAL_REFS),
       bbox: toVectorTuple(part.boundingSize),
       center: toVectorTuple(part.center),
       triangleCount: part.triangleCount,

@@ -2,10 +2,10 @@ import type { App } from "obsidian";
 import { TFile } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../../domain/constants";
-import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, ModelEvidence, PluginState } from "../../domain/models";
+import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, ModelEvidence, PartRecord, PluginState } from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createDefaultProfile } from "../../store/plugin-store";
-import { generateKnowledgeNote } from "./knowledge-note";
+import { collectRegisteredPartsFromProfiles, generateKnowledgeNote } from "./knowledge-note";
 
 const noticeMessages = vi.hoisted((): string[] => []);
 
@@ -357,5 +357,79 @@ describe("generateKnowledgeNote generation marker", () => {
     expect(partNote).toContain("effective_format: \"glb\"");
     expect(partNote).toContain("load_strategy: \"convert\"");
     expect(partNote).toContain("- Format lineage: STEP -> GLB (convert)");
+  });
+});
+
+describe("collectRegisteredPartsFromProfiles", () => {
+  function createRegisteredPart(partId: string, partial: Partial<PartRecord> = {}): PartRecord {
+    return {
+      partId,
+      assetId: partial.assetId ?? "models/old.glb",
+      name: partial.name ?? partId,
+      source: partial.source ?? "mesh",
+      meshRefs: partial.meshRefs ?? [partId],
+      materialRefs: [],
+      confidence: partial.confidence ?? 0.5,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: partial.reviewed ?? false,
+      ...partial,
+    };
+  }
+
+  it("can skip sidecar reads for fast direct-view match previews", async () => {
+    const { app, files } = createVaultHarness();
+    const sidecarPart = createRegisteredPart("sidecar-part", { name: "Sidecar part" });
+    const savedPart = createRegisteredPart("saved-part", { name: "Saved part" });
+    files.set("Analysis/old Analysis.json", JSON.stringify({ parts: [sidecarPart] }));
+    const profiles: Record<string, ModelAssetProfile> = {
+      "models/current.glb": createDefaultProfile(),
+      "models/old.glb": {
+        ...createDefaultProfile(),
+        analysisSidecarPath: "Analysis/old Analysis.json",
+        registeredParts: [savedPart],
+      },
+    };
+
+    const fastParts = await collectRegisteredPartsFromProfiles(app, profiles, "models/current.glb", {
+      includeSidecars: false,
+    });
+    const fullParts = await collectRegisteredPartsFromProfiles(app, profiles, "models/current.glb");
+
+    expect(fastParts.map((part) => part.partId)).toEqual(["saved-part"]);
+    expect(fullParts.map((part) => part.partId).sort()).toEqual(["saved-part", "sidecar-part"]);
+  });
+
+  it("caps collected parts while keeping reviewed and component records first", async () => {
+    const { app } = createVaultHarness();
+    const meshParts = Array.from({ length: 40 }, (_value, index) => createRegisteredPart(`mesh-${index}`, {
+      confidence: 0.2,
+    }));
+    const reviewedPart = createRegisteredPart("reviewed", {
+      reviewed: true,
+      confidence: 0.1,
+    });
+    const componentPart = createRegisteredPart("component", {
+      source: "component",
+      componentId: "U4",
+      confidence: 0.82,
+    });
+    const profiles: Record<string, ModelAssetProfile> = {
+      "models/current.glb": createDefaultProfile(),
+      "models/old.glb": {
+        ...createDefaultProfile(),
+        registeredParts: [...meshParts, reviewedPart, componentPart],
+      },
+    };
+
+    const parts = await collectRegisteredPartsFromProfiles(app, profiles, "models/current.glb", {
+      includeSidecars: false,
+      maxParts: 8,
+    });
+
+    expect(parts).toHaveLength(8);
+    expect(parts.some((part) => part.partId === "reviewed")).toBe(true);
+    expect(parts.some((part) => part.partId === "component")).toBe(true);
   });
 });

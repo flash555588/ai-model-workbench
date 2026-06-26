@@ -23,6 +23,10 @@ import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-res
 import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
 
 const MAX_GENERATED_PART_NOTES = 8;
+const DEFAULT_PROFILE_REGISTERED_PART_LIMIT = 256;
+const MAX_PERSISTED_PART_MESH_REFS = 64;
+const MAX_PERSISTED_PART_MATERIAL_REFS = 32;
+const MAX_PERSISTED_PART_OBSERVATIONS = 16;
 const INDEX_MANAGED_START = "<!-- AI3D_INDEX_START -->";
 const INDEX_MANAGED_END = "<!-- AI3D_INDEX_END -->";
 
@@ -857,8 +861,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
 }
 
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+function normalizeStringArray(value: unknown, maxEntries = Number.POSITIVE_INFINITY): string[] {
+  const entries = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  return Number.isFinite(maxEntries) ? entries.slice(0, maxEntries) : entries;
 }
 
 function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
@@ -902,9 +907,9 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     partNumber: typeof value.partNumber === "string" ? value.partNumber : undefined,
     componentPath: typeof value.componentPath === "string" ? value.componentPath : undefined,
     category: typeof value.category === "string" ? value.category : undefined,
-    meshRefs: normalizeStringArray(value.meshRefs),
+    meshRefs: normalizeStringArray(value.meshRefs, MAX_PERSISTED_PART_MESH_REFS),
     childCount: Number.isFinite(value.childCount) ? Number(value.childCount) : undefined,
-    materialRefs: normalizeStringArray(value.materialRefs),
+    materialRefs: normalizeStringArray(value.materialRefs, MAX_PERSISTED_PART_MATERIAL_REFS),
     bbox: normalizeNumberTuple(value.bbox),
     center: normalizeNumberTuple(value.center),
     triangleCount: Number.isFinite(value.triangleCount) ? Number(value.triangleCount) : undefined,
@@ -914,20 +919,46 @@ function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string):
     effectiveFormat: normalizeModelAssetFormat(value.effectiveFormat),
     loadStrategy: normalizeModelLoadStrategy(value.loadStrategy),
     confidence: Number.isFinite(value.confidence) ? Number(value.confidence) : 0.5,
-    observations: normalizeStringArray(value.observations),
+    observations: normalizeStringArray(value.observations, MAX_PERSISTED_PART_OBSERVATIONS),
     inferredFunctions: normalizeStringArray(value.inferredFunctions),
     knowledgeTags: normalizeStringArray(value.knowledgeTags),
     notePath: typeof value.notePath === "string" ? value.notePath : undefined,
-    registeredMatches: Array.isArray(value.registeredMatches)
-      ? (value.registeredMatches as unknown[]).filter(
-          (m): m is RegisteredPartMatch =>
-            !!(m && typeof m === "object" &&
-            typeof (m as Record<string, unknown>).sourceAssetId === "string" &&
-            typeof (m as Record<string, unknown>).sourcePartId === "string" &&
-            typeof (m as Record<string, unknown>).sourcePartName === "string")
-        )
-      : undefined,
+    registeredMatches: undefined,
     reviewed: value.reviewed === true,
+  };
+}
+
+export interface CollectRegisteredPartsOptions {
+  includeSidecars?: boolean;
+  maxParts?: number;
+  perProfileLimit?: number;
+}
+
+function getRegisteredPartCollectionRank(part: PartRecord): number {
+  if (part.reviewed || part.notePath) return 0;
+  if (part.source === "component") return 1;
+  if (part.source === "group") return 2;
+  if (part.source === "detail-cluster") return 3;
+  return 4;
+}
+
+function sortRegisteredPartsForReuse(parts: readonly PartRecord[]): PartRecord[] {
+  return [...parts].sort((left, right) => {
+    const rankDelta = getRegisteredPartCollectionRank(left) - getRegisteredPartCollectionRank(right);
+    if (rankDelta !== 0) return rankDelta;
+    const confidenceDelta = (right.confidence ?? 0) - (left.confidence ?? 0);
+    if (confidenceDelta !== 0) return confidenceDelta;
+    return (right.childCount ?? 0) - (left.childCount ?? 0);
+  });
+}
+
+export function stripTransientRegisteredPartData(part: PartRecord): PartRecord {
+  return {
+    ...part,
+    meshRefs: part.meshRefs.slice(0, MAX_PERSISTED_PART_MESH_REFS),
+    materialRefs: part.materialRefs.slice(0, MAX_PERSISTED_PART_MATERIAL_REFS),
+    observations: part.observations.slice(0, MAX_PERSISTED_PART_OBSERVATIONS),
+    registeredMatches: undefined,
   };
 }
 
@@ -935,22 +966,25 @@ export async function collectRegisteredPartsFromProfiles(
   app: App,
   profiles: Record<string, ModelAssetProfile>,
   currentModelPath: string,
+  options: CollectRegisteredPartsOptions = {},
 ): Promise<PartRecord[]> {
   const parts: PartRecord[] = [];
   const seen = new Set<string>();
+  const includeSidecars = options.includeSidecars ?? true;
+  const perProfileLimit = options.perProfileLimit ?? DEFAULT_PROFILE_REGISTERED_PART_LIMIT;
   const pushPart = (value: unknown, fallbackAssetId: string): void => {
     const part = normalizeRegisteredPartRecord(value, fallbackAssetId);
     if (!part) return;
     const key = `${part.assetId}:${part.partId}`;
     if (seen.has(key)) return;
     seen.add(key);
-    parts.push(part);
+    parts.push(stripTransientRegisteredPartData(part));
   };
 
   for (const [modelPath, profile] of Object.entries(profiles)) {
     if (modelPath === currentModelPath) continue;
 
-    if (profile.analysisSidecarPath) {
+    if (includeSidecars && profile.analysisSidecarPath) {
       const sidecarFile = app.vault.getAbstractFileByPath(profile.analysisSidecarPath);
       if (sidecarFile instanceof TFile) {
         try {
@@ -967,11 +1001,14 @@ export async function collectRegisteredPartsFromProfiles(
       }
     }
 
-    for (const value of profile.registeredParts ?? []) {
+    const profileParts = sortRegisteredPartsForReuse(profile.registeredParts ?? []).slice(0, perProfileLimit);
+    for (const value of profileParts) {
       pushPart(value, modelPath);
     }
   }
-  return parts;
+  return typeof options.maxParts === "number" && options.maxParts > 0
+    ? sortRegisteredPartsForReuse(parts).slice(0, options.maxParts)
+    : parts;
 }
 
 function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
@@ -1424,7 +1461,7 @@ export async function generateKnowledgeNote(
 
     ps.updateModelProfile(path, (_existing) => ({
       analysisVersion: LOCAL_ANALYSIS_VERSION,
-      registeredParts: currentAnalysis.parts,
+      registeredParts: currentAnalysis.parts.map(stripTransientRegisteredPartData),
       reportNotePath: outputFile.path,
       analysisSidecarPath,
       knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,

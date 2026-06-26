@@ -1,5 +1,5 @@
 import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
-import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, PartRecord } from "../domain/models";
+import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, ModelPartSummary, PartRecord } from "../domain/models";
 import { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
@@ -28,7 +28,12 @@ export const DIRECT_VIEW_TYPE = "ai3d-direct-view";
 
 const log = createLogger("direct-view");
 const DEFERRED_EVIDENCE_DELAY_MS = 450;
+const HEAVY_DEFERRED_EVIDENCE_DELAY_MS = 1_500;
 const MAX_AUTO_REGISTERED_PARTS = 256;
+const MAX_AUTO_EVIDENCE_MESHES = 500;
+const MAX_AUTO_EVIDENCE_TRIANGLES = 1_500_000;
+const MAX_MATCH_PREVIEW_EVIDENCE_PARTS = 64;
+const MAX_MATCH_PREVIEW_REGISTERED_PARTS = 512;
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 import { createDefaultProfile } from "../store/plugin-store";
@@ -88,6 +93,79 @@ function limitAutoRegisteredParts(parts: PartRecord[]): PartRecord[] {
       return (right.childCount ?? 0) - (left.childCount ?? 0);
     })
     .slice(0, MAX_AUTO_REGISTERED_PARTS);
+}
+
+function getPerformanceTierRank(tier: ModelPreviewSummary["performanceTier"]): number {
+  if (tier === "extreme") return 3;
+  if (tier === "heavy") return 2;
+  if (tier === "medium") return 1;
+  return 0;
+}
+
+function getDeferredEvidenceDelay(summary: ModelPreviewSummary): number {
+  return getPerformanceTierRank(summary.performanceTier) >= 2
+    ? HEAVY_DEFERRED_EVIDENCE_DELAY_MS
+    : DEFERRED_EVIDENCE_DELAY_MS;
+}
+
+function shouldAutoCaptureEvidence(summary: ModelPreviewSummary): boolean {
+  return summary.performanceTier !== "extreme"
+    && summary.meshCount <= MAX_AUTO_EVIDENCE_MESHES
+    && summary.triangleCount <= MAX_AUTO_EVIDENCE_TRIANGLES;
+}
+
+function getMatchPreviewPartRank(part: ModelPartSummary): number {
+  if (part.source === "component") return 0;
+  if (part.source === "group") return 1;
+  if (part.source === "detail-cluster") return 2;
+  return 3;
+}
+
+function createMatchPreviewEvidence(evidence: ModelEvidence): ModelEvidence {
+  if (evidence.parts.length <= MAX_MATCH_PREVIEW_EVIDENCE_PARTS) {
+    return evidence;
+  }
+
+  return {
+    ...evidence,
+    parts: [...evidence.parts]
+      .sort((left, right) => {
+        const rankDelta = getMatchPreviewPartRank(left) - getMatchPreviewPartRank(right);
+        if (rankDelta !== 0) return rankDelta;
+        const childDelta = (right.childCount ?? 0) - (left.childCount ?? 0);
+        if (childDelta !== 0) return childDelta;
+        return right.triangleCount - left.triangleCount;
+      })
+      .slice(0, MAX_MATCH_PREVIEW_EVIDENCE_PARTS),
+  };
+}
+
+function getLargeModelQualityBudget(
+  settings: PluginSettings,
+  summary: ModelPreviewSummary,
+): Pick<PluginSettings, "renderQuality" | "renderScale"> {
+  if (summary.performanceTier === "extreme") {
+    return {
+      renderQuality: "low",
+      renderScale: Math.min(settings.renderScale, 0.65),
+    };
+  }
+  if (summary.performanceTier === "heavy") {
+    return {
+      renderQuality: settings.renderQuality === "low" ? "low" : "medium",
+      renderScale: Math.min(settings.renderScale, 0.85),
+    };
+  }
+  if (summary.performanceTier === "medium") {
+    return {
+      renderQuality: settings.renderQuality,
+      renderScale: Math.min(settings.renderScale, 1),
+    };
+  }
+  return {
+    renderQuality: settings.renderQuality,
+    renderScale: settings.renderScale,
+  };
 }
 
 function createEvidenceFormatLineage(source: PreviewSource): ModelEvidenceFormatLineage {
@@ -296,7 +374,7 @@ export class DirectModelView extends FileView {
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
       const data = await readBinaryPath(this.app, source.path);
-      const created = await this.createPreviewWithFallback(canvas, data, source, basePreviewOptions, file.path);
+      const created = await this.createPreviewWithFallback(canvas, data, source, basePreviewOptions, file.path, settings);
       if (gen !== this.loadGeneration) {
         created.preview.destroy();
         new Notice(t("directWorkbench.modelLoadInterrupted"));
@@ -307,6 +385,7 @@ export class DirectModelView extends FileView {
       host.dataset.ai3dRouteReason = created.route.reason;
       toolbar?.syncCapabilities();
       const summary = created.summary;
+      this.applyLargeModelRenderBudget(created.preview, settings, summary);
       renderModelPerformanceFeedback(host, summary);
       this.workbenchPanel = workbenchPanel;
       this.workbenchSummary = summary;
@@ -370,7 +449,7 @@ export class DirectModelView extends FileView {
       }
 
       loading.hide();
-      this.scheduleDeferredEvidenceRegistration(file.path, gen);
+      this.scheduleDeferredEvidenceRegistration(file.path, gen, summary);
     } catch (err) {
       if (gen !== this.loadGeneration) return;
       loading.hide();
@@ -422,8 +501,21 @@ export class DirectModelView extends FileView {
     }
   }
 
-  private scheduleDeferredEvidenceRegistration(modelPath: string, generation: number): void {
+  private scheduleDeferredEvidenceRegistration(modelPath: string, generation: number, summary: ModelPreviewSummary): void {
     this.clearDeferredEvidenceRegistration();
+    if (!shouldAutoCaptureEvidence(summary)) {
+      this.workbenchEvidenceModelPath = modelPath;
+      this.workbenchEvidence = null;
+      this.refreshWorkbenchPanel();
+      log.info("skip automatic evidence capture for very large model", {
+        modelPath,
+        performanceTier: summary.performanceTier,
+        meshCount: summary.meshCount,
+        triangleCount: summary.triangleCount,
+      });
+      return;
+    }
+
     this.evidenceRegistrationTimer = window.setTimeout(() => {
       this.evidenceRegistrationTimer = null;
       if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath) {
@@ -439,7 +531,7 @@ export class DirectModelView extends FileView {
       } catch (error) {
         console.warn("[AI3D] Deferred model evidence capture failed:", error);
       }
-    }, DEFERRED_EVIDENCE_DELAY_MS);
+    }, getDeferredEvidenceDelay(summary));
   }
 
   private getCurrentModelEvidence(): ModelEvidence | null {
@@ -620,7 +712,8 @@ export class DirectModelView extends FileView {
       body.createDiv({ cls: "ai3d-direct-workbench-empty", text: t(messageKey) });
     };
 
-    const evidence = this.getCachedModelEvidence(modelPath);
+    const cachedEvidence = this.getCachedModelEvidence(modelPath);
+    const evidence = cachedEvidence ? createMatchPreviewEvidence(cachedEvidence) : null;
     if (!evidence?.parts.length) {
       if (this.workbenchEvidenceModelPath === modelPath) {
         renderEmpty("directWorkbench.registeredUnavailable");
@@ -633,7 +726,10 @@ export class DirectModelView extends FileView {
     void import("./workbench/knowledge-note")
       .then(async ({ collectRegisteredPartsFromProfiles }) => {
         const state = this.ps.store.getState();
-        const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath);
+        const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath, {
+          includeSidecars: false,
+          maxParts: MAX_MATCH_PREVIEW_REGISTERED_PARTS,
+        });
         if (generation !== this.loadGeneration || this.workbenchModelPath !== modelPath || !control.isConnected) {
           return;
         }
@@ -693,6 +789,7 @@ export class DirectModelView extends FileView {
     source: ReturnType<typeof toPreviewSource>,
     options: DirectViewPreviewOptions,
     modelPath: string,
+    settings: PluginSettings,
   ): Promise<{
       preview: AnnotationPreview;
       summary: Awaited<ReturnType<AnnotationPreview["loadModel"]>>;
@@ -704,6 +801,7 @@ export class DirectModelView extends FileView {
       canvas,
       options,
     );
+    this.applyConfiguredRenderQuality(created.preview, settings);
 
     try {
       const summary = await created.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
@@ -724,6 +822,7 @@ export class DirectModelView extends FileView {
         canvas,
         fallbackOptions,
       );
+      this.applyConfiguredRenderQuality(fallback.preview, settings);
       try {
         const summary = await fallback.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
         return { preview: fallback.preview, summary, route: fallback.route };
@@ -735,5 +834,18 @@ export class DirectModelView extends FileView {
         throw fallbackError;
       }
     }
+  }
+
+  private applyConfiguredRenderQuality(preview: AnnotationPreview, settings: PluginSettings): void {
+    preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
+  }
+
+  private applyLargeModelRenderBudget(
+    preview: AnnotationPreview,
+    settings: PluginSettings,
+    summary: ModelPreviewSummary,
+  ): void {
+    const budget = getLargeModelQualityBudget(settings, summary);
+    preview.setRenderQuality?.(budget.renderQuality, budget.renderScale);
   }
 }

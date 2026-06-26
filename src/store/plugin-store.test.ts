@@ -279,4 +279,64 @@ describe("createPluginStore persistence", () => {
     expect(parts.some((part) => part.partId === "reviewed-part")).toBe(true);
     expect(parts.some((part) => part.partId === "component-part")).toBe(true);
   });
+
+  it("strips transient registered matches and quickly persists normalized profiles", async () => {
+    const now = "2026-06-22T00:00:00.000Z";
+    const saved: PersistedPluginState = {
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {
+        "models/large.glb": {
+          tags: [],
+          notes: "",
+          annotations: [],
+          registeredParts: [{
+            partId: "part-1",
+            assetId: "models/large.glb",
+            name: "U1",
+            source: "component",
+            meshRefs: Array.from({ length: 100 }, (_value, index) => `U1-mesh-${index}`),
+            materialRefs: [],
+            confidence: 0.82,
+            observations: [],
+            inferredFunctions: [],
+            knowledgeTags: [],
+            registeredMatches: [{
+              sourceAssetId: "models/old.glb",
+              sourcePartId: "old-part",
+              sourcePartName: "Old U1",
+              matchScore: 0.95,
+              confidence: 0.9,
+              reasons: ["same component id"],
+            }],
+            reviewed: false,
+          }],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      agentDraft: "",
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const normalizedSaves: PersistedPluginState[] = [];
+    const { plugin, saveData } = createFakePlugin(async (data) => {
+      normalizedSaves.push(data);
+    }, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    const part = pluginStore.store.getState().modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
+    expect(part?.registeredMatches).toBeUndefined();
+    expect(part?.meshRefs).toHaveLength(64);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settlePromises();
+
+    expect(saveData).toHaveBeenCalledTimes(1);
+    const persistedPart = normalizedSaves[0].modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
+    expect(persistedPart?.registeredMatches).toBeUndefined();
+    expect(persistedPart?.meshRefs).toHaveLength(64);
+  });
 });

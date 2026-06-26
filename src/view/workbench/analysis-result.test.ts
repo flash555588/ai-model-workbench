@@ -73,4 +73,36 @@ describe("buildLocalAnalysisResult format lineage", () => {
       loadStrategy: "convert",
     });
   });
+
+  it("caps persisted mesh references for highly fragmented parts", () => {
+    const evidence: ModelEvidence = {
+      summary: {
+        ...preview,
+        meshCount: 120,
+      },
+      parts: [{
+        name: "Small detail cluster",
+        source: "detail-cluster",
+        meshNames: Array.from({ length: 180 }, (_value, index) => `mesh-${index}`),
+        childCount: 180,
+        triangleCount: 2_400,
+        vertexCount: 1_800,
+        materialName: "board",
+        boundingSize: { x: 1, y: 1, z: 0.2 },
+        center: { x: 0, y: 0, z: 0 },
+      }],
+      materialNames: ["board"],
+      resourceWarnings: [],
+      capturedAt: "2026-06-22T00:00:00.000Z",
+    };
+
+    const analysis = buildLocalAnalysisResult({
+      modelPath: "models/board.step",
+      preview: evidence.summary,
+      evidence,
+    });
+
+    expect(analysis.parts[0].meshRefs).toHaveLength(64);
+    expect(analysis.draftingInput?.partCandidates[0].meshRefs).toHaveLength(64);
+  });
 });

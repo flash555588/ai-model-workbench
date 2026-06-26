@@ -37,6 +37,10 @@ const INITIAL_STATE: PluginState = {
 };
 
 const MAX_REGISTERED_PARTS_PER_PROFILE = 256;
+const MAX_REGISTERED_PART_MESH_REFS = 64;
+const MAX_REGISTERED_PART_MATERIAL_REFS = 32;
+const MAX_REGISTERED_PART_OBSERVATIONS = 16;
+const NORMALIZED_STATE_SAVE_DELAY_MS = 50;
 
 export function createPluginStore(plugin: Plugin): PluginStore {
   const store = createStore<PluginState>(INITIAL_STATE);
@@ -142,14 +146,22 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       const saved = (await plugin.loadData()) as PersistedPluginState | null;
       if (!saved) return;
       localeLoadedFromSaved = !!saved.settings?.locale;
+      const profiles = normalizeModelAssetProfiles(saved.modelAssetProfiles);
       store.setState({
         settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
         convertedAssetRecords: saved.convertedAssetRecords ?? [],
-        modelAssetProfiles: normalizeModelAssetProfiles(saved.modelAssetProfiles),
+        modelAssetProfiles: profiles,
         agentDraft: saved.agentDraft ?? "",
         agentPlan: saved.agentPlan ?? null,
         lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
       });
+      if (shouldPersistNormalizedProfiles(saved.modelAssetProfiles, profiles)) {
+        if (saveTimer) window.clearTimeout(saveTimer);
+        saveTimer = window.setTimeout(() => {
+          saveTimer = null;
+          flushLatestState().catch(err => console.error("[AI3D] Normalized state save failed:", err));
+        }, NORMALIZED_STATE_SAVE_DELAY_MS);
+      }
     },
 
     async save() {
@@ -169,6 +181,37 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       flushLatestState(true).catch(err => console.error("[AI3D] Final save on dispose failed:", err));
     },
   };
+}
+
+function shouldPersistNormalizedProfiles(
+  saved: PersistedPluginState["modelAssetProfiles"] | undefined,
+  normalized: Record<string, ModelAssetProfile>,
+): boolean {
+  if (!saved || typeof saved !== "object") {
+    return false;
+  }
+
+  for (const [path, profile] of Object.entries(saved as Record<string, Partial<ModelAssetProfile> | null | undefined>)) {
+    if (!profile || typeof profile !== "object") continue;
+    const savedParts = Array.isArray(profile.registeredParts) ? profile.registeredParts : [];
+    const normalizedParts = normalized[path]?.registeredParts ?? [];
+    if (savedParts.length !== normalizedParts.length) {
+      return true;
+    }
+    if (savedParts.some((part) => !!part && typeof part === "object" && "registeredMatches" in part)) {
+      return true;
+    }
+    if (savedParts.some((part) => {
+      if (!part || typeof part !== "object") return false;
+      return (Array.isArray(part.meshRefs) && part.meshRefs.length > MAX_REGISTERED_PART_MESH_REFS)
+        || (Array.isArray(part.materialRefs) && part.materialRefs.length > MAX_REGISTERED_PART_MATERIAL_REFS)
+        || (Array.isArray(part.observations) && part.observations.length > MAX_REGISTERED_PART_OBSERVATIONS);
+    })) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function normalizeModelAssetProfiles(
@@ -199,10 +242,11 @@ function normalizeModelAssetProfiles(
   return profiles;
 }
 
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
+function normalizeStringArray(value: unknown, maxEntries = Number.POSITIVE_INFINITY): string[] {
+  const entries = Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
     : [];
+  return Number.isFinite(maxEntries) ? entries.slice(0, maxEntries) : entries;
 }
 
 function normalizeNumberTuple(value: unknown): [number, number, number] | undefined {
@@ -281,9 +325,9 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): Part
       partNumber: typeof record.partNumber === "string" ? record.partNumber : undefined,
       componentPath: typeof record.componentPath === "string" ? record.componentPath : undefined,
       category: typeof record.category === "string" ? record.category : undefined,
-      meshRefs: normalizeStringArray(record.meshRefs),
+      meshRefs: normalizeStringArray(record.meshRefs, MAX_REGISTERED_PART_MESH_REFS),
       childCount: Number.isFinite(record.childCount) ? Math.max(0, Math.floor(Number(record.childCount))) : undefined,
-      materialRefs: normalizeStringArray(record.materialRefs),
+      materialRefs: normalizeStringArray(record.materialRefs, MAX_REGISTERED_PART_MATERIAL_REFS),
       bbox: normalizeNumberTuple(record.bbox),
       center: normalizeNumberTuple(record.center),
       triangleCount: Number.isFinite(record.triangleCount) ? Math.max(0, Math.floor(Number(record.triangleCount))) : undefined,
@@ -293,11 +337,11 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): Part
       effectiveFormat: normalizeModelAssetFormat(record.effectiveFormat),
       loadStrategy: normalizeModelLoadStrategy(record.loadStrategy),
       confidence: Number.isFinite(record.confidence) ? Math.max(0, Math.min(1, Number(record.confidence))) : 0.5,
-      observations: normalizeStringArray(record.observations),
+      observations: normalizeStringArray(record.observations, MAX_REGISTERED_PART_OBSERVATIONS),
       inferredFunctions: normalizeStringArray(record.inferredFunctions),
       knowledgeTags: normalizeStringArray(record.knowledgeTags),
       notePath: typeof record.notePath === "string" ? record.notePath : undefined,
-      registeredMatches: Array.isArray(record.registeredMatches) ? record.registeredMatches : undefined,
+      registeredMatches: undefined,
       reviewed: record.reviewed === true,
     });
   }
