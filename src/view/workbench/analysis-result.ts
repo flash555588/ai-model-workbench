@@ -5,10 +5,8 @@ import type {
   AnalysisResult,
   KnowledgeNode,
   ModelAssetProfile,
-  ModelAssetFormat,
   ModelEvidence,
   ModelEvidenceFormatLineage,
-  ModelLoadStrategy,
   ModelPartSummary,
   ModelPreviewSummary,
   PartRecord,
@@ -16,31 +14,14 @@ import type {
 } from "../../domain/models";
 import { getPortableStem } from "../../utils/resolve-path";
 import { compactPersistedNumberTuple } from "../../utils/compact-number";
+export { inferModelAssetFormat, normalizeModelLoadStrategy } from "./format-lineage";
+import { inferModelAssetFormat, normalizeModelLoadStrategy } from "./format-lineage";
 
 export const LOCAL_ANALYSIS_VERSION = "local-evidence-v1";
 const MAX_REGISTERED_MATCHES_PER_PART = 3;
 const REGISTERED_PART_MATCH_THRESHOLD = 0.58;
 const MAX_PART_MESH_REFS = 16;
 const MAX_PART_MATERIAL_REFS = 16;
-const SUPPORTED_ANALYSIS_FORMATS = new Set<AnalysisResult["asset"]["format"]>([
-  "glb",
-  "gltf",
-  "stl",
-  "obj",
-  "splat",
-  "ply",
-  "fbx",
-  "step",
-  "stp",
-  "iges",
-  "igs",
-  "brep",
-  "sldprt",
-  "3mf",
-  "dae",
-]);
-
-const SUPPORTED_LOAD_STRATEGIES = new Set(["direct", "convert"]);
 
 interface RegisteredPartMatchCandidate {
   part: PartRecord;
@@ -79,25 +60,6 @@ function distance3d(left: readonly [number, number, number], right: readonly [nu
   const dy = left[1] - right[1];
   const dz = left[2] - right[2];
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-export function inferModelAssetFormat(value: string | null | undefined): ModelAssetFormat {
-  const ext = (value ?? "").split(".").pop()?.trim().toLowerCase();
-  if (SUPPORTED_ANALYSIS_FORMATS.has(ext as ModelAssetFormat)) {
-    return ext as ModelAssetFormat;
-  }
-  return "glb";
-}
-
-function normalizeModelLoadStrategy(
-  value: unknown,
-  sourceFormat: ModelAssetFormat,
-  effectiveFormat: ModelAssetFormat,
-): ModelLoadStrategy {
-  if (typeof value === "string" && SUPPORTED_LOAD_STRATEGIES.has(value)) {
-    return value as "direct" | "convert";
-  }
-  return sourceFormat === effectiveFormat ? "direct" : "convert";
 }
 
 function toVectorTuple(point: { x: number; y: number; z: number }): [number, number, number] {

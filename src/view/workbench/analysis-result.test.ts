@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelEvidence, ModelPreviewSummary } from "../../domain/models";
 import { buildLocalAnalysisResult } from "./analysis-result";
+import { inferModelAssetFormat, normalizeModelLoadStrategy } from "./format-lineage";
 
 vi.mock("../../utils/resolve-path", () => ({
   getPortableStem: (path: string) => path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? path,
@@ -14,6 +15,21 @@ const preview: ModelPreviewSummary = {
   boundingSize: { x: 1.6, y: 0.8, z: 0.45 },
   rootName: "pcb",
 };
+
+describe("format lineage helpers", () => {
+  it("infers supported model formats and defaults unknown values to glb", () => {
+    expect(inferModelAssetFormat("models/assembly.STEP")).toBe("step");
+    expect(inferModelAssetFormat("models/mesh.3mf")).toBe("3mf");
+    expect(inferModelAssetFormat("models/unknown.asset")).toBe("glb");
+  });
+
+  it("normalizes load strategies from explicit values or format lineage", () => {
+    expect(normalizeModelLoadStrategy("convert", "step", "glb")).toBe("convert");
+    expect(normalizeModelLoadStrategy("direct", "glb", "glb")).toBe("direct");
+    expect(normalizeModelLoadStrategy("legacy", "step", "glb")).toBe("convert");
+    expect(normalizeModelLoadStrategy(undefined, "glb", "glb")).toBe("direct");
+  });
+});
 
 describe("buildLocalAnalysisResult format lineage", () => {
   it("preserves source and effective formats on part records and drafting input", () => {

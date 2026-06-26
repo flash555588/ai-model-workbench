@@ -18,8 +18,7 @@ import { renderModelLoadFailure, renderModelPerformanceFeedback } from "./model-
 import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
 import { compactRegisteredPartForPersistence } from "../utils/registered-part-persistence";
-import { buildLocalAnalysisResult, buildPartRecordsFromEvidence, inferModelAssetFormat } from "./workbench/analysis-result";
-import { renderRegisteredPartMatchRow } from "./direct-workbench-registered-match";
+import { inferModelAssetFormat } from "./workbench/format-lineage";
 import { createDirectViewLayout } from "./direct-view-layout";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
@@ -528,11 +527,12 @@ export class DirectModelView extends FileView {
     }
   }
 
-  private registerModelPartsFromEvidence(modelPath: string, evidence: ModelEvidence | null): void {
+  private async registerModelPartsFromEvidence(modelPath: string, evidence: ModelEvidence | null): Promise<void> {
     if (!evidence?.parts.length) {
       return;
     }
 
+    const { buildPartRecordsFromEvidence } = await import("./workbench/analysis-result");
     const nextParts = buildPartRecordsFromEvidence(modelPath, evidence.parts, evidence.formatLineage);
     if (nextParts.length === 0) {
       return;
@@ -588,15 +588,15 @@ export class DirectModelView extends FileView {
         return;
       }
 
-      try {
+      void (async () => {
         const evidence = this.getCurrentModelEvidence();
-        this.registerModelPartsFromEvidence(modelPath, evidence);
+        await this.registerModelPartsFromEvidence(modelPath, evidence);
         if (generation === this.loadGeneration && this.workbenchModelPath === modelPath) {
           this.refreshWorkbenchPanel();
         }
-      } catch (error) {
+      })().catch((error) => {
         console.warn("[AI3D] Deferred model evidence capture failed:", error);
-      }
+      });
     }, getDeferredEvidenceDelay(summary));
   }
 
@@ -802,8 +802,12 @@ export class DirectModelView extends FileView {
         return;
       }
 
-      void import("./workbench/knowledge-note")
-        .then(async ({ collectRegisteredPartsFromProfiles }) => {
+      void Promise.all([
+        import("./workbench/knowledge-note"),
+        import("./workbench/analysis-result"),
+        import("./direct-workbench-registered-match"),
+      ])
+        .then(async ([{ collectRegisteredPartsFromProfiles }, { buildLocalAnalysisResult }, { renderRegisteredPartMatchRow }]) => {
           const state = this.ps.store.getState();
           const registeredParts = await collectRegisteredPartsFromProfiles(this.app, state.modelAssetProfiles, modelPath, {
             includeSidecars: false,

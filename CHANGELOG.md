@@ -23,6 +23,7 @@
 - Performance: strip derived automatic registered-part observation text from persisted profiles while preserving structured component, format-lineage, material, count, and reviewed-note fields.
 - Performance: stamp compact plugin state with a schema marker so future workspace startup can skip repeated deep registered-part compatibility scans.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
+- Performance: keep direct-view workbench analysis modules off the first model-open path until deferred part registration or registered-match previews actually need them.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.
 - Performance: normalize schema-marked but oversized registered-part lists on load so anomalous large `data.json` profiles are compacted back under the startup budget.
