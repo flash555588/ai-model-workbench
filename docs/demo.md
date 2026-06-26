@@ -1,4 +1,8 @@
-# AI 3D Model Workbench — Demo & Examples
+# AI 3D Model Workbench Demo And Examples
+
+This is a broad legacy walkthrough. For the current canonical user workflow,
+use [Usage Guide](usage-guide.md). For copy-paste syntax, use
+[Common Usage Syntax](common-usage-syntax.md).
 
 This page walks through every feature of the plugin with copy-paste examples. Create a test vault, install the plugin, and follow along.
 

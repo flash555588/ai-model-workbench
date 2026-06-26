@@ -11,6 +11,12 @@ Use this page to choose the right document before changing code.
 
 ## Product And Architecture Specs
 
+- `usage-guide.md` - user workflow guide for preview surfaces, direct view,
+  annotations, measurements, knowledge notes, conversion, and troubleshooting.
+- `common-usage-syntax.md` - copy-paste syntax for wikilink embeds, `3d`
+  blocks, `3dgrid` blocks, common fields, supported extensions, and shortcuts.
+- `usage-guide.zh-CN.md` - Simplified Chinese usage guide.
+- `common-usage-syntax.zh-CN.md` - Simplified Chinese syntax reference.
 - `preview-routing-matrix.md` - canonical Three/Babylon routing contract and smoke tests.
 - `0.6.0-plus-upgrade-plan.md` - staged upgrade plan for the `0.6.0+`
   reliability, workflow, and maintainability releases.
@@ -22,7 +28,8 @@ Use this page to choose the right document before changing code.
   remain conservative capability paths.
 - `../FORMAT_SUPPORT_DESIGN.md` - format support and local conversion strategy.
 - `ai-3d-plugin-design-report.md` - early product/design background.
-- `demo.md` - usage examples for code blocks, grids, annotations, snapshots, and notes.
+- `demo.md` - broad legacy walkthrough; prefer `usage-guide.md` and
+  `common-usage-syntax.md` for current user-facing guidance.
 
 ## Engineering Guardrails
 
@@ -45,6 +52,7 @@ Use this page to choose the right document before changing code.
 | If you are changing... | Read first |
 |------------------------|------------|
 | Renderer route, rollout, annotation preview | `preview-routing-matrix.md` |
+| User-facing examples, common syntax, or workflow docs | `usage-guide.md`, `common-usage-syntax.md` |
 | 0.6.0+ release planning or upgrade sequencing | `0.6.0-plus-upgrade-plan.md` |
 | Product scope, requirement status, release gates | `requirements-tracker.md` |
 | Three.js migration or workbench route policy | `workbench-3dgrid-feasibility-note.md` |

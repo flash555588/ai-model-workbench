@@ -9,7 +9,7 @@
 ![preview](docs/assets/preview.gif)
 
 ---
-https://community.obsidian.md/plugins/ai-model-workbench
+
 ## Table of Contents
 
 - [Features](#features)
@@ -78,39 +78,22 @@ See [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md), [docs/release-no
 
 ## Quick Start
 
-1. Build the plugin:
-
-```bash
-npm install
-npm run build
-```
-
-2. Open your local Obsidian vault folder on your computer.
-
-3. Create this folder inside the vault:
-
-```text
-<your-vault>/.obsidian/plugins/ai-model-workbench/
-```
-
-4. Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
-
-5. In Obsidian, open `Settings > Community Plugins` and enable `AI Model Workbench`.
-
-6. Put a supported model file into the same vault, for example `model.glb`.
-
-7. In any note inside that vault, embed it like this:
+1. Install the plugin from Obsidian, a release download, or a local build.
+2. Put a supported model file into your vault, for example `model.glb`.
+3. Embed it in any note:
 
 ```markdown
 ![[model.glb]]
 ![[model.glb|400x300]]
 ```
 
+You can also click a supported model file in the file explorer to open the direct file view.
+
 ---
 
 ## Installation
 
-Use [Quick Start](#quick-start) if you only want the fastest setup.
+Choose one install path, then use the embed syntax from [Quick Start](#quick-start).
 
 ### Requirements
 
@@ -193,13 +176,7 @@ ln -s /path/to/ai-model-workbench \
 
 ### After Install
 
-1. Put a supported model file into the same vault, for example `model.glb`.
-2. In any note inside that vault, embed it like this:
-
-```markdown
-![[model.glb]]
-![[model.glb|400x300]]
-```
+If Obsidian is already open, reload the app or disable and re-enable `AI Model Workbench`. Then add a supported model file to the vault and use the [Quick Start](#quick-start) embed syntax.
 
 ---
 
@@ -271,141 +248,44 @@ STEP conversion preserves XDE assembly/component labels when available, exportin
 
 ## Usage
 
-### Syntax Guide
+The README keeps only the common entry points. Full workflow and syntax details
+now live in dedicated docs:
 
-#### 1. Inline Embed
+- [Usage Guide](docs/usage-guide.md) - preview surfaces, direct file view,
+  annotations, measurements, snapshots, knowledge notes, part evidence,
+  conversion, performance tips, and troubleshooting.
+- [Common Usage Syntax](docs/common-usage-syntax.md) - copy-paste examples for
+  wikilink embeds, `3d` blocks, `3dgrid` blocks, common fields, supported
+  extensions, and shortcuts.
 
-Write a wikilink anywhere in your note. Works in Reading and Live Preview.
+Quick examples:
 
 ```markdown
 ![[model.glb]]
 ![[model.glb|400x300]]
 ```
 
-#### 2. `3d` Code Block
-
-**Quick** — file path only:
-
-````markdown
-```3d model.glb
-```
-````
-
-**Full config** — camera, lights, scene, multi-model:
-
 ````markdown
 ```3d
-{
-  "models": [
-    { "path": "model.glb" },
-    { "path": "part.stl", "color": "#ff0000", "wireframe": true }
-  ],
-  "camera": { "fov": 30, "position": [5, 5, 5] },
-  "lights": [
-    { "type": "hemisphere", "color": "#fff", "intensity": 1 },
-    { "type": "directional", "position": [10, 20, 10] }
-  ],
-  "scene": { "autoRotate": true, "grid": true },
-  "width": "100%",
-  "height": 500
-}
+model.glb
 ```
 ````
-
-| Section | Key fields |
-|---------|------------|
-| `models[]` | `path` (required), `color`, `wireframe` |
-| `camera` | `fov`, `position`, `lookAt`, `mode` (`"perspective"` / `"orthographic"`) |
-| `lights[]` | `type` (`"hemisphere"` `"directional"` `"point"` `"spot"` `"ambient"` `"attachToCam"`), `color`, `intensity`, `position` |
-| `scene` | `background`, `autoRotate`, `autoRotateSpeed`, `grid`, `axis`, `groundShadow`, `transparent` |
-| `stl` | `color`, `wireframe` (defaults for STL files) |
-| top-level | `width`, `height` |
-
-#### 3. `3dgrid` Code Block
-
-Render multiple models in one viewport using layout presets.
 
 ````markdown
 ```3dgrid
 {
   "models": [
     { "path": "v1.step" },
-    { "path": "v2.step" },
-    { "path": "v3.step" }
+    { "path": "v2.step" }
   ],
   "preset": "compare"
 }
 ```
 ````
 
-| Preset | Layout |
-|--------|--------|
-| `compare` | Side-by-side A/B |
-| `showcase` | Multi-angle single model |
-| `explode` | Ring arrangement |
-| `timeline` | Horizontal strip |
-| `gallery` | All in one scene (default) |
-| `compose` | Custom sections |
-
-`3dgrid` accepts the same `camera`, `lights`, `scene` fields as `3d`, plus: `preset`, `params`, `columns`, `rowHeight`, `gapX`, `gapY`, `sections`, `direction`.
-
-#### 4. Direct File View
-
-Click any `.glb`/`.gltf`/`.stl`/`.obj`/`.ply` file in the file explorer.
-
-#### Supported Extensions
-
-| Type | Formats |
-|------|---------|
-| Direct | `.glb` `.gltf` `.stl` `.obj` `.ply` |
-| Conversion | `.step` `.stp` `.iges` `.igs` `.brep` `.sldprt` `.3mf` `.dae` `.fbx` |
-
-### Keyboard Shortcuts (in preview)
-
-| Key | Action |
-|-----|--------|
-| `R` | Reset view |
-| `W` | Toggle wireframe |
-| `G` | Toggle orientation gizmo |
-| `B` | Toggle bounding box |
-| `Space` | Play/pause animation |
-| `Esc` | Exit annotation mode |
-
-### 3D Annotations
-
-Add labeled bookmarks directly on model surfaces. Annotations persist per model file.
-
-**Direct View** (edit mode):
-
-1. Click the **tag icon** in the toolbar
-2. A blue overlay indicates annotation mode is active
-3. Click anywhere on the model surface to place a pin
-4. Enter a label and pick a color in the popup editor
-5. Click an existing pin to edit its label/color or delete it
-6. Press `Esc` to exit annotation mode
-
-**Depth-aware occlusion**: Pins behind geometry display blurred and dimmed. During camera movement, occlusion refreshes in small batches so existing bookmarks do not visibly lag behind model rotation; when idle, the overlay catches up with a full refresh cadence.
-
-**Code blocks & Live Preview**: Saved annotations display as read-only overlays with the same occlusion behavior.
-
----
-
-### Knowledge Notes
-
-The workbench `Generate note` action creates an evidence-backed Markdown note rather than a bare template. Each generation pass writes:
-
-- a model report in `Analysis/3D Reports`
-- a JSON analysis sidecar with preview summary, part candidates, knowledge nodes, warnings, and pipeline metadata
-- a model knowledge index in `Analysis/3D Reports` that links the report, sidecar, evidence images, annotations, and part notes
-- up to 8 first-pass part note drafts in `Parts/3D Components`, linked from the report and sidecar without overwriting existing part notes
-- a current viewport evidence snapshot in `Media/3D Previews`
-- an editable local draft that turns the captured evidence, annotations, tags, and profile notes into a first-pass knowledge note body, plus local draft metadata for tags and next actions
-
-The default local pass does not send model data to a remote service. It uses renderer evidence, saved annotations, tags, and profile notes as the grounding layer for later AI-assisted drafting. When a GLB/GLTF file contains named internal groups or assemblies, the renderer registers those groups as higher-confidence part candidates and keeps ungrouped meshes as standalone candidates. Semantically named tiny meshes, such as screws, pins, and component details, remain separate candidates, while multiple generic tiny fragments are merged into a lower-confidence detail cluster so reports do not over-split renderer noise into fake parts. GLB/GLTF component metadata in `extras.ai3d` (`partId`, `occurrenceId`, `partNumber`, and `componentPath`) is registered as individual component parts when present. STEP conversion preserves XDE component labels as GLB component metadata, so PCB reference designators and CAD assembly children can become individual registered parts after conversion. Direct file view stores those captured candidates in the model profile immediately after a successful load, preserving source extensions such as STEP, FBX, 3MF, and DAE in the analysis record so later imported models can match reused parts across converted model types even before a full report exists. Reports, JSON sidecars, draft input, and part notes also retain the split evidence format lineage, for example `STEP -> GLB (convert)`, without storing converted absolute filesystem paths. During note generation, current part candidates are also compared with parts registered in other profiles or analyzed model sidecars, so likely reused components can be linked back to their existing part notes for review.
-
-After a report has been generated, use the direct workbench `Open index` action or the command palette `Open knowledge index` command to jump back into the model's knowledge map.
-
-Optional remote drafting can be enabled in settings by choosing `Local evidence + remote draft` or `Remote draft from evidence` and entering a draft service URL. The client sends `POST /draft-note` with sanitized drafting input only. Raw model upload is blocked; geometry summaries and preview image references are controlled by separate privacy toggles.
+For model review, open a supported model file directly from the Obsidian file
+explorer. Direct file view is the focused surface for annotations, measurements,
+snapshots, part evidence, and knowledge-note generation.
 
 ---
 
@@ -719,15 +599,6 @@ Releases are published by the GitHub Actions `Release` workflow. Push a tag that
 ### Release Token Safety
 
 Prefer GitHub Actions or GitHub CLI browser login for publishing. See `SECURITY.md` for the token safety checklist and PAT leak response.
-
-### Platform Support
-
-| Platform | Status |
-|----------|--------|
-| Windows | Full support |
-| macOS | Full support |
-| Linux | Full support |
-| Obsidian Mobile | Supported (reduced resolution) |
 
 ### Bundle Size Optimization
 

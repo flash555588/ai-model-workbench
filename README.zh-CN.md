@@ -79,39 +79,22 @@
 
 ## 快速入门
 
-1. 构建插件：
-
-```bash
-npm install
-npm run build
-```
-
-2. 打开你电脑上的本地 Obsidian vault 文件夹。
-
-3. 在该 vault 里创建这个文件夹：
-
-```text
-<your-vault>/.obsidian/plugins/ai-model-workbench/
-```
-
-4. 把 `main.js`、`manifest.json`、`styles.css` 复制到这个文件夹里。
-
-5. 在 Obsidian 中打开“设置 > 社区插件”，启用 `AI Model Workbench`。
-
-6. 把一个受支持的模型文件放进同一个 vault，例如 `model.glb`。
-
-7. 在该 vault 的任意笔记中这样嵌入：
+1. 通过 Obsidian、发布版下载或本地构建安装插件。
+2. 把一个受支持的模型文件放进 vault，例如 `model.glb`。
+3. 在任意笔记中这样嵌入：
 
 ```markdown
 ![[model.glb]]
 ![[model.glb|400x300]]
 ```
 
+你也可以直接在文件列表中点击受支持的模型文件，打开直接文件视图。
+
 ---
 
 ## 安装
 
-如果你只想最快跑起来，直接看上面的 [快速入门](#快速入门)。
+选择一种安装方式，然后使用 [快速入门](#快速入门) 中的嵌入语法。
 
 ### 前提
 
@@ -194,13 +177,7 @@ ln -s /path/to/ai-model-workbench \
 
 ### 安装后
 
-1. 先把一个受支持的模型文件放进同一个 vault，例如 `model.glb`。
-2. 然后在该 vault 的任意笔记中这样嵌入：
-
-```markdown
-![[model.glb]]
-![[model.glb|400x300]]
-```
+如果 Obsidian 已经打开，请重新加载应用，或在“设置 > 社区插件”中禁用再启用 `AI Model Workbench`。然后把受支持的模型文件放进 vault，并使用 [快速入门](#快速入门) 中的嵌入语法。
 
 ---
 
@@ -268,154 +245,37 @@ AI Model Workbench 的插件包中不包含赞助提示、付款流程或加密�
 
 ## 使用方法
 
-### 语法指南
+README 只保留常用入口，完整工作流和复制即用语法已拆到独立文档：
 
-#### 1. 内联嵌入
+- [使用指南](docs/usage-guide.zh-CN.md)：预览入口、直接文件视图、标注、测量、截图、知识笔记、部件证据、转换、性能建议和排查。
+- [常见用法语法](docs/common-usage-syntax.zh-CN.md)：Wikilink、`3d`、`3dgrid`、常用字段、支持扩展名和快捷键。
 
-在笔记中写 Wikilink 即可。阅读模式和实时预览均支持。
+快速示例：
 
 ```markdown
 ![[model.glb]]
 ![[model.glb|400x300]]
 ```
 
-#### 2. `3d` 代码块
-
-**简单写法** — 只写文件路径：
-
-````markdown
-```3d model.glb
-```
-````
-ai-model-workbench/
-**完整配置** — 相机、灯光、场景、多模型：
-
 ````markdown
 ```3d
-{
-  "models": [
-    { "path": "model.glb" },
-    { "path": "part.stl", "color": "#ff0000", "wireframe": true }
-  ],
-  "camera": { "fov": 30, "position": [5, 5, 5] },
-  "lights": [
-    { "type": "hemisphere", "color": "#fff", "intensity": 1 },
-    { "type": "directional", "position": [10, 20, 10] }
-  ],
-  "scene": { "autoRotate": true, "grid": true },
-  "width": "100%",
-  "height": 500
-}
+model.glb
 ```
 ````
-
-| 配置项 | 常用字段 |
-|--------|----------|
-| `models[]` | `path`（必填）、`color`、`wireframe` |
-| `camera` | `fov`、`position`、`lookAt`、`mode`（`"perspective"` / `"orthographic"`） |
-| `lights[]` | `type`（`"hemisphere"` `"directional"` `"point"` `"spot"` `"ambient"` `"attachToCam"`）、`color`、`intensity`、`position` |
-| `scene` | `background`、`autoRotate`、`autoRotateSpeed`、`grid`、`axis`、`groundShadow`、`transparent` |
-| `stl` | `color`、`wireframe`（STL 文件默认值） |
-| 顶层 | `width`、`height` |
-
-#### 3. `3dgrid` 代码块
-
-在一个视口中用预设布局渲染多个模型。
 
 ````markdown
 ```3dgrid
 {
   "models": [
     { "path": "v1.step" },
-    { "path": "v2.step" },
-    { "path": "v3.step" }
+    { "path": "v2.step" }
   ],
   "preset": "compare"
 }
 ```
 ````
 
-| 预设 | 布局 |
-|------|------|
-| `compare` | 并排 A/B 对比 |
-| `showcase` | 单模型多角度 |
-| `explode` | 环形排列 |
-| `timeline` | 水平条带 |
-| `gallery` | 全部同场景（默认） |
-| `compose` | 自定义分区 |
-
-`3dgrid` 支持与 `3d` 相同的 `camera`、`lights`、`scene`，另有：`preset`、`params`、`columns`、`rowHeight`、`gapX`、`gapY`、`sections`、`direction`。
-
-#### 4. 直接打开
-
-在文件资源管理器中点击 `.glb`/`.gltf`/`.stl`/`.obj`/`.ply` 文件即可。
-
-#### 支持的格式
-
-| 类型 | 格式 |
-|------|------|
-| 直接渲染 | `.glb` `.gltf` `.stl` `.obj` `.ply` |
-| 需转换 | `.step` `.stp` `.iges` `.igs` `.brep` `.sldprt` `.3mf` `.dae` `.fbx` |
-
-### 预览工具栏
-
-模型加载完成后，预览区域的工具栏提供以下检查和导出操作：
-
-| 按钮 | 用途 |
-|------|------|
-| 复制模型信息 | 将当前模型的网格、三角面、顶点和边界尺寸复制为 Markdown |
-| 复制选中部件信息 | 先点击模型中的一个部件，再复制该部件的名称、面数、顶点、材质和包围盒信息 |
-| 聚焦选中部件 | 开启后点击部件会弱化其他网格，方便检查类似 `cubie` 这类独立部件 |
-| 标签图标 | 进入标注模式，在模型表面添加可持久化的标签 |
-| 快照按钮 | 将当前视口复制、保存或下载为 PNG |
-
-### 键盘快捷键（预览中）
-
-| 按键 | 功能 |
-|------|------|
-| `R` | 重置视图 |
-| `W` | 切换线框模式 |
-| `G` | 切换方向指示器 |
-| `B` | 切换包围盒 |
-| `空格` | 播放/暂停动画 |
-| `Esc` | 退出标注模式 |
-
-### 3D 标注
-
-在模型表面添加带标签的书签。标注按模型文件持久化保存。
-
-**直接查看 & 工作台**（编辑模式）：
-
-1. 点击工具栏的 **标签图标**（或工作台面板中的"标注"按钮）
-2. 蓝色半透明遮罩表示标注模式已激活
-3. 点击模型表面放置标注点
-4. 在弹出编辑器中输入标签并选择颜色
-5. 点击已有标注可编辑标签/颜色或删除
-6. 点击工作台面板中的标签文字，相机自动平滑旋转到该位置
-7. 按 `Esc` 退出标注模式
-
-**深度遮挡**：被模型遮挡的标注显示为半透明模糊状态。相机移动时遮挡会分批刷新，避免已有书签在旋转模型时明显延迟；空闲后叠层会按完整刷新节奏补齐。
-
-**代码块 & 实时预览**：已保存的标注以只读方式显示，具有相同的遮挡效果。
-
----
-
-### 知识笔记
-
-工作台里的“生成笔记”会生成基于证据的 Markdown，而不是单纯模板。每次生成会写入：
-
-- `Analysis/3D Reports` 下的模型报告
-- 一个 JSON analysis sidecar，包含预览摘要、部件候选、知识节点、资源警告和 pipeline 元数据
-- `Analysis/3D Reports` 下的模型知识索引，把报告、sidecar、证据截图、标注和部件笔记集中到一个入口
-- `Parts/3D Components` 下最多 8 个第一版部件笔记草稿，并从报告和 sidecar 中建立链接；已有部件笔记不会被覆盖
-- `Media/3D Previews` 下的当前视口证据截图
-- 一个可直接编辑的本地草稿，把捕获到的证据、标注、标签和 profile notes 组织成第一版知识笔记正文，并附带本地草稿元数据、建议标签和下一步动作
-
-默认本地分析不会把模型数据发送到远程服务。它会先用渲染器证据、已保存标注、标签和 profile notes 建立后续 AI 草稿所需的 grounding 层。对于带有命名内部 group/assembly 的 GLB/GLTF，渲染器会自动把这些分组注册为更高置信度的部件候选，同时保留未归组 mesh 作为独立候选。直接文件视图在模型加载成功后会立刻把捕获到的候选零件写入模型 profile，所以后续导入的模型即使还没生成完整报告，也能识别疑似复用零件。生成笔记时，当前部件候选还会和其他 profile 或已分析模型 sidecar 中注册过的部件做本地相似度匹配，把疑似复用组件链接回已有部件笔记，方便人工复核。
-
-报告生成后，可以在 direct workbench 使用“打开索引”，或在命令面板执行“打开知识索引”，直接回到该模型的知识地图入口。
-
-如需接入可选远程草稿，可在设置里选择“本地证据 + 远程草稿”或“基于证据的远程草稿”，并填写草稿服务 URL。客户端会向 `POST /draft-note` 发送经过裁剪的 drafting input。原始模型上传会被阻止；几何摘要和预览图引用都由单独的隐私开关控制。
+如果要做模型审阅，请直接从 Obsidian 文件列表打开受支持的模型文件。直接文件视图是标注、测量、截图、部件证据和知识笔记生成的主要入口。
 
 ---
 
@@ -728,15 +588,6 @@ ai-model-workbench/
 ### 发布 Token 安全
 
 发布优先使用 GitHub Actions 或 GitHub CLI 浏览器登录。Token 安全清单和 PAT 泄露处理流程见 `SECURITY.md`。
-
-### 平台支持
-
-| 平台 | 状态 |
-|------|------|
-| Windows | 完全支持 |
-| macOS | 完全支持 |
-| Linux | 完全支持 |
-| Obsidian Mobile | 支持（降低分辨率） |
 
 ### 包体积优化
 

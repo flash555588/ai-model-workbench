@@ -6,6 +6,7 @@
 - Rendering: keep Three.js orthographic camera, shadow, and grid helper scales tied to real tiny-model bounds instead of a one-unit floor.
 - Knowledge: merge generic tiny mesh fragments into a lower-confidence detail cluster so imported models keep meaningful small parts without over-splitting renderer noise.
 - Knowledge: preserve part-splitting format lineage across direct and converted formats, including source format, rendered format, and direct/convert strategy in reports, sidecars, draft input, and registered part profiles.
+- Docs: trim redundant English and Chinese README quick-start, install, and platform-support copy, and split detailed usage/workflow syntax into dedicated docs.
 
 ## 0.6.1 - 2026-06-25
 
