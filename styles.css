@@ -970,6 +970,10 @@ body {
   border-radius: var(--radius-m);
 }
 
+.ai3d-embed-preview-lazy {
+  min-height: var(--ai3d-embed-height, 300px);
+}
+
 .ai3d-embed-canvas {
   display: block;
   width: 100%;

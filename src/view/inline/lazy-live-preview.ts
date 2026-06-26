@@ -1,6 +1,6 @@
 /**
  * Lightweight CM6 extension for Live Preview embeds.
- * The full model widget is imported only when an embed is mounted into the DOM.
+ * The full model widget is imported only when an embed approaches the viewport.
  */
 
 import type { App } from "obsidian";
@@ -25,6 +25,7 @@ function loadLivePreviewModule(): Promise<LivePreviewModule> {
 class LazyModelEmbedWidget extends WidgetType {
   private mountedWidget: LivePreviewWidget | null = null;
   private mountedDom: HTMLElement | null = null;
+  private viewportObs: IntersectionObserver | null = null;
   private destroyed = false;
 
   constructor(
@@ -75,13 +76,15 @@ class LazyModelEmbedWidget extends WidgetType {
     const placeholder = activeDocument.createElement("div");
     placeholder.className = "ai3d-embed-preview ai3d-cm-widget ai3d-embed-preview-lazy";
     placeholder.setAttribute("contenteditable", "false");
+    placeholder.style.setProperty("--ai3d-embed-height", `${this.height}px`);
 
-    void this.mount(placeholder);
+    this.watchViewport(placeholder);
     return placeholder;
   }
 
   override destroy(): void {
     this.destroyed = true;
+    this.stopViewportWatch();
     this.mountedWidget?.destroy();
     this.mountedWidget = null;
     this.mountedDom?.remove();
@@ -90,6 +93,26 @@ class LazyModelEmbedWidget extends WidgetType {
 
   override ignoreEvent(): boolean {
     return true;
+  }
+
+  private watchViewport(placeholder: HTMLElement): void {
+    if (typeof IntersectionObserver === "undefined") {
+      void this.mount(placeholder);
+      return;
+    }
+
+    this.viewportObs = new IntersectionObserver((entries) => {
+      if (this.destroyed || this.mountedWidget) return;
+      if (!entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) return;
+      this.stopViewportWatch();
+      void this.mount(placeholder);
+    }, { rootMargin: "240px" });
+    this.viewportObs.observe(placeholder);
+  }
+
+  private stopViewportWatch(): void {
+    this.viewportObs?.disconnect();
+    this.viewportObs = null;
   }
 
   private async mount(placeholder: HTMLElement): Promise<void> {
