@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPreviewDisassemblyController,
   type PreviewDisassemblyAdapter,
@@ -73,6 +73,10 @@ function createTestAdapter(parts: TestPart[]) {
 }
 
 describe("preview disassembly controller", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("captures original transforms lazily when a part is actually dragged", () => {
     const parts = [
       { id: 1, position: 10 },
@@ -118,5 +122,52 @@ describe("preview disassembly controller", () => {
     expect(captureCalls).toEqual([]);
     expect(restoreCalls).toEqual([]);
     expect(parts[0].position).toBe(10);
+  });
+
+  it("coalesces drag updates to animation frames and flushes the last move on release", () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      const frame = nextFrame++;
+      callbacks.set(frame, callback);
+      return frame;
+    });
+    const cancelAnimationFrame = vi.fn((frame: number) => {
+      callbacks.delete(frame);
+    });
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+
+    const parts = [{ id: 1, position: 0 }];
+    const updateCalls: number[] = [];
+    const { adapter, getSubscriptions } = createTestAdapter(parts);
+    const originalUpdateDrag = adapter.updateDrag;
+    adapter.updateDrag = (drag, event) => {
+      updateCalls.push(event.clientX);
+      originalUpdateDrag(drag, event);
+    };
+    const controller = createPreviewDisassemblyController(adapter);
+
+    controller.setEnabled(true);
+    const subscriptions = getSubscriptions();
+    subscriptions?.onPointerDown(parts[0], pointerEvent({ clientX: 0, clientY: 0 }));
+    subscriptions?.onPointerMove(pointerEvent({ clientX: 5, clientY: 0 }));
+    subscriptions?.onPointerMove(pointerEvent({ clientX: 8, clientY: 0 }));
+    subscriptions?.onPointerMove(pointerEvent({ clientX: 13, clientY: 0 }));
+
+    expect(updateCalls).toEqual([5]);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+    callbacks.get(1)?.(100);
+
+    expect(updateCalls).toEqual([5, 13]);
+    expect(parts[0].position).toBe(13);
+
+    subscriptions?.onPointerMove(pointerEvent({ clientX: 21, clientY: 0 }));
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    subscriptions?.onPointerUp(pointerEvent({ clientX: 21, clientY: 0 }));
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(2);
+    expect(updateCalls).toEqual([5, 13, 21]);
+    expect(parts[0].position).toBe(21);
   });
 });

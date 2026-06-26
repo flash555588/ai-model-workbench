@@ -40,6 +40,8 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
   private selected: TPart | null = null;
   private activePointerId: number | null = null;
   private frameCount = 0;
+  private pendingDragEvent: PointerEvent | null = null;
+  private dragUpdateFrame: number | null = null;
 
   constructor(adapter: PreviewDisassemblyAdapter<TPart, TTransform, TDragState>) {
     this.adapter = adapter;
@@ -125,14 +127,19 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
       if (this.adapter.isDisposed(pending.part)) return;
       this.captureOriginalTransform(pending.part);
       this.drag = this.adapter.beginDrag(pending.part, pending.event);
+      if (this.drag) {
+        this.adapter.updateDrag(this.drag, event);
+      }
+      return;
     }
     if (!this.drag) return;
-    this.adapter.updateDrag(this.drag, event);
+    this.scheduleDragUpdate(event);
   }
 
   private handlePointerUp(event: PointerEvent): void {
     if (this.activePointerId !== null && event.pointerId !== this.activePointerId) return;
     this.pendingDrag = null;
+    this.flushDragUpdate();
     this.finishDrag();
     this.activePointerId = null;
   }
@@ -147,9 +154,30 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
 
   private finishDrag(): void {
     this.pendingDrag = null;
+    this.flushDragUpdate();
     this.adapter.endDrag(this.drag);
     this.drag = null;
     this.adapter.requestRender?.();
+  }
+
+  private scheduleDragUpdate(event: PointerEvent): void {
+    this.pendingDragEvent = event;
+    if (this.dragUpdateFrame !== null) return;
+    this.dragUpdateFrame = requestDragAnimationFrame(() => {
+      this.dragUpdateFrame = null;
+      this.flushDragUpdate();
+    });
+  }
+
+  private flushDragUpdate(): void {
+    if (this.dragUpdateFrame !== null) {
+      cancelDragAnimationFrame(this.dragUpdateFrame);
+      this.dragUpdateFrame = null;
+    }
+    const event = this.pendingDragEvent;
+    this.pendingDragEvent = null;
+    if (!this.drag || !event) return;
+    this.adapter.updateDrag(this.drag, event);
   }
 
   private setSelected(part: TPart | null): void {
@@ -165,6 +193,21 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
     }
     this.originals.set(id, { part, transform: this.adapter.captureTransform(part) });
   }
+}
+
+function requestDragAnimationFrame(callback: FrameRequestCallback): number {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    return globalThis.requestAnimationFrame(callback);
+  }
+  return globalThis.setTimeout(() => callback(performance.now()), 16) as unknown as number;
+}
+
+function cancelDragAnimationFrame(handle: number): void {
+  if (typeof globalThis.cancelAnimationFrame === "function") {
+    globalThis.cancelAnimationFrame(handle);
+    return;
+  }
+  globalThis.clearTimeout(handle);
 }
 
 export function createPreviewDisassemblyController<TPart, TTransform, TDragState>(

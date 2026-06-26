@@ -35,6 +35,7 @@
 - Performance: cache Three.js root bounds and pre-index grouped part descendants so large converted models do less repeated scene traversal after loading.
 - Performance: reuse Three.js child-mesh descendant indexes for picking, evidence grouping, and disassembly setup so large assemblies avoid repeated subtree scans during selection.
 - Performance: reuse shared Three.js focus-dim materials across meshes with the same source material, reducing material churn when focusing parts in large assemblies.
+- Performance: coalesce disassembly drag updates to animation frames and flush the final pointer position on release, reducing high-frequency transform work while moving parts in large assemblies.
 - Performance: defer Three.js geometry quality snapshots and direct-view registered-part match previews so large models become interactive before diagnostic and cross-model matching work runs.
 - Performance: capture disassembly original transforms only for dragged parts and cache repeated Live Preview embed path resolution, reducing large-assembly interaction and workspace editor setup work.
 - Performance: update Three.js focus selection incrementally so switching selected parts in large assemblies no longer restores and re-dims every mesh.
