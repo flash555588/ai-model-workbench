@@ -29,7 +29,7 @@ const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
 
 // ── Widget ────────────────────────────────────────────────────────
 
-class ModelEmbedWidget extends WidgetType {
+export class ModelEmbedWidget extends WidgetType {
   private preview: ModelPreview | null = null;
   private annotationMgr: AnnotationManager | null = null;
   private readyObs: ResizeObserver | null = null;

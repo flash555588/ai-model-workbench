@@ -104,10 +104,10 @@ export default class AI3DModelWorkbench extends Plugin {
       this.ps.store.getState().modelAssetProfiles[modelPath]?.annotations ?? [];
     const [
       { registerLazyCodeBlockProcessor, registerLazyGridCodeBlockProcessor },
-      { registerLivePreviewExtension },
+      { registerLazyLivePreviewExtension },
     ] = await Promise.all([
       import("./view/inline/lazy-code-block"),
-      import("./view/inline/live-preview"),
+      import("./view/inline/lazy-live-preview"),
     ]);
 
     // Register ```3d and ```3dgrid code block processors
@@ -117,7 +117,7 @@ export default class AI3DModelWorkbench extends Plugin {
     this.registerMarkdownCodeBlockProcessor(gridCb.id, gridCb.handler);
 
     // Register Live Preview extension for ![[model.glb]] embeds
-    const exts = registerLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
+    const exts = registerLazyLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
     for (const e of exts) {
       this.registerEditorExtension(e);
     }

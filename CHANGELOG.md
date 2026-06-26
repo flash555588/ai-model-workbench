@@ -13,6 +13,7 @@
 - Performance: register reading-mode `3d`/`3dgrid` code blocks through lightweight lazy handlers so heavy inline preview modules load only when a rendered block needs them.
 - Performance: serialize Live Preview and reading-mode model loads through an inline preview queue and defer `3dgrid` model preparation until the grid enters the viewport, reducing startup and multi-model I/O spikes.
 - Performance: defer Live Preview runtime imports for preview backends, annotation managers, conversion preparation, and load feedback until a visible embed actually starts loading.
+- Performance: register Live Preview embeds through a lightweight lazy widget so workspace startup no longer imports the full embed runtime before a model embed mounts.
 - Performance: lazy-load the full settings tab UI and model import modal so normal workspace startup only registers lightweight entry points.
 - Performance: combine model profile normalization and compact-state change detection into one pass, reducing startup work for large `data.json` registered-part lists.
 - Performance: reuse already-normalized registered part arrays while loading model profiles, avoiding repeated object allocation for compact `data.json` state.
