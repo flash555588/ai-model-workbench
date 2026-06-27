@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Performance: scale Three.js texture anisotropy by render quality so heavy textured models avoid max GPU sampling cost on low and medium budgets.
+- Performance: resolve parent-directory GLTF/OBJ resource paths consistently across Windows, macOS, and Linux so external buffers/textures do not trigger wasted lookup work or under-budgeting.
 - Performance: include external `.gltf` buffers and textures in pre-parse render budgeting so large resource-backed scenes start with safer quality settings.
 - Performance: defer reading-mode `3d` and `3dgrid` code block runtime imports until the rendered block approaches the viewport, reducing workspace restore work for long notes with offscreen model blocks.
 - Performance: deduplicate and limit concurrent Three.js `.gltf` external buffer/texture reads, reducing I/O and memory spikes for large resource-heavy models.

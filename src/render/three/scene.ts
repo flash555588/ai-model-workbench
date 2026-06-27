@@ -101,6 +101,7 @@ import { ThreeFocusDimMaterialCache } from "./focus-materials";
 import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 import {
+  getThreeTextureAnisotropyBudget,
   prepareThreeMaterialForColorAccuracy,
   type ThreeTextureAudit,
 } from "./material-quality";
@@ -1583,7 +1584,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private prepareModelForQuality(renderables: ThreeRenderableObject[]): void {
-    const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const anisotropy = getThreeTextureAnisotropyBudget(
+      this.renderer.capabilities.getMaxAnisotropy(),
+      this.quality,
+    );
     const preparedMaterials = new Set<string>();
     for (const object of renderables) {
       for (const material of materialList(object.material)) {

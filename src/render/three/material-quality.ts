@@ -21,8 +21,21 @@ export interface ThreeTextureAudit {
   srgbColorTextureCount: number;
 }
 
+export type ThreeRenderQuality = "low" | "medium" | "high";
+
 export function isThreeColorTextureSlot(name: string): boolean {
   return COLOR_TEXTURE_SLOTS.has(name);
+}
+
+export function getThreeTextureAnisotropyBudget(maxAnisotropy: number, quality: ThreeRenderQuality): number {
+  const safeMax = Number.isFinite(maxAnisotropy) && maxAnisotropy > 0 ? Math.floor(maxAnisotropy) : 1;
+  if (quality === "low") {
+    return 1;
+  }
+  if (quality === "medium") {
+    return Math.min(safeMax, 4);
+  }
+  return safeMax;
 }
 
 export function prepareThreeMaterialForColorAccuracy(material: Material, anisotropy: number): ThreeTextureAudit {

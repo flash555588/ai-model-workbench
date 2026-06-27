@@ -126,8 +126,11 @@ function shouldSkipExternalResourceUri(uri: string | undefined): boolean {
   return REMOTE_URI_RE.test(uri) && !looksLikeAbsoluteFilesystemPath(uri);
 }
 
-function normalizedResourceKey(uri: string): string {
-  return normalizePortableRelativePath(stripUriSuffix(uri));
+function normalizedResourceKey(modelPath: string, uri: string): string {
+  if (looksLikeAbsoluteFilesystemPath(modelPath)) {
+    return normalizePortableRelativePath(stripUriSuffix(uri));
+  }
+  return joinPortablePath(getPortableDirname(modelPath), uri);
 }
 
 export async function getModelPathByteSize(app: App, path: string): Promise<number | null> {
@@ -220,7 +223,7 @@ async function estimateGltfAggregateByteSize(app: App, path: string, baseSize: n
     if (!uri || shouldSkipExternalResourceUri(uri)) {
       return;
     }
-    const key = normalizedResourceKey(uri);
+    const key = normalizedResourceKey(path, uri);
     if (!key || seen.has(key)) {
       return;
     }

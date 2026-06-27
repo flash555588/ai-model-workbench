@@ -33,11 +33,10 @@ export function decodePortableUri(uri: string): string {
 
 export function joinPortablePath(basePath: string, relativePath: string): string {
   const decoded = decodePortableUri(relativePath.split(/[?#]/, 1)[0] ?? relativePath);
-  const normalizedRelative = normalizePortableRelativePath(decoded);
   if (!basePath) {
-    return normalizedRelative;
+    return normalizePortableRelativePath(decoded);
   }
-  return normalizePortableRelativePath(`${basePath}/${normalizedRelative}`);
+  return normalizePortableRelativePath(`${basePath}/${decoded}`);
 }
 
 export function getPortableDirname(path: string): string {

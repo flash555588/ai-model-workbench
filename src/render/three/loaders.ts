@@ -52,7 +52,7 @@ function stripUriSuffix(uri: string): string {
 }
 
 function normalizeResourceLookupKey(uri: string): string {
-  return stripUriSuffix(uri).replace(/\\/g, "/").replace(/^\.\//, "");
+  return joinPortablePath("", uri);
 }
 
 function addResourceLookupKey(

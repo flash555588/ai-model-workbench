@@ -160,6 +160,24 @@ describe("Three loaders", () => {
     }
   });
 
+  it("resolves parent-directory GLTF external buffers from the model folder", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, [
+      { uri: "../shared/Geometry%20Data.BIN?cache=1", byteLength: base.bin.byteLength },
+    ]);
+    const readFile = vi.fn(async (path: string) => {
+      if (path === "fixtures/shared/Geometry Data.BIN") {
+        return fixture.bin;
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    const result = await loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/nested/model.gltf");
+
+    expect(readFile).toHaveBeenCalledWith("fixtures/shared/Geometry Data.BIN");
+    expect(result.scene.getObjectByName("external-buffer-triangle")).toBeTruthy();
+  });
+
   it("limits parallel GLTF external resource reads", async () => {
     const base = createExternalBufferGltf();
     const fixture = withExternalBuffers(base, [

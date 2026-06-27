@@ -2,6 +2,7 @@ import { BufferAttribute, BufferGeometry, MeshStandardMaterial, Texture } from "
 import { describe, expect, it } from "vitest";
 import {
   getAdaptivePointSize,
+  getThreeTextureAnisotropyBudget,
   prepareThreeMaterialForColorAccuracy,
 } from "./material-quality";
 
@@ -26,6 +27,14 @@ describe("Three material quality helpers", () => {
     expect(roughnessMap.colorSpace).not.toBe("srgb");
     expect(colorMap.anisotropy).toBe(8);
     expect(normalMap.anisotropy).toBe(8);
+  });
+
+  it("scales texture anisotropy by render quality", () => {
+    expect(getThreeTextureAnisotropyBudget(16, "low")).toBe(1);
+    expect(getThreeTextureAnisotropyBudget(16, "medium")).toBe(4);
+    expect(getThreeTextureAnisotropyBudget(16, "high")).toBe(16);
+    expect(getThreeTextureAnisotropyBudget(2, "medium")).toBe(2);
+    expect(getThreeTextureAnisotropyBudget(0, "high")).toBe(1);
   });
 
   it("scales PLY point size with model span", () => {

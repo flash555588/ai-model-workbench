@@ -162,6 +162,23 @@ describe("model render budget", () => {
       .resolves.toBe(1024 + 4 * 1024 * 1024);
   });
 
+  it("counts distinct glTF resources that share a filename in different folders", async () => {
+    const gltfText = JSON.stringify({
+      images: [
+        { uri: "../textures/panel.png" },
+        { uri: "textures/panel.png" },
+      ],
+    });
+    const app = createAppWithVaultFiles({
+      "models/nested/assembly.gltf": { size: 1024, text: gltfText },
+      "models/textures/panel.png": { size: 4 * 1024 * 1024 },
+      "models/nested/textures/panel.png": { size: 6 * 1024 * 1024 },
+    });
+
+    await expect(getModelPathByteSize(app, "models/nested/assembly.gltf"))
+      .resolves.toBe(1024 + 10 * 1024 * 1024);
+  });
+
   it("falls back to declared glTF buffer byteLength when external stat is missing", async () => {
     const gltfText = JSON.stringify({
       buffers: [{ uri: "missing.bin", byteLength: 68 * 1024 * 1024 }],
