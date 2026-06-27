@@ -20,6 +20,7 @@ const IMAGE_MIME: Record<string, string> = {
 
 const IMG_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
 const MTL_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
+const GLTF_EXTERNAL_RESOURCE_CONCURRENCY = 4;
 
 interface GltfExternalResource {
   uri?: string;
@@ -28,6 +29,12 @@ interface GltfExternalResource {
 interface GltfJson {
   buffers?: GltfExternalResource[];
   images?: GltfExternalResource[];
+}
+
+interface GltfExternalResourceTask {
+  uri: string;
+  mimeType?: string;
+  aliases: string[];
 }
 
 interface GltfBlobResourceResolver {
@@ -73,6 +80,50 @@ function addGltfResourceLookupKeys(
   }
 }
 
+function collectGltfExternalResourceTasks(gltfJson: GltfJson): GltfExternalResourceTask[] {
+  const tasksByKey = new Map<string, GltfExternalResourceTask>();
+  const add = (uri: string | undefined, mimeType?: string): void => {
+    if (!uri || uri.startsWith("data:")) {
+      return;
+    }
+    const key = normalizeResourceLookupKey(uri);
+    if (!key) {
+      return;
+    }
+    const existing = tasksByKey.get(key);
+    if (existing) {
+      existing.aliases.push(uri);
+      existing.mimeType ??= mimeType;
+      return;
+    }
+    tasksByKey.set(key, { uri, mimeType, aliases: [uri] });
+  };
+
+  for (const buffer of gltfJson.buffers ?? []) {
+    add(buffer.uri, "application/octet-stream");
+  }
+  for (const image of gltfJson.images ?? []) {
+    add(image.uri);
+  }
+
+  return [...tasksByKey.values()];
+}
+
+async function runLimited<T>(
+  tasks: readonly T[],
+  concurrency: number,
+  worker: (task: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < tasks.length) {
+      const task = tasks[nextIndex++];
+      await worker(task);
+    }
+  }));
+}
+
 async function createGltfBlobResourceResolver(
   readFile: (path: string) => Promise<ArrayBuffer>,
   modelDir: string,
@@ -82,20 +133,20 @@ async function createGltfBlobResourceResolver(
   const objectUrls: string[] = [];
   const manager = new LoadingManager();
 
-  const register = async (uri: string | undefined, mimeType?: string): Promise<void> => {
-    if (!uri || uri.startsWith("data:")) {
-      return;
-    }
-    const resource = await readRelativeResource(readFile, modelDir, uri);
-    const objectUrl = URL.createObjectURL(new Blob([resource.data], { type: mimeType ?? guessMime(resource.path) }));
+  const register = async (task: GltfExternalResourceTask): Promise<void> => {
+    const resource = await readRelativeResource(readFile, modelDir, task.uri);
+    const objectUrl = URL.createObjectURL(new Blob([resource.data], { type: task.mimeType ?? guessMime(resource.path) }));
     objectUrls.push(objectUrl);
-    addGltfResourceLookupKeys(lookup, modelDir, uri, resource.path, objectUrl);
+    for (const alias of task.aliases) {
+      addGltfResourceLookupKeys(lookup, modelDir, alias, resource.path, objectUrl);
+    }
   };
 
-  await Promise.all([
-    ...(gltfJson.buffers ?? []).map((buffer) => register(buffer.uri, "application/octet-stream")),
-    ...(gltfJson.images ?? []).map((image) => register(image.uri)),
-  ]);
+  await runLimited(
+    collectGltfExternalResourceTasks(gltfJson),
+    GLTF_EXTERNAL_RESOURCE_CONCURRENCY,
+    register,
+  );
 
   manager.setURLModifier((url) => {
     const key = normalizeResourceLookupKey(url);

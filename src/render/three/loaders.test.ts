@@ -93,6 +93,16 @@ function createExternalBufferGltf(): { gltf: ArrayBuffer; bin: ArrayBuffer } {
   };
 }
 
+function withExternalBuffers(fixture: { gltf: ArrayBuffer; bin: ArrayBuffer }, buffers: Array<{ uri: string; byteLength: number }>): { gltf: ArrayBuffer; bin: ArrayBuffer } {
+  const text = new TextDecoder().decode(new Uint8Array(fixture.gltf));
+  const gltf = JSON.parse(text);
+  gltf.buffers = buffers;
+  return {
+    gltf: encodeAscii(JSON.stringify(gltf)),
+    bin: fixture.bin,
+  };
+}
+
 describe("Three loaders", () => {
   it("loads GLTF external buffers through Blob URLs without rewriting the JSON", async () => {
     const fixture = createExternalBufferGltf();
@@ -118,6 +128,62 @@ describe("Three loaders", () => {
       createSpy.mockRestore();
       revokeSpy.mockRestore();
     }
+  });
+
+  it("deduplicates repeated GLTF external resource reads", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, [
+      { uri: "Geometry%20Data.BIN", byteLength: base.bin.byteLength },
+      { uri: "./Geometry%20Data.BIN", byteLength: base.bin.byteLength },
+    ]);
+    const createObjectURL = URL.createObjectURL.bind(URL);
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+    const createSpy = vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => createObjectURL(blob));
+    const revokeSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => revokeObjectURL(url));
+    const readFile = vi.fn(async (path: string) => {
+      if (path === "fixtures/Geometry Data.BIN") {
+        return fixture.bin;
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    try {
+      const result = await loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf");
+
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(result.scene.getObjectByName("external-buffer-triangle")).toBeTruthy();
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
+  it("limits parallel GLTF external resource reads", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, [
+      { uri: "Geometry%20Data.BIN", byteLength: base.bin.byteLength },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        uri: `extra-${index}.bin`,
+        byteLength: base.bin.byteLength,
+      })),
+    ]);
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    const readFile = vi.fn(async () => {
+      activeReads += 1;
+      maxActiveReads = Math.max(maxActiveReads, activeReads);
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 2));
+      activeReads -= 1;
+      return fixture.bin;
+    });
+
+    const result = await loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf");
+
+    expect(readFile).toHaveBeenCalledTimes(9);
+    expect(maxActiveReads).toBeLessThanOrEqual(4);
+    expect(result.scene.getObjectByName("external-buffer-triangle")).toBeTruthy();
   });
 
   it("enables vertex colors for colored STL", async () => {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Performance: deduplicate and limit concurrent Three.js `.gltf` external buffer/texture reads, reducing I/O and memory spikes for large resource-heavy models.
 - Performance: reuse cached Three.js renderable indexes while disposing switched or closed models, reducing repeated scene-tree walks for large assemblies.
 - Performance: cache Live Preview embed path resolution across editor scans and clear it on vault file changes, reducing workspace-open work for notes with many model embeds.
 - Performance: lazy-load converter command discovery and conversion factory setup so direct GLB/GLTF/STL/PLY previews do not initialize converter adapters during plugin startup or direct-format preparation.
