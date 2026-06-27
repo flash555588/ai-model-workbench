@@ -88,10 +88,14 @@ async function resolveCaseInsensitiveVaultPath(app: App, rawPath: string): Promi
 }
 
 function toArrayBuffer(buf: Uint8Array): ArrayBuffer {
-  if (buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength) {
-    return buf.buffer as ArrayBuffer;
+  const buffer = buf.buffer;
+  if (buffer instanceof ArrayBuffer && buf.byteOffset === 0 && buf.byteLength === buffer.byteLength) {
+    return buffer;
   }
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+
+  const copy = new Uint8Array(buf.byteLength);
+  copy.set(buf);
+  return copy.buffer;
 }
 
 export interface ReadBinaryPathOptions {

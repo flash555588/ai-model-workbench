@@ -1,4 +1,3 @@
-/* eslint-disable obsidianmd/prefer-create-el */
 /**
  * Staged element creation helpers.
  *
@@ -7,13 +6,23 @@
  * element directly to the document root.
  */
 
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+
+function getCurrentDocument(): Document {
+  return typeof activeDocument === "undefined" ? window.document : activeDocument;
+}
+
+function createDetachedElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+  return getCurrentDocument().createElementNS(HTML_NAMESPACE, tag) as HTMLElementTagNameMap[K];
+}
+
 /**
  * Create an Obsidian-styled div without appending to the live DOM.
  *
  * @param cls Optional CSS class(es) to apply.
  */
 export function createStagedDiv(cls?: string): HTMLDivElement {
-  const el = activeDocument.createElement("div");
+  const el = createDetachedElement("div");
   if (cls) el.className = cls;
   return el;
 }
@@ -28,7 +37,7 @@ export function createStagedEl<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   cls?: string,
 ): HTMLElementTagNameMap[K] {
-  const el = activeDocument.createElement(tag);
+  const el = createDetachedElement(tag);
   if (cls) el.className = cls;
   return el;
 }

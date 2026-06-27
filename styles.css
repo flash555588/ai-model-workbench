@@ -737,8 +737,8 @@ body {
   min-height: 0;
 }
 
-.ai3d-direct-view-leaf > .workspace-leaf-content:not(.ai3d-direct-view-leaf-content) {
-  display: none !important;
+.workspace .workspace-leaf.ai3d-direct-view-leaf > .workspace-leaf-content:not(.ai3d-direct-view-leaf-content) {
+  display: none;
 }
 
 .ai3d-direct-view-leaf > .workspace-leaf-content.ai3d-direct-view-leaf-content {

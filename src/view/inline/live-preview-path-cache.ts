@@ -25,9 +25,9 @@ export function createLivePreviewPathResolverCache(
       const resolved = resolvePath(app, rawPath);
       cache.set(rawPath, resolved);
       if (cache.size > maxEntries) {
-        const oldest = cache.keys().next().value;
-        if (oldest !== undefined) {
-          cache.delete(oldest);
+        const oldest = cache.keys().next();
+        if (!oldest.done) {
+          cache.delete(oldest.value);
         }
       }
       return resolved;

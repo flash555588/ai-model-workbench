@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- None yet.
+- Review: remove the disallowed `obsidianmd/prefer-create-el` disable directive, keep staged DOM creation detached without native `createElement`, tighten typed path-cache/buffer helpers, and replace the direct-view `!important` CSS override with a higher-specificity selector.
 
 ## 0.7.0 - 2026-06-28
 
