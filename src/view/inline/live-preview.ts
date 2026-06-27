@@ -10,8 +10,9 @@ import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
 import type { ModelPreview } from "../../render/preview/types";
-import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
+import { resolveConversionOutputRoot } from "../../io/conversion/output-root";
 import { createLoadingOverlay, type LoadingOverlay } from "./loading-overlay";
 import { createStagedDiv, createStagedEl } from "../../utils/dom";
 import { isMobile } from "../../utils/device";
@@ -31,7 +32,6 @@ import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-live-preview");
-const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
 
 // ── Widget ────────────────────────────────────────────────────────
 
@@ -64,6 +64,7 @@ export class ModelEmbedWidget extends WidgetType {
     private annotationDisplayMode: PluginSettings["annotationDisplayMode"],
     private previewRendererRollout: PluginSettings["previewRendererRollout"],
     private useThreeRenderer: boolean,
+    private auxiliaryFileFolder: string,
     private renderQuality: PluginSettings["renderQuality"],
     private renderScale: PluginSettings["renderScale"],
     private convertedAssetCache: ConvertedAssetCache,
@@ -89,6 +90,7 @@ export class ModelEmbedWidget extends WidgetType {
       this.annotationDisplayMode === other.annotationDisplayMode &&
       this.previewRendererRollout === other.previewRendererRollout &&
       this.useThreeRenderer === other.useThreeRenderer &&
+      this.auxiliaryFileFolder === other.auxiliaryFileFolder &&
       this.renderQuality === other.renderQuality &&
       this.renderScale === other.renderScale &&
       this.convertedAssetCache === other.convertedAssetCache
@@ -232,7 +234,9 @@ export class ModelEmbedWidget extends WidgetType {
         ]);
         const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
         loading.setPhaseKey("loading.preparingModel");
-        const conversionOutputRoot = resolveVaultAbsolutePath(this.app, joinVaultConfigPath(this.app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
+        const conversionOutputRoot = resolveConversionOutputRoot(this.app, {
+          auxiliaryFileFolder: this.auxiliaryFileFolder,
+        });
         const prepared = await prepareModelInput({
           path: this.modelPath,
           absolutePath,
@@ -411,6 +415,7 @@ function findEmbeds(
   annotationDisplayMode: PluginSettings["annotationDisplayMode"],
   previewRendererRollout: PluginSettings["previewRendererRollout"],
   useThreeRenderer: boolean,
+  auxiliaryFileFolder: string,
   renderQuality: PluginSettings["renderQuality"],
   renderScale: PluginSettings["renderScale"],
   convertedAssetCache: ConvertedAssetCache,
@@ -491,6 +496,7 @@ function findEmbeds(
             annotationDisplayMode,
             previewRendererRollout,
             useThreeRenderer,
+            auxiliaryFileFolder,
             renderQuality,
             renderScale,
             convertedAssetCache,
@@ -543,6 +549,7 @@ export function registerLivePreviewExtension(
         s.annotationDisplayMode,
         s.previewRendererRollout,
         s.useThreeRenderer,
+        s.auxiliaryFileFolder,
         s.renderQuality,
         s.renderScale,
         convertedAssetCache,
@@ -571,6 +578,7 @@ export function registerLivePreviewExtension(
           s.annotationDisplayMode,
           s.previewRendererRollout,
           s.useThreeRenderer,
+          s.auxiliaryFileFolder,
           s.renderQuality,
           s.renderScale,
           convertedAssetCache,

@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   serviceBaseUrl: "",
   copySourceModelToVault: false,
   sourceModelFolder: "Assets/3D",
+  auxiliaryFileFolder: "",
   reportFolder: "Analysis/3D Reports",
   partFolder: "Parts/3D Components",
   previewFolder: "Media/3D Previews",

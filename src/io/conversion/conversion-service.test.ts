@@ -79,6 +79,7 @@ describe("convertForPreview", () => {
       get: vi.fn(() => undefined),
       set: vi.fn(),
       delete: vi.fn(),
+      entries: vi.fn(() => []),
     } as unknown as ConvertedAssetCache;
     mockReusableConvertedOutput(sourcePath, outputPath);
 
@@ -147,6 +148,7 @@ describe("convertForPreview", () => {
       get: vi.fn(() => record),
       set: vi.fn(),
       delete: vi.fn(),
+      entries: vi.fn(() => []),
     } as unknown as ConvertedAssetCache;
     mockReusableConvertedOutput(sourcePath, outputPath);
 
@@ -188,6 +190,7 @@ describe("convertForPreview", () => {
       get: vi.fn(() => undefined),
       set: vi.fn(),
       delete: vi.fn(),
+      entries: vi.fn(() => []),
     } as unknown as ConvertedAssetCache;
     fsMocks.stat.mockRejectedValue(new Error("missing"));
 
@@ -250,6 +253,7 @@ describe("convertForPreview", () => {
       get: vi.fn(() => undefined),
       set: vi.fn(),
       delete: vi.fn(),
+      entries: vi.fn(() => []),
     } as unknown as ConvertedAssetCache;
     fsMocks.stat.mockImplementation(async (path: string) => {
       if (path === sourcePath) {
@@ -276,6 +280,65 @@ describe("convertForPreview", () => {
       warnings: ["Using existing conversion output."],
     });
     expect(fsMocks.stat.mock.calls.filter(([path]) => path === sourcePath)).toHaveLength(1);
+    expect(getConverterCacheIdentity).not.toHaveBeenCalled();
+    expect(convert).not.toHaveBeenCalled();
+  });
+
+  it("reuses relocated conversion cache records for moved source files", async () => {
+    const sourcePath = "/vault/AI3D/models/board.step";
+    const previousSourcePath = "/vault/AI3D Local Test/models/board.step";
+    const outputPath = "/vault/.config/ai-model-workbench/converted-assets/board-abcd1234.ai3d-converted.glb";
+    const { manager, getConverterCacheIdentity, convert } = createManager();
+    const record: ConvertedAssetRecord = {
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId: "freecad",
+      converterCacheKey: "freecad:v1",
+      sourcePath: previousSourcePath,
+      sourceExt: "step",
+      targetExt: "glb",
+      outputPath,
+      outputExt: "glb",
+      warnings: ["Converted by local Python/CadQuery(OCCT) bridge."],
+      createdAt: Date.now() - 1_000,
+    };
+    const cache = {
+      get: vi.fn(() => undefined),
+      set: vi.fn(),
+      delete: vi.fn(),
+      entries: vi.fn(() => [record]),
+    } as unknown as ConvertedAssetCache;
+    fsMocks.stat.mockImplementation(async (path: string) => {
+      if (path === sourcePath) {
+        return { size: 4096, mtimeMs: 100 };
+      }
+      if (path === outputPath) {
+        return { size: 1024, mtimeMs: 200 };
+      }
+      throw new Error("missing");
+    });
+
+    const result = await convertForPreview({
+      sourcePath,
+      sourceExt: "step",
+      capability,
+      conversionManager: manager,
+      convertedAssetCache: cache,
+      outputRoot: "/vault/.config/ai-model-workbench/converted-assets",
+    });
+
+    expect(result).toEqual({
+      effectivePath: outputPath,
+      effectiveExt: "glb",
+      warnings: [
+        "Converted by local Python/CadQuery(OCCT) bridge.",
+        "Using relocated conversion output.",
+      ],
+    });
+    expect(cache.set).toHaveBeenCalledWith(expect.objectContaining({
+      sourcePath,
+      outputPath,
+      converterCacheKey: "freecad:v1",
+    }));
     expect(getConverterCacheIdentity).not.toHaveBeenCalled();
     expect(convert).not.toHaveBeenCalled();
   });

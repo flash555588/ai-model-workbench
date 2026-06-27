@@ -32,19 +32,24 @@ function canUseThreeDirectFileView(source: PreviewSource): boolean {
   return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
 }
 
+function shouldUseFastConvertedDirectView(source: PreviewSource): boolean {
+  return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
+}
+
 export function createDirectViewPreviewOptions(
   settings: PluginSettings,
   source: PreviewSource,
 ): DirectViewPreviewOptions {
   const allowWorkbenchFeaturesOnThree = canUseExperimentalThreeWorkbench(settings, source);
   const useThreeDirectFileView = canUseThreeDirectFileView(source);
+  const useFastConvertedDirectView = shouldUseFastConvertedDirectView(source);
   return {
     ext: source.ext,
     annotationMode: "edit",
     allowEditModeOnThree: true,
     allowWorkbenchFeaturesOnThree,
     requireWorkbenchFeatures: allowWorkbenchFeaturesOnThree || !useThreeDirectFileView,
-    rendererRollout: settings.previewRendererRollout,
-    useThreeRenderer: settings.useThreeRenderer,
+    rendererRollout: useFastConvertedDirectView ? "three-direct-glb" : settings.previewRendererRollout,
+    useThreeRenderer: useFastConvertedDirectView ? true : settings.useThreeRenderer,
   };
 }

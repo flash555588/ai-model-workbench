@@ -31,6 +31,11 @@ Babylon.js compatibility mode is the default single-model mesh preview path:
 - GLB/GLTF/STL/PLY/OBJ direct formats
 - readonly and edit annotation overlays on supported single-model routes
 
+Direct file view has one fast-path exception: generated converted GLB outputs
+from STEP/FBX/3MF/DAE/etc. are opened with Three.js first, then silently fall
+back to Babylon.js if Three loading fails. This keeps repeated CAD opens fast
+without broadening `3dgrid` or workbench production routing.
+
 Three.js remains available as an explicit opt-in rollout for supported
 single-model routes:
 

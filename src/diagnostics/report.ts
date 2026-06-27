@@ -195,6 +195,7 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
     "## Conversion",
     "",
     `- Enabled converters: ${settings.enabledConverterIds.length ? settings.enabledConverterIds.join(", ") : "none"}`,
+    `- Auxiliary file folder: ${settings.auxiliaryFileFolder.trim() ? formatPathValue(settings.auxiliaryFileFolder, includeVaultPaths, "empty") : "default config folder"}`,
     `- Cached conversions: ${state.convertedAssetRecords.length}`,
     `- Converter command status: ${formatConverterCommandDiagnostics(settings)}`,
     `- Conversion cache status: ${formatConversionCacheDiagnostics(state)}`,

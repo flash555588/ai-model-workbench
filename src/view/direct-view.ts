@@ -13,8 +13,9 @@ import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import type { PluginStore } from "../store/plugin-store";
 import { prepareModelInput } from "../io/model-pipeline";
 import { toPreviewSource, type PreviewSource } from "../io/preview/preview-source";
-import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
+import { readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
 import { listPreferredConversionExts } from "../io/formats/route-preferences";
+import { resolveConversionOutputRoot } from "../io/conversion/output-root";
 import { createLoadingOverlay } from "./inline/loading-overlay";
 import { describeModelLoadFailure, isMissingConverterError } from "../io/conversion/errors";
 import { formatT, t } from "../i18n";
@@ -45,8 +46,6 @@ const MAX_MATCH_PREVIEW_EVIDENCE_PARTS = 64;
 const MAX_MATCH_PREVIEW_REGISTERED_PARTS = 512;
 const REGISTERED_MATCH_PREVIEW_DELAY_MS = 250;
 const MEDIUM_REGISTERED_MATCH_PREVIEW_DELAY_MS = 1_000;
-const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
-
 import { createDefaultProfile } from "../store/plugin-store";
 
 function isMissingExternalModelResourceError(error: unknown): boolean {
@@ -401,7 +400,7 @@ export class DirectModelView extends FileView {
     try {
       const settings = this.getSettings();
       const absolutePath = resolveVaultAbsolutePath(this.app, file.path) ?? undefined;
-      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, joinVaultConfigPath(this.app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
+      const conversionOutputRoot = resolveConversionOutputRoot(this.app, settings);
       loading.setPhaseKey("loading.preparingModel");
       const prepared = await prepareModelInput({
         path: file.path,
@@ -953,14 +952,16 @@ export class DirectModelView extends FileView {
       if (isPreviewLoadInterruptedError(error)) {
         throw error;
       }
-      if (created.route.backend !== "three" || !options.requireWorkbenchFeatures || !options.allowWorkbenchFeaturesOnThree) {
+      if (created.route.backend !== "three") {
         throw error;
       }
       throwIfPreviewLoadInterrupted(loadOptions);
-      console.warn("[AI3D] Experimental Three workbench failed; falling back to Babylon:", error);
+      console.warn("[AI3D] Three direct view failed; falling back to Babylon:", error);
       const fallbackOptions = {
         ...options,
         allowWorkbenchFeaturesOnThree: false,
+        rendererRollout: "babylon-safe",
+        useThreeRenderer: false,
       } as const;
       const fallback = await createLoggedModelPreview<AnnotationPreview>(
         log,

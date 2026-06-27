@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Settings: add an Auxiliary file folder option so users can choose where generated conversion side files are stored, while the empty default keeps them under the Obsidian config folder.
+- Performance: reuse relocated converted-asset cache records for moved STEP/FBX/etc. sources and route direct-file converted GLB outputs through a silent Three.js fast path with Babylon fallback.
 - Performance: cancel stale direct-file preview load sessions during rapid model switches and dispose interrupted Three.js/Babylon.js GLB results before they can keep competing with the newest load.
 - Routing: default all single-model preview surfaces to Babylon.js compatibility mode while keeping Three.js available as an explicit opt-in rollout.
 - Stability: pause restored direct-file previews for large or conversion-backed models until the user clicks Load model, preventing workspace restore from locking the vault on startup.

@@ -23,7 +23,7 @@ The table below assumes the default rollout setting: `Compatibility mode` (`baby
 | Live Preview embed | readonly annotations present | Babylon.js | default `rendererRollout=babylon-safe` |
 | Direct file view | `GLB/GLTF/STL/PLY/OBJ` single-model edit view | Babylon.js | default `rendererRollout=babylon-safe` |
 | Direct file view | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` direct view still routes to Babylon |
-| Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Babylon.js | default `rendererRollout=babylon-safe`; Three remains opt-in |
+| Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Three.js, Babylon fallback | generated GLB outputs take the Direct View fast path even in compatibility mode; load failure falls back to Babylon |
 | Workbench | any current model | Babylon.js | `requireWorkbenchFeatures=true`; retained on Babylon after phase-3 evaluation |
 | `3dgrid` | compare / gallery / compose / preset layouts | Babylon.js | retained on Babylon after phase-4 decision |
 
@@ -35,13 +35,14 @@ The table below assumes the default rollout setting: `Compatibility mode` (`baby
 
 The runtime route decision is intentionally conservative:
 
-- Babylon.js is the default path for all preview surfaces unless the user explicitly enables a Three.js rollout.
+- Babylon.js is the default path for preview surfaces unless the user explicitly enables a Three.js rollout or Direct View is opening a generated converted GLB fast-path asset.
 - Three.js remains the opt-in fast path for common single-model formats (GLB, GLTF, STL, PLY, OBJ) across reading surfaces and direct view, including annotation overlays.
+- Three.js is automatically used for Direct View conversion-backed GLB outputs because those assets are local generated intermediates; Babylon remains the silent fallback when Three loading fails.
 - Babylon.js remains the intentional capability path for:
   - full workbench features outside the direct file edit-preview path
   - grid layouts
   - SPLAT format
-  - conversion-backed formats when the effective output is not a Three-supported single-model asset
+  - conversion-backed formats when the effective output is not a Three-supported single-model asset or when the fast path fails
 
 The shared route helper lives in `src/render/preview/routing.ts`.
 The phase-3 / phase-4 decision note lives in `docs/workbench-3dgrid-feasibility-note.md`.
@@ -53,7 +54,7 @@ The plugin exposes a `Preview compatibility mode` setting:
 - `Compatibility mode` (`babylon-safe`) - default
   - inline `3d` -> Babylon.js
   - Live Preview embed -> Babylon.js
-  - direct file view -> Babylon.js
+  - direct file view -> Babylon.js, except generated converted GLB outputs use Three.js with Babylon fallback
 - `Reading surfaces only` (`three-readonly-glb`)
   - inline `3d` -> Three.js
   - Live Preview embed -> Three.js
@@ -90,6 +91,11 @@ Manual checks remain required for:
 - `3dgrid`
 - real conversion-chain inputs and full knowledge-panel workflow
 - `GLTF` assets with external resources
+
+The Three.js smoke examples below assume the setting is switched to
+`Reading + file view` (`three-direct-glb`). The exception is Direct View
+conversion-backed GLB output, which uses the Three.js fast path in default
+compatibility mode and falls back to Babylon.js on load failure.
 
 ### 1. Simple inline `GLB` -> Three.js
 

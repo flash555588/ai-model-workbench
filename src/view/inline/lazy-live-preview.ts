@@ -54,6 +54,7 @@ class LazyModelEmbedWidget extends WidgetType {
     private annotationDisplayMode: PluginSettings["annotationDisplayMode"],
     private previewRendererRollout: PluginSettings["previewRendererRollout"],
     private useThreeRenderer: boolean,
+    private auxiliaryFileFolder: string,
     private renderQuality: PluginSettings["renderQuality"],
     private renderScale: PluginSettings["renderScale"],
     private convertedAssetCache: ConvertedAssetCache,
@@ -79,6 +80,7 @@ class LazyModelEmbedWidget extends WidgetType {
       this.annotationDisplayMode === other.annotationDisplayMode &&
       this.previewRendererRollout === other.previewRendererRollout &&
       this.useThreeRenderer === other.useThreeRenderer &&
+      this.auxiliaryFileFolder === other.auxiliaryFileFolder &&
       this.renderQuality === other.renderQuality &&
       this.renderScale === other.renderScale &&
       this.convertedAssetCache === other.convertedAssetCache
@@ -156,6 +158,7 @@ class LazyModelEmbedWidget extends WidgetType {
       this.annotationDisplayMode,
       this.previewRendererRollout,
       this.useThreeRenderer,
+      this.auxiliaryFileFolder,
       this.renderQuality,
       this.renderScale,
       this.convertedAssetCache,
@@ -194,6 +197,7 @@ function findEmbeds(
   annotationDisplayMode: PluginSettings["annotationDisplayMode"],
   previewRendererRollout: PluginSettings["previewRendererRollout"],
   useThreeRenderer: boolean,
+  auxiliaryFileFolder: string,
   renderQuality: PluginSettings["renderQuality"],
   renderScale: PluginSettings["renderScale"],
   convertedAssetCache: ConvertedAssetCache,
@@ -273,6 +277,7 @@ function findEmbeds(
             annotationDisplayMode,
             previewRendererRollout,
             useThreeRenderer,
+            auxiliaryFileFolder,
             renderQuality,
             renderScale,
             convertedAssetCache,
@@ -337,6 +342,7 @@ export function registerLazyLivePreviewExtension(
         s.annotationDisplayMode,
         s.previewRendererRollout,
         s.useThreeRenderer,
+        s.auxiliaryFileFolder,
         s.renderQuality,
         s.renderScale,
         convertedAssetCache,
@@ -366,6 +372,7 @@ export function registerLazyLivePreviewExtension(
           s.annotationDisplayMode,
           s.previewRendererRollout,
           s.useThreeRenderer,
+          s.auxiliaryFileFolder,
           s.renderQuality,
           s.renderScale,
           convertedAssetCache,

@@ -130,6 +130,18 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.auxiliaryFileFolder"))
+      .setDesc(t("settings.auxiliaryFileFolder.desc"))
+      .addText((text) =>
+        text
+          .setPlaceholder(t("settings.auxiliaryFileFolder.placeholder"))
+          .setValue(this.plugin.getSettings().auxiliaryFileFolder)
+          .onChange((val) => {
+            this.plugin.updateSettings({ auxiliaryFileFolder: val });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.reportFolder"))
       .setDesc(t("settings.reportFolder.desc"))
       .addText((text) =>

@@ -6,7 +6,7 @@ import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsAnnotationPreview } from "../../render/preview/types";
-import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
 import type { ThreeDBlockConfig, ModelConfig, GridBlockConfig, ComposeSection } from "../../domain/models";
@@ -14,6 +14,7 @@ import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { prepareModelInput } from "../../io/model-pipeline";
 import { toPreviewSource } from "../../io/preview/preview-source";
 import { listPreferredConversionExts } from "../../io/formats/route-preferences";
+import { resolveConversionOutputRoot } from "../../io/conversion/output-root";
 import { createLoadingOverlay } from "./loading-overlay";
 import { describeModelLoadFailure, isMissingConverterError } from "../../io/conversion/errors";
 import { formatT, t } from "../../i18n";
@@ -30,7 +31,6 @@ import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-code-block");
-const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
 
 async function createInlineConversionManager(settings: PluginSettings) {
   const { createConversionManager } = await import("../../io/conversion/factory");
@@ -69,7 +69,7 @@ async function prepareInlineModel(
   }
 
   const absolutePath = resolveVaultAbsolutePath(app, sourcePath) ?? undefined;
-  const conversionOutputRoot = resolveVaultAbsolutePath(app, joinVaultConfigPath(app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
+  const conversionOutputRoot = resolveConversionOutputRoot(app, settings);
   const prepared = await prepareModelInput({
     path: sourcePath,
     absolutePath,
@@ -313,7 +313,7 @@ export function registerCodeBlockProcessor(
           await scheduleInlinePreviewLoad(async () => {
             if (destroyed || !host.isConnected) { loading.hide(); return; }
             const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
-            const conversionOutputRoot = resolveVaultAbsolutePath(app, joinVaultConfigPath(app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
+            const conversionOutputRoot = resolveConversionOutputRoot(app, settings);
             loading.setPhaseKey("loading.preparingModel");
             const prepared = await prepareModelInput({
               path: modelPath,

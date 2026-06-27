@@ -19,6 +19,9 @@ export const zhCN: Record<TranslationKey, string> = {
   // 文件夹
   "settings.sourceModelFolder": "源模型文件夹",
   "settings.sourceModelFolder.desc": "存放源 3D 模型的库文件夹。",
+  "settings.auxiliaryFileFolder": "辅助文件夹",
+  "settings.auxiliaryFileFolder.desc": "用于存放转换后的 GLB 等插件生成的副文件。留空时继续放在 Obsidian 配置目录下。",
+  "settings.auxiliaryFileFolder.placeholder": "留空使用隐藏配置目录",
   "settings.reportFolder": "报告文件夹",
   "settings.reportFolder.desc": "保存生成的知识笔记的库文件夹。",
   "settings.partFolder": "部件笔记文件夹",

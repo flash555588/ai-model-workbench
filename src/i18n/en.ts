@@ -17,6 +17,9 @@ export const en = {
   // Folders
   "settings.sourceModelFolder": "Source model folder",
   "settings.sourceModelFolder.desc": "Vault folder where source model files are stored.",
+  "settings.auxiliaryFileFolder": "Auxiliary file folder",
+  "settings.auxiliaryFileFolder.desc": "Vault folder for generated side files such as converted GLB assets. Leave empty to keep them under the Obsidian config folder.",
+  "settings.auxiliaryFileFolder.placeholder": "Leave empty for the hidden config folder",
   "settings.reportFolder": "Report folder",
   "settings.reportFolder.desc": "Vault folder where generated knowledge notes are saved.",
   "settings.partFolder": "Part notes folder",

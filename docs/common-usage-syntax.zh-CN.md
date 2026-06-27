@@ -10,7 +10,7 @@
 ![[Assets/3D/board.step]]
 ```
 
-移动端优先使用直读格式。转换格式需要桌面端安装对应工具，除非已经存在 `.ai3d-converted.glb`。新的转换产物会写入当前 vault 的 Obsidian 配置目录，通常是 `.obsidian/ai-model-workbench/converted-assets`，避免模型目录被产物刷屏。
+移动端优先使用直读格式。转换格式需要桌面端安装对应工具，除非已经存在 `.ai3d-converted.glb`。新的转换产物默认写入当前 vault 的 Obsidian 配置目录，通常是 `.obsidian/ai-model-workbench/converted-assets`，避免模型目录被产物刷屏；也可以在插件设置的“辅助文件夹”里改到指定库文件夹。
 
 ## 最小 `3d` 代码块
 

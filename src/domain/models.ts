@@ -12,6 +12,7 @@ export interface PluginSettings {
   serviceBaseUrl: string;
   copySourceModelToVault: boolean;
   sourceModelFolder: string;
+  auxiliaryFileFolder: string;
   reportFolder: string;
   partFolder: string;
   previewFolder: string;

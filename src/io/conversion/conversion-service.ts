@@ -1,6 +1,7 @@
 import type { FormatCapability } from "../formats/types";
 import type { ConversionManager } from "./manager";
 import { CONVERTED_ASSET_CACHE_VERSION, type ConvertedAssetCache } from "../cache/converted-asset-cache";
+import type { ConvertedAssetRecord } from "../../domain/models";
 import { createLogger } from "../../utils/log";
 import {
   F_OK,
@@ -42,6 +43,10 @@ function sanitizeOutputStem(sourcePath: string): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
   return stem || "model";
+}
+
+function getSourceStem(sourcePath: string): string {
+  return basename(sourcePath, extname(sourcePath)).toLowerCase();
 }
 
 function getConvertedOutputPath(sourcePath: string, targetExt: string, outputRoot?: string): string {
@@ -114,6 +119,39 @@ async function isConvertedOutputReusable(
 
 async function resolveConversionManager(provider: ConversionManagerProvider | undefined): Promise<ConversionManager | undefined> {
   return typeof provider === "function" ? await provider() : provider;
+}
+
+async function findReusableRelocatedConversion(
+  input: ConversionRouteInput,
+  targetExt: "glb",
+  converterId: string,
+  sourceStatsPromise: Promise<{ mtimeMs: number }>,
+): Promise<ConvertedAssetRecord | undefined> {
+  const records = input.convertedAssetCache?.entries() ?? [];
+  if (records.length === 0) return undefined;
+
+  const sourceStem = getSourceStem(input.sourcePath);
+  const outputStem = sanitizeOutputStem(input.sourcePath);
+  const candidates = records
+    .filter((record) =>
+      record.sourcePath !== input.sourcePath &&
+      record.sourceExt === input.sourceExt &&
+      record.targetExt === targetExt &&
+      record.outputExt === targetExt &&
+      record.converterId === converterId &&
+      getSourceStem(record.sourcePath) === sourceStem &&
+      basename(record.outputPath).startsWith(`${outputStem}-`) &&
+      basename(record.outputPath).endsWith(`.ai3d-converted.${targetExt}`),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  for (const candidate of candidates) {
+    if (await isConvertedOutputReusable(input.sourcePath, candidate.outputPath, sourceStatsPromise)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
 
 export async function convertForPreview(input: ConversionRouteInput): Promise<ConversionRouteResult> {
@@ -234,6 +272,34 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
       effectivePath: legacyOutputPath,
       effectiveExt: targetExt,
       warnings: ["Using existing conversion output."],
+    };
+  }
+
+  const relocated = await findReusableRelocatedConversion(input, targetExt, converterId, getSourceStats());
+  if (relocated) {
+    log.info("relocated conversion cache hit", {
+      sourcePath: input.sourcePath,
+      sourceExt: input.sourceExt,
+      targetExt,
+      previousSourcePath: relocated.sourcePath,
+      outputPath: relocated.outputPath,
+    });
+    input.convertedAssetCache?.set({
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId: relocated.converterId,
+      converterCacheKey: relocated.converterCacheKey,
+      sourcePath: input.sourcePath,
+      sourceExt: input.sourceExt,
+      targetExt,
+      outputPath: relocated.outputPath,
+      outputExt: targetExt,
+      warnings: [...relocated.warnings, "Using relocated conversion output."],
+      createdAt: Date.now(),
+    });
+    return {
+      effectivePath: relocated.outputPath,
+      effectiveExt: targetExt,
+      warnings: [...relocated.warnings, "Using relocated conversion output."],
     };
   }
 

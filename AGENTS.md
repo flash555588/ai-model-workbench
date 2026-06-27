@@ -19,6 +19,8 @@ Read it before changing code. For deeper product/spec context, use
   linked knowledge notes.
 - Single-model GLB/GLTF/STL/PLY/OBJ preview paths use Babylon.js compatibility
   mode by default.
+- Direct file view treats generated converted GLB outputs as a fast-path exception:
+  Three.js loads them first and Babylon.js silently handles fallback on failure.
 - Three.js remains available as an explicit opt-in single-model rollout for
   reading surfaces, direct file view, and Experimental Three workbench probes.
 - Babylon.js remains the production capability backend for default single-model

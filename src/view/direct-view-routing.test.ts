@@ -34,7 +34,7 @@ describe("createDirectViewPreviewOptions", () => {
     expect(route.reason).toBe("useThreeRenderer=false");
   });
 
-  it("keeps converted GLB outputs on Babylon when compatibility mode is enabled", () => {
+  it("routes converted GLB outputs through the invisible Three fast path", () => {
     const options = createDirectViewPreviewOptions(
       makeSettings({ previewRendererRollout: "babylon-safe", useThreeRenderer: false }),
       makeSource({
@@ -47,10 +47,10 @@ describe("createDirectViewPreviewOptions", () => {
     const route = resolvePreviewRoute(options);
 
     expect(options.requireWorkbenchFeatures).toBe(false);
-    expect(options.rendererRollout).toBe("babylon-safe");
-    expect(options.useThreeRenderer).toBe(false);
-    expect(route.backend).toBe("babylon");
-    expect(route.reason).toBe("useThreeRenderer=false");
+    expect(options.rendererRollout).toBe("three-direct-glb");
+    expect(options.useThreeRenderer).toBe(true);
+    expect(route.backend).toBe("three");
+    expect(route.reason).toBe("glb direct view edit preview");
   });
 
   it("uses the guarded Three workbench route only when the experimental file-view setting is enabled", () => {
