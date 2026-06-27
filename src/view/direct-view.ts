@@ -22,6 +22,11 @@ import { createDirectViewLayout } from "./direct-view-layout";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
+import {
+  getPreviewPathRenderBudget,
+  getSummaryRenderBudget,
+  type RenderQualityBudget,
+} from "./model-render-budget";
 
 const log = createLogger("direct-view");
 const DEFERRED_EVIDENCE_DELAY_MS = 450;
@@ -185,34 +190,6 @@ function createMatchPreviewEvidence(evidence: ModelEvidence): ModelEvidence {
         return right.triangleCount - left.triangleCount;
       })
       .slice(0, MAX_MATCH_PREVIEW_EVIDENCE_PARTS),
-  };
-}
-
-function getLargeModelQualityBudget(
-  settings: PluginSettings,
-  summary: ModelPreviewSummary,
-): Pick<PluginSettings, "renderQuality" | "renderScale"> {
-  if (summary.performanceTier === "extreme") {
-    return {
-      renderQuality: "low",
-      renderScale: Math.min(settings.renderScale, 0.65),
-    };
-  }
-  if (summary.performanceTier === "heavy") {
-    return {
-      renderQuality: settings.renderQuality === "low" ? "low" : "medium",
-      renderScale: Math.min(settings.renderScale, 0.85),
-    };
-  }
-  if (summary.performanceTier === "medium") {
-    return {
-      renderQuality: settings.renderQuality,
-      renderScale: Math.min(settings.renderScale, 1),
-    };
-  }
-  return {
-    renderQuality: settings.renderQuality,
-    renderScale: settings.renderScale,
   };
 }
 
@@ -424,11 +401,19 @@ export class DirectModelView extends FileView {
       this.workbenchSourceWarnings = [...source.warnings];
 
       const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
+      const initialRenderBudget = await getPreviewPathRenderBudget(this.app, source.path, settings);
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
       const dataPromise = readBinaryPath(this.app, source.path);
       void dataPromise.catch(() => undefined);
-      const created = await this.createPreviewWithFallback(canvas, dataPromise, source, basePreviewOptions, file.path, settings);
+      const created = await this.createPreviewWithFallback(
+        canvas,
+        dataPromise,
+        source,
+        basePreviewOptions,
+        file.path,
+        initialRenderBudget,
+      );
       if (gen !== this.loadGeneration) {
         created.preview.destroy();
         new Notice(t("directWorkbench.modelLoadInterrupted"));
@@ -894,7 +879,7 @@ export class DirectModelView extends FileView {
     source: ReturnType<typeof toPreviewSource>,
     options: DirectViewPreviewOptions,
     modelPath: string,
-    settings: PluginSettings,
+    initialRenderBudget: RenderQualityBudget,
   ): Promise<{
       preview: AnnotationPreview;
       summary: Awaited<ReturnType<AnnotationPreview["loadModel"]>>;
@@ -906,7 +891,7 @@ export class DirectModelView extends FileView {
       canvas,
       options,
     );
-    this.applyConfiguredRenderQuality(created.preview, settings);
+    this.applyRenderBudget(created.preview, initialRenderBudget);
 
     let data: ArrayBuffer;
     try {
@@ -935,7 +920,7 @@ export class DirectModelView extends FileView {
         canvas,
         fallbackOptions,
       );
-      this.applyConfiguredRenderQuality(fallback.preview, settings);
+      this.applyRenderBudget(fallback.preview, initialRenderBudget);
       try {
         const summary = await fallback.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
         return { preview: fallback.preview, summary, route: fallback.route };
@@ -949,8 +934,8 @@ export class DirectModelView extends FileView {
     }
   }
 
-  private applyConfiguredRenderQuality(preview: AnnotationPreview, settings: PluginSettings): void {
-    preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
+  private applyRenderBudget(preview: AnnotationPreview, budget: RenderQualityBudget): void {
+    preview.setRenderQuality?.(budget.renderQuality, budget.renderScale);
   }
 
   private applyLargeModelRenderBudget(
@@ -958,7 +943,7 @@ export class DirectModelView extends FileView {
     settings: PluginSettings,
     summary: ModelPreviewSummary,
   ): void {
-    const budget = getLargeModelQualityBudget(settings, summary);
+    const budget = getSummaryRenderBudget(settings, summary);
     preview.setRenderQuality?.(budget.renderQuality, budget.renderScale);
   }
 }

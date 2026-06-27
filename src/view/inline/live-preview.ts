@@ -27,6 +27,7 @@ import {
   transactionMayAffectModelEmbeds,
 } from "./live-preview-embed-scan";
 import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
+import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-live-preview");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
@@ -256,6 +257,10 @@ export class ModelEmbedWidget extends WidgetType {
           rendererRollout: this.previewRendererRollout,
           useThreeRenderer: this.useThreeRenderer,
         } as const;
+        const initialRenderBudget = await getPreviewPathRenderBudget(this.app, prepared.effectivePath, {
+          renderQuality: this.renderQuality,
+          renderScale: this.renderScale,
+        });
         const { preview } = await createLoggedModelPreview(
           log,
           { surface: "live-preview", modelPath: this.modelPath },
@@ -267,7 +272,7 @@ export class ModelEmbedWidget extends WidgetType {
           return;
         }
         this.preview = preview;
-        this.preview.setRenderQuality?.(this.renderQuality, this.renderScale);
+        this.preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
         loading.setPhaseKey("loading.loadingModel");
         const data = await readBinaryPath(this.app, prepared.effectivePath);
         if (this.destroyed || generation !== this.initGeneration) {

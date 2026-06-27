@@ -27,6 +27,7 @@ import {
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
 import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
+import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-code-block");
 const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
@@ -323,6 +324,7 @@ export function registerCodeBlockProcessor(
               conversionOutputRoot,
             });
             const source = toPreviewSource(prepared);
+            const initialRenderBudget = await getPreviewPathRenderBudget(app, source.path, settings);
             const pins = getAnnotations?.(modelPath) ?? [];
             const previewOptions = {
               ext: source.ext,
@@ -337,7 +339,7 @@ export function registerCodeBlockProcessor(
               previewOptions,
             );
             preview = nextPreview;
-            preview.setRenderQuality?.(settings.renderQuality, settings.renderScale);
+            preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
             toolbar.syncCapabilities();
             loading.setPhaseKey("loading.loadingModel");
             const data = await readBinaryPath(app, source.path);
