@@ -5,9 +5,7 @@ import type { PluginStore } from "../store/plugin-store";
 import { t } from "../i18n";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
 import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
-
-const DIRECT_AUTOLOAD_EXTENSIONS = new Set(["glb", "gltf", "stl", "ply", "obj"]);
-const LARGE_DIRECT_AUTOLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
+import { shouldDeferDirectAutoload } from "./direct-autoload-policy";
 
 type DirectViewDelegate = FileView & {
   contentEl: HTMLElement;
@@ -131,20 +129,6 @@ export class LazyDirectModelView extends FileView {
       });
     });
   }
-}
-
-export function shouldDeferDirectAutoload(
-  file: Pick<TFile, "extension" | "stat">,
-  restoredFromWorkspace: boolean,
-): boolean {
-  if (!restoredFromWorkspace) {
-    return false;
-  }
-  const ext = file.extension.toLowerCase();
-  if (!DIRECT_AUTOLOAD_EXTENSIONS.has(ext)) {
-    return true;
-  }
-  return file.stat.size >= LARGE_DIRECT_AUTOLOAD_LIMIT_BYTES;
 }
 
 function formatBytes(bytes: number): string {

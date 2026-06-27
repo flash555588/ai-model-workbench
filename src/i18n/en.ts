@@ -142,7 +142,7 @@ export const en = {
   "modelLoad.errorMessage": "Failed to load: {reason}",
   "modelLoad.errorHint": "Check the file format or open the developer console for details.",
   "directView.deferredLoadTitle": "Model preview paused",
-  "directView.deferredLoadMessage": "This large or conversion-backed model was restored with the workspace, so loading is paused to keep the vault responsive.",
+  "directView.deferredLoadMessage": "This large or conversion-backed model is paused before loading to keep the vault responsive.",
   "directView.deferredLoadButton": "Load model",
 
   // Heading pin badge

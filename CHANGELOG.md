@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- None yet.
+- Stability: gate conversion-backed direct file views behind an explicit Load model action even when Obsidian restores them through `onLoadFile`, preventing STEP/STP workspace restore loops from freezing the vault.
 
 ## 0.7.1 - 2026-06-28
 
