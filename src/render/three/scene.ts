@@ -109,6 +109,7 @@ import {
   createThreeGeometryQualityStats,
   createThreeGroupedPartCandidates,
   createThreeChildRenderableMeshMap,
+  createThreeRenderableBoundsMap,
   createThreeModelPreviewSummary,
   createThreeObjectPartPreviewSummary,
   createThreeRenderableInfoBreakdown,
@@ -120,6 +121,7 @@ import {
   isThreeRenderableObject,
   isThreeMesh as isMesh,
   type ThreeChildRenderableMeshMap,
+  type ThreeRenderableBoundsMap,
   type ThreeRenderableObject,
 } from "./mesh-preview";
 
@@ -272,6 +274,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private cachedRenderableRoot: Object3D | null = null;
   private cachedChildMeshMap: ThreeChildRenderableMeshMap | null = null;
   private cachedChildMeshMapRoot: Object3D | null = null;
+  private cachedRenderableBoundsMap: ThreeRenderableBoundsMap | null = null;
+  private cachedRenderableBoundsMapRoot: Object3D | null = null;
   private cachedRootPreviewBounds: PreviewBounds | null = null;
   private cachedRootPreviewBoundsObject: Object3D | null = null;
   private cachedGeometryQualityStats: PreviewQualitySnapshot["geometry"] | null = null;
@@ -578,7 +582,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const renderableObjects = this.getRenderableObjects(this.rootObject);
     const renderableMeshes = this.getRenderableMeshes(this.rootObject);
     const childMeshMap = this.getChildRenderableMeshMap(this.rootObject);
-    const groupedPartCandidates = createThreeGroupedPartCandidates(this.rootObject, renderableMeshes, childMeshMap);
+    const boundsMap = this.getRenderableBoundsMap(this.rootObject);
+    const groupedPartCandidates = createThreeGroupedPartCandidates(this.rootObject, renderableMeshes, childMeshMap, boundsMap);
     const groupedRenderableCandidates = {
       parts: groupedPartCandidates.parts,
       groupedMeshes: new Set<ThreeRenderableObject>(groupedPartCandidates.groupedMeshes),
@@ -592,7 +597,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       ),
       renderableMeshes: renderableObjects,
       groupedPartCandidates: groupedRenderableCandidates,
-      createMeshPart: (object) => createThreeRenderablePartPreviewSummary(object, this.rootObject),
+      createMeshPart: (object) => createThreeRenderablePartPreviewSummary(object, this.rootObject, boundsMap),
       getMeshMaterialNames: getThreeRenderableMaterialNames,
       resourceWarnings: this.resourceWarnings,
     });
@@ -2036,6 +2041,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return this.cachedChildMeshMap;
   }
 
+  private getRenderableBoundsMap(root: Object3D): ThreeRenderableBoundsMap {
+    if (this.cachedRenderableBoundsMap && this.cachedRenderableBoundsMapRoot === root) {
+      return this.cachedRenderableBoundsMap;
+    }
+    this.cachedRenderableBoundsMap = createThreeRenderableBoundsMap(this.getRenderableObjects(root));
+    this.cachedRenderableBoundsMapRoot = root;
+    return this.cachedRenderableBoundsMap;
+  }
+
   private getGeometryQualityStats(): PreviewQualitySnapshot["geometry"] {
     if (!this.rootObject) {
       return {
@@ -2052,6 +2066,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.rootObject,
         this.getRenderableObjects(this.rootObject),
         this.getRootPreviewBounds() ?? undefined,
+        this.getRenderableBoundsMap(this.rootObject),
       );
     }
     return this.cachedGeometryQualityStats;
@@ -2064,12 +2079,16 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedRenderableRoot = null;
     this.cachedChildMeshMap = null;
     this.cachedChildMeshMapRoot = null;
+    this.cachedRenderableBoundsMap = null;
+    this.cachedRenderableBoundsMapRoot = null;
     this.invalidateRootBoundsCache();
   }
 
   private invalidateRootBoundsCache(): void {
     this.cachedRootPreviewBounds = null;
     this.cachedRootPreviewBoundsObject = null;
+    this.cachedRenderableBoundsMap = null;
+    this.cachedRenderableBoundsMapRoot = null;
     this.cachedGeometryQualityStats = null;
   }
 

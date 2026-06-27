@@ -34,6 +34,7 @@
 - Performance: normalize schema-marked but oversized registered-part lists on load so anomalous large `data.json` profiles are compacted back under the startup budget.
 - Performance: cache Three.js root bounds and pre-index grouped part descendants so large converted models do less repeated scene traversal after loading.
 - Performance: reuse Three.js child-mesh descendant indexes for picking, evidence grouping, and disassembly setup so large assemblies avoid repeated subtree scans during selection.
+- Performance: reuse cached Three.js renderable bounds across quality snapshots and part evidence, reducing repeated bounding-box walks on large assemblies.
 - Performance: reuse shared Three.js focus-dim materials across meshes with the same source material, reducing material churn when focusing parts in large assemblies.
 - Performance: coalesce disassembly drag updates to animation frames and flush the final pointer position on release, reducing high-frequency transform work while moving parts in large assemblies.
 - Performance: apply inline and Live Preview render quality before model loading so visible large embeds do not start their first frames at default high resolution.
