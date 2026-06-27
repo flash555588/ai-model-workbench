@@ -497,14 +497,31 @@ body {
 }
 
 /* --- Direct File View --- */
-.ai3d-direct-view {
-  height: 100%;
+.workspace-leaf-content[data-type="ai3d-direct-view"] {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.workspace-leaf-content[data-type="ai3d-direct-view"] > .view-content.ai3d-direct-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ai3d-direct-view {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .ai3d-workspace {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  width: 100%;
   height: 100%;
   min-height: 0;
   position: relative;
@@ -512,6 +529,7 @@ body {
 .ai3d-workspace-track-top {
   display: grid;
   grid-template-columns: 1fr 4px 200px;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
