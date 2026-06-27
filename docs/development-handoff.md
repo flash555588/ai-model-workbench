@@ -8,7 +8,7 @@ README, implementation, verification scripts, and release/security docs.
 
 AI Model Workbench is an Obsidian plugin that renders 3D model files inside a vault,
 adds 3D annotations/bookmarks, and generates linked knowledge notes from model evidence.
-The current package version is `0.6.1`.
+The current package version is `0.7.0`.
 
 Important runtime files:
 
@@ -31,10 +31,13 @@ Babylon.js compatibility mode is the default single-model mesh preview path:
 - GLB/GLTF/STL/PLY/OBJ direct formats
 - readonly and edit annotation overlays on supported single-model routes
 
-Direct file view has one fast-path exception: generated converted GLB outputs
-from STEP/FBX/3MF/DAE/etc. are opened with Three.js first, then silently fall
-back to Babylon.js if Three loading fails. This keeps repeated CAD opens fast
-without broadening `3dgrid` or workbench production routing.
+Direct file view has one configurable fast-path exception: when the Converted
+GLB Three fast path setting is enabled, generated converted GLB outputs from
+STEP/FBX/3MF/DAE/etc. are opened with Three.js first, then silently fall back
+to Babylon.js if Three loading fails. Disabling the setting makes converted
+direct file views follow the normal renderer compatibility controls. This keeps
+repeated CAD opens fast without broadening `3dgrid` or workbench production
+routing.
 
 Three.js remains available as an explicit opt-in rollout for supported
 single-model routes:
@@ -236,7 +239,7 @@ npm run verify:preview -- --model "models/resource-fixtures/grouped-parts/groupe
 
 ## Current Follow-Up Direction
 
-Short-term product direction after `0.6.1`:
+Short-term product direction after `0.7.0`:
 
 - Keep tightening auto part registration and cross-model part reuse feedback.
 - Keep improving direct workbench UX without prematurely moving all workbench routes.

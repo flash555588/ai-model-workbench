@@ -8,11 +8,17 @@
 
 ![preview](docs/assets/preview.gif)
 
+> **醒目提示：STEP/STP 是“转换支持”，不是直接渲染。**
+> STEP 文件需要在 Obsidian 桌面端配置本地 Python + CadQuery/OCCT 转换器后才能转成 GLB 预览。
+> 移动端不能执行 STEP 转换；大型或复杂 PCB/装配体 STEP 首次打开可能很慢，也可能因为本地 CAD 环境缺失而失败。
+> 如果需要稳定打开，建议先转换为 GLB，或先在插件设置里的转换器诊断中确认环境可用。
+
 ---
 
 ## 目录
 
 - [功能特性](#功能特性)
+- [警告与风险](#警告与风险)
 - [当前版本](#当前版本)
 - [平台支持矩阵](#平台支持矩阵)
 - [快速入门](#快速入门)
@@ -46,20 +52,43 @@
 
 ---
 
+## 警告与风险
+
+- **STEP/STP 和 CAD 文件不是直接渲染格式。** 它们必须先在桌面端转换。
+  Python 依赖缺失、CAD 几何不兼容、装配体过大或转换超时，都可能导致无法预览，
+  即使插件本身已经正确安装。
+- **本地转换器是外部桌面工具。** 它们会在你的电脑上解析模型文件。
+  请只处理可信模型，明确配置转换器命令路径，并在打开未知 CAD、FBX、3MF、DAE
+  或 SLDPRT 资产前先查看转换器诊断。
+- **大型模型可能拖慢 Obsidian。** 大型 GLB 和转换后的 STEP/PCB 装配体可能占用大量
+  CPU、GPU、内存和磁盘 I/O，导致界面卡顿、WebGL 上下文丢失，或首次打开耗时数分钟。
+  建议降低渲染质量/缩放，一次只打开一个重模型，并优先使用预先转换好的 GLB。
+- **生成的副文件可能很大，也可能包含敏感信息。** 转换后的 GLB、截图、报告、索引和
+  JSON sidecar 可能包含文件名、装配体名称、部件 ID、尺寸、几何摘要和预览图。
+  请有意识地设置辅助文件夹；如果需要，记得从同步工具或 Git 中排除这些文件。
+- **不同渲染路线可能显示不一致。** Babylon.js 兼容模式最稳。Three.js 快速路径可能更快，
+  但某些资产的颜色、拾取、测量或工具栏行为可能不同。排查显示问题时，可以关闭
+  “转换 GLB 的 Three 快速路径”，或切回兼容模式。
+- **移动端只支持直读预览。** 移动端可以查看 GLB/GLTF/STL/OBJ/PLY 和已经转换好的 GLB，
+  但不能运行本地转换工具，也不能执行转换器诊断。
+- **远程草稿是可选能力，也应按敏感数据处理。** 插件默认本地优先；如果配置了远程草稿，
+  根据隐私设置，请求中仍可能包含经过裁剪的模型名、部件名、数量、尺寸、标签和笔记引用。
+
+---
+
 ## 当前版本
 
-`0.6.1` 是 `0.6.0` Three.js 能力树版本的源码审核修复版。它保留 `0.6.0` 的渲染、测量、诊断和知识工作流升级，并按 Obsidian 审核建议调整远程草稿超时 helper。
+`0.7.0` 是面向大型本地模型工作流的兼容性、性能和支持边界版本。它保留 Babylon.js 兼容模式作为单模型预览默认路线，新增“转换 GLB 的 Three 快速路径”开关，允许用户自定义转换副文件位置，并把 STEP/CAD 转换、大型装配体、生成副文件、移动端限制和远程草稿隐私风险写入入口文档。
 
 发布亮点：
 
-- Three.js 能力画像和质量快照，用于路由诊断
-- GLB/GLTF 保留 PBR 语义，STL/PLY 保留顶点色，OBJ/MTL 只对颜色贴图应用 sRGB
-- 相机精度、拾取阈值和测量标记会根据极小/超大模型尺度自适应
-- 动态帧预算、交互时像素比降档、静止后渲染循环休眠
-- 带单位校准和 Markdown 导出的测量记录
-- 更可靠的知识生成状态、诊断、转换缓存和发布验证门禁
+- Babylon.js 兼容模式仍是单模型预览默认路线，Three.js 继续作为显式启用的可选路线。
+- STEP/FBX/3MF/DAE 等转换后的 GLB 可以通过独立开关使用 Three.js 快速路径，并在失败时静默回退到 Babylon.js。
+- 转换副文件可以放到用户指定的辅助文件夹，不再只能放在 Obsidian 配置目录下。
+- 直接文件视图、`3dgrid`、测量、相机缩放和大型模型加载路径获得更多稳定性与性能优化。
+- README 已集中补充 STEP/CAD 转换限制、外部转换器风险、大模型资源压力、生成副文件、渲染路线差异、移动端限制和远程草稿隐私提醒。
 
-滚动更新日志见 [docs/release-notes/0.6.0-plus.md](docs/release-notes/0.6.0-plus.md)，版本发布日志见 [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md)、[docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
+完整 `0.7.0` 发布日志见 [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md) 和 [CHANGELOG.md](CHANGELOG.md)，历史版本见 [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md) 与 [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md)。
 
 ---
 
@@ -219,6 +248,9 @@ AI Model Workbench 的插件包中不包含赞助提示、付款流程或加密�
 - 未来规划：第一步恢复纯本地 `.splat` 直读；第二步在 Windows 和大场景下完成静止/空闲渲染稳定性优化后再重新开放；第三步再单独评估 `.spz`，只有在解码依赖可以完整本地打包并通过审查时才会重新启用。
 
 ### 转换（需要外部工具）
+
+> **STEP/STP 注意：** STEP 只支持通过本地转换生成 GLB 后预览。
+> 它不是浏览器/WebGL 原生直读格式，是否可用取决于插件设置中显示的桌面端转换器环境。
 
 | 格式 | 扩展名 | 转换器 | 输出 |
 |------|--------|--------|------|
@@ -583,7 +615,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.6.1`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.6.1`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.7.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.7.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

@@ -23,6 +23,8 @@ export interface PluginSettings {
   previewRendererRollout: PreviewRendererRollout;
   /** Simple toggle: true = Three.js, false = Babylon.js (compatibility). */
   useThreeRenderer: boolean;
+  /** Allow converted GLB outputs to use the Direct View Three.js fast path. */
+  useThreeForConvertedDirectView: boolean;
   /**
    * Experimental workbench route: allow Three.js for direct GLB/GLTF workbench
    * surfaces with automatic Babylon fallback.

@@ -73,6 +73,7 @@ await writeFile(entryPath, `
   assert(state.settings.analysisMode === DEFAULT_SETTINGS.analysisMode, "Analysis mode was not defaulted");
   assert(state.settings.sendRawModelToRemote === false, "Raw model remote upload should default off");
   assert(state.settings.previewRendererRollout === DEFAULT_SETTINGS.previewRendererRollout, "New rollout setting was not defaulted");
+  assert(state.settings.useThreeForConvertedDirectView === DEFAULT_SETTINGS.useThreeForConvertedDirectView, "Converted GLB fast path setting was not defaulted");
   assert(state.settings.snapshotFolder === DEFAULT_SETTINGS.snapshotFolder, "New folder setting was not defaulted");
   assert(state.settings.partFolder === DEFAULT_SETTINGS.partFolder, "Part folder setting was not defaulted");
   assert(state.settings.enabledConverterIds.includes("obj2gltf"), "Legacy converter setting was not preserved");
@@ -83,6 +84,7 @@ await writeFile(entryPath, `
 
   await ps.save();
   assert(saved.settings.experimentalThreeWorkbench === DEFAULT_SETTINGS.experimentalThreeWorkbench, "Saved data did not include defaulted setting");
+  assert(saved.settings.useThreeForConvertedDirectView === DEFAULT_SETTINGS.useThreeForConvertedDirectView, "Saved data did not include converted GLB fast path setting");
   assert(saved.lastKnowledgeGeneration?.partNoteCount === 2, "Saved data did not preserve last generation summary");
 `, "utf8");
 

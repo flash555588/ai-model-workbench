@@ -48,6 +48,8 @@ export const zhCN: Record<TranslationKey, string> = {
   "settings.previewRendererRollout.direct": "阅读 + 文件视图",
   "settings.useThreeRenderer": "使用 Three.js 渲染器",
   "settings.useThreeRenderer.desc": "在 Three.js（更快、更轻量）和 Babylon.js（完全兼容）之间切换单模型预览渲染器。Three.js 支持 GLB/GLTF/STL/PLY/OBJ。工作台和 3dgrid 始终使用 Babylon.js。",
+  "settings.useThreeForConvertedDirectView": "转换 GLB 的 Three 快速路径",
+  "settings.useThreeForConvertedDirectView.desc": "打开 STEP、FBX、3MF、DAE 等需要转换的文件时，先用 Three.js 加载生成的 GLB，失败后自动回退到 Babylon.js。关闭后转换文件会遵循普通兼容模式。",
   "settings.experimentalThreeWorkbench": "实验性 Three 工作台",
   "settings.experimentalThreeWorkbench.desc": "仅对直读 GLB/GLTF 文件尝试使用 Three.js 工作台路径。加载失败时，文件视图会自动回退到 Babylon.js。",
   "settings.autoRotateDefault": "默认自动旋转",

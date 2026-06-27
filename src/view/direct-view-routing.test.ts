@@ -53,6 +53,29 @@ describe("createDirectViewPreviewOptions", () => {
     expect(route.reason).toBe("glb direct view edit preview");
   });
 
+  it("keeps converted GLB outputs on the normal route when the fast path is disabled", () => {
+    const options = createDirectViewPreviewOptions(
+      makeSettings({
+        previewRendererRollout: "babylon-safe",
+        useThreeRenderer: false,
+        useThreeForConvertedDirectView: false,
+      }),
+      makeSource({
+        path: "C:\\vault\\models\\test-step.ai3d-converted.glb",
+        strategy: "convert",
+        sourcePath: "models/test-step.step",
+        sourceExt: "step",
+      }),
+    );
+    const route = resolvePreviewRoute(options);
+
+    expect(options.requireWorkbenchFeatures).toBe(false);
+    expect(options.rendererRollout).toBe("babylon-safe");
+    expect(options.useThreeRenderer).toBe(false);
+    expect(route.backend).toBe("babylon");
+    expect(route.reason).toBe("useThreeRenderer=false");
+  });
+
   it("uses the guarded Three workbench route only when the experimental file-view setting is enabled", () => {
     const options = createDirectViewPreviewOptions(
       makeSettings({

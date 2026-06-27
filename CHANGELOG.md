@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- None yet.
+
+## 0.7.0 - 2026-06-28
+
+- Docs: expand README warnings for STEP/CAD conversion, external tools, large-model performance, generated side files, renderer-route differences, mobile limits, and optional remote drafting.
+- Warning: STEP/STP, IGES, BREP, FBX, 3MF, DAE, and similar CAD/uncommon mesh assets remain conversion-backed workflows, not guaranteed direct-render formats; desktop converter setup and source-file complexity can still block preview.
+- Warning: large converted GLB and PCB/assembly files can consume significant CPU, GPU, RAM, and disk I/O, so restored heavy direct views now require an explicit Load model action to reduce startup lockups.
+- Warning: generated conversion side files, reports, JSON sidecars, snapshots, part IDs, dimensions, and model names can be large or sensitive; use the Auxiliary file folder intentionally and exclude those outputs from sync or Git when needed.
+- Warning: external converters and optional remote drafting remain trust boundaries; converter commands should be verified locally, and remote draft requests should be enabled only when sanitized model evidence is acceptable.
+- Settings: add a Converted GLB Three fast path toggle so conversion-backed direct file views can follow normal Babylon compatibility routing when users disable the fast path.
 - Settings: add an Auxiliary file folder option so users can choose where generated conversion side files are stored, while the empty default keeps them under the Obsidian config folder.
 - Performance: reuse relocated converted-asset cache records for moved STEP/FBX/etc. sources and route direct-file converted GLB outputs through a silent Three.js fast path with Babylon fallback.
 - Performance: cancel stale direct-file preview load sessions during rapid model switches and dispose interrupted Three.js/Babylon.js GLB results before they can keep competing with the newest load.
@@ -84,7 +94,7 @@
 - Rendering: promote Three.js and Babylon picks on converted component child meshes to their parent registered component/group so selection, focus, and disassembly dragging do not collapse to a single surface fragment.
 - Rendering: preserve Three.js component world transforms when entering disassembly drag so nested converted GLB parts no longer jump to the scene origin or change orientation.
 - Performance: open large converted models faster by reusing fresh `.ai3d-converted.glb` outputs before probing converter identity and by deferring direct-view evidence registration until after the preview is visible.
-- Performance: keep conversion-backed GLB direct file views on Babylon.js by default and avoid extra full-buffer copies during GLB parsing.
+- Performance: keep conversion-backed GLB direct file views configurable with a Converted GLB Three fast-path toggle while preserving Babylon.js fallback and avoiding extra full-buffer copies during GLB parsing.
 - Performance: cap automatic registered-part writes for highly fragmented models so large imports do not keep growing the plugin state file with low-value surface shards.
 - Performance: normalize oversized saved registered-part lists on load, strip transient registered-match caches, and quickly persist the compact state so future workspace startup parses less data.
 - Performance: avoid rewriting unchanged plugin state during startup or unload, reducing extra `data.json` disk I/O in large vaults.

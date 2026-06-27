@@ -32,8 +32,10 @@ function canUseThreeDirectFileView(source: PreviewSource): boolean {
   return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
 }
 
-function shouldUseFastConvertedDirectView(source: PreviewSource): boolean {
-  return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
+function shouldUseFastConvertedDirectView(settings: PluginSettings, source: PreviewSource): boolean {
+  return settings.useThreeForConvertedDirectView
+    && source.strategy === "convert"
+    && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
 }
 
 export function createDirectViewPreviewOptions(
@@ -42,7 +44,7 @@ export function createDirectViewPreviewOptions(
 ): DirectViewPreviewOptions {
   const allowWorkbenchFeaturesOnThree = canUseExperimentalThreeWorkbench(settings, source);
   const useThreeDirectFileView = canUseThreeDirectFileView(source);
-  const useFastConvertedDirectView = shouldUseFastConvertedDirectView(source);
+  const useFastConvertedDirectView = shouldUseFastConvertedDirectView(settings, source);
   return {
     ext: source.ext,
     annotationMode: "edit",

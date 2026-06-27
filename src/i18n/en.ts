@@ -46,6 +46,8 @@ export const en = {
   "settings.previewRendererRollout.direct": "Reading + file view",
   "settings.useThreeRenderer": "Use Three.js renderer",
   "settings.useThreeRenderer.desc": "Toggle between Three.js (faster, lighter) and Babylon.js (full compatibility) for single-model previews. Three.js supports GLB/GLTF/STL/PLY/OBJ. 3dgrid always uses Babylon.js.",
+  "settings.useThreeForConvertedDirectView": "Converted GLB Three fast path",
+  "settings.useThreeForConvertedDirectView.desc": "When opening STEP, FBX, 3MF, DAE, and other converted files, load the generated GLB with Three.js first and silently fall back to Babylon.js if it fails. Turn this off to make converted files follow the normal compatibility mode.",
   "settings.experimentalThreeWorkbench": "Experimental Three workbench",
   "settings.experimentalThreeWorkbench.desc": "Try the Three.js workbench path for direct GLB/GLTF files only. If loading fails, the file view falls back to Babylon.js automatically.",
   "settings.autoRotateDefault": "Auto-rotate by default",

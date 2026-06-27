@@ -247,6 +247,17 @@ export class AI3DSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("settings.useThreeForConvertedDirectView"))
+      .setDesc(t("settings.useThreeForConvertedDirectView.desc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.getSettings().useThreeForConvertedDirectView)
+          .onChange((val) => {
+            this.plugin.updateSettings({ useThreeForConvertedDirectView: val });
+          }),
+      );
+
+    new Setting(containerEl)
       .setName(t("settings.experimentalThreeWorkbench"))
       .setDesc(t("settings.experimentalThreeWorkbench.desc"))
       .addToggle((toggle) =>

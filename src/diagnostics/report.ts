@@ -159,6 +159,7 @@ export function buildDiagnosticsReport(options: BuildDiagnosticsReportOptions): 
     "## Renderer",
     "",
     `- Use Three renderer: ${formatValue(settings.useThreeRenderer)}`,
+    `- Converted GLB Three fast path: ${formatValue(settings.useThreeForConvertedDirectView)}`,
     `- Preview rollout: ${settings.previewRendererRollout}`,
     `- Experimental Three workbench: ${formatValue(settings.experimentalThreeWorkbench)}`,
     `- Current route: ${route ? `${route.backend} (${route.reason})` : "no current model"}`,

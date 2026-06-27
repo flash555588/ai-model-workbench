@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   annotationDisplayMode: "surface",
   previewRendererRollout: "babylon-safe",
   useThreeRenderer: false,
+  useThreeForConvertedDirectView: true,
   experimentalThreeWorkbench: false,
   sendRawModelToRemote: false,
   sendPreviewImagesToRemote: false,

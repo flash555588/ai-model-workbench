@@ -8,11 +8,19 @@
 
 ![preview](docs/assets/preview.gif)
 
+> **Important: STEP/STP support is conversion-only, not direct rendering.**
+> STEP files require Obsidian Desktop plus a configured local Python + CadQuery/OCCT
+> converter. Mobile cannot run STEP conversion, and large or complex STEP/PCB
+> assemblies can take a long time on first open or fail if the local CAD
+> environment is missing. If reliability matters, pre-convert the model to GLB
+> or check the plugin's converter diagnostics before troubleshooting the viewer.
+
 ---
 
 ## Table of Contents
 
 - [Features](#features)
+- [Warnings And Risks](#warnings-and-risks)
 - [Current Release](#current-release)
 - [Platform Support Matrix](#platform-support-matrix)
 - [Quick Start](#quick-start)
@@ -46,20 +54,52 @@
 
 ---
 
+## Warnings And Risks
+
+- **STEP/STP and CAD files are not direct-render formats.** They need desktop
+  conversion first. Missing Python packages, incompatible CAD geometry, very
+  large assemblies, or converter timeouts can prevent preview even when the
+  plugin itself is installed correctly.
+- **Local converters are external desktop tools.** They parse model files on
+  your machine. Use trusted model files, keep converter command paths explicit,
+  and check converter diagnostics before running unknown CAD, FBX, 3MF, DAE, or
+  SLDPRT assets.
+- **Large models can stress Obsidian.** Big GLB files and converted STEP/PCB
+  assemblies can consume high CPU, GPU, RAM, and disk I/O, stall the UI, trigger
+  WebGL context loss, or take minutes on first open. Lower render quality/scale,
+  open one heavy model at a time, and prefer pre-converted GLB for repeat work.
+- **Generated side files can be large or sensitive.** Converted GLBs, snapshots,
+  reports, indexes, and JSON sidecars may include filenames, assembly names,
+  part IDs, dimensions, geometry summaries, and preview images. Put auxiliary
+  files in an intentional folder and exclude them from sync or Git if needed.
+- **Renderer routes can look different.** Babylon.js compatibility mode is the
+  safest path. Three.js fast paths can be faster, but colors, picking,
+  measurement, or toolbar behavior may differ on some assets. Disable the
+  Converted GLB Three fast path or switch back to compatibility mode when
+  diagnosing display issues.
+- **Mobile support is direct-format only.** Mobile can view GLB/GLTF/STL/OBJ/PLY
+  and already-converted GLB files, but it cannot run local conversion tools or
+  converter diagnostics.
+- **Remote drafting is optional and should be treated as sensitive.** The plugin
+  is local-first by default, but configured remote draft requests can include
+  sanitized evidence such as model names, part names, counts, dimensions, tags,
+  and note references depending on privacy settings.
+
+---
+
 ## Current Release
 
-`0.6.1` is a source-review patch for the `0.6.0` Three.js capability-tree release. It keeps the `0.6.0` rendering, measurement, diagnostics, and knowledge-workflow upgrades, and updates the remote draft timeout helper to follow Obsidian review guidance.
+`0.7.0` is a compatibility, performance, and support-boundary release for large local model workflows. It keeps Babylon.js compatibility mode as the default route for single-model previews, adds an explicit Converted GLB Three fast-path switch, improves conversion side-file control, and documents the real risks around STEP/CAD conversion, heavy assemblies, generated side files, mobile limits, and optional remote drafting.
 
 Release highlights:
 
-- Three.js capability profiles and quality snapshots for route diagnostics
-- GLB/GLTF PBR preservation, STL/PLY vertex colors, OBJ/MTL color-texture sRGB handling
-- Camera precision, raycast thresholds, and measurement markers scaled to tiny and large models
-- Dynamic frame-budget tracking, interactive pixel-ratio throttling, and idle render-loop sleep
-- Calibrated measurement records with Markdown export
-- More reliable knowledge-generation state, diagnostics, conversion cache handling, and release gates
+- Babylon.js compatibility mode remains the default for single-model previews, with Three.js still available as an explicit opt-in route.
+- Converted GLB outputs from STEP/FBX/3MF/DAE/etc. can use a configurable Three.js fast path with silent Babylon fallback.
+- Auxiliary conversion side files can be stored in a user-selected folder instead of only under the Obsidian config directory.
+- Direct file view, `3dgrid`, measurement, camera zoom, and large-model loading paths have tighter performance and stability behavior.
+- README warnings now call out STEP/CAD conversion limits, external converter risk, large-model resource pressure, generated side files, renderer-route differences, mobile limits, and optional remote-draft privacy.
 
-See [docs/release-notes/0.6.0-plus.md](docs/release-notes/0.6.0-plus.md) for the rolling `0.6.0+` update log, plus [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md), [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md), and [CHANGELOG.md](CHANGELOG.md) for versioned release notes.
+See [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md) and [CHANGELOG.md](CHANGELOG.md) for the full `0.7.0` change log, plus [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md) and [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md) for previous releases.
 
 ---
 
@@ -220,6 +260,10 @@ SPLAT preview is temporarily disabled in packaged builds while its loader is rep
 - Roadmap: first restore local-only `.splat` loading; then reopen it after idle-render stability is improved for Windows and large scenes; finally evaluate `.spz` separately, and only re-enable it if the decoder dependencies can be bundled locally and reviewed as local assets.
 
 ### Conversion (Requires External Tools)
+
+> **STEP/STP note:** STEP is supported through local conversion to GLB only.
+> It is not a browser/WebGL-native format and depends on the desktop converter
+> environment shown in plugin settings.
 
 | Format | Extension | Converter | Output |
 |--------|-----------|-----------|--------|
@@ -590,7 +634,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.6.1`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.6.1` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.7.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.7.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 
