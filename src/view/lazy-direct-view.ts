@@ -4,6 +4,7 @@ import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import type { PluginStore } from "../store/plugin-store";
 import { t } from "../i18n";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
+import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
 
 type DirectViewDelegate = FileView & {
   contentEl: HTMLElement;
@@ -58,6 +59,7 @@ export class LazyDirectModelView extends FileView {
 
   async onClose(): Promise<void> {
     this.closed = true;
+    unmarkDirectViewDom(this.contentEl);
     const delegate = this.delegate;
     this.delegate = null;
     await delegate?.onClose();
@@ -75,7 +77,7 @@ export class LazyDirectModelView extends FileView {
 
   private async loadDelegate(): Promise<DirectViewDelegate | null> {
     this.contentEl.empty();
-    this.contentEl.addClass("ai3d-direct-view");
+    markDirectViewDom(this.contentEl);
     this.contentEl.createDiv({ cls: "ai3d-inline-empty", text: t("loading.preparingModel") });
     const { DirectModelView } = await import("./direct-view");
     const delegate = new DirectModelView(this.leaf, this.getSettings, this.convertedAssetCache, this.ps);

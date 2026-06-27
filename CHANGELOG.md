@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- UI: keep direct file view model canvases full-height by turning the workbench metrics panel into a compact overlay and forcing the Obsidian file-view height chain to fill the leaf.
+- UI: keep direct file view model canvases full-height by turning the workbench metrics panel into a compact overlay and marking the live Obsidian leaf so its file-view height chain fills the pane.
 - Performance: overlap pre-parse render-budget checks with model file reads for direct, inline, and Live Preview single-model loads, shortening visible large-model loading waits without changing renderer routing.
 - Performance: scale Three.js texture anisotropy by render quality so heavy textured models avoid max GPU sampling cost on low and medium budgets.
 - Performance: resolve parent-directory GLTF/OBJ resource paths consistently across Windows, macOS, and Linux so external buffers/textures do not trigger wasted lookup work or under-budgeting.

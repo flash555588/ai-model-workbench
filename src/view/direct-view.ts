@@ -19,6 +19,7 @@ import { createLogger } from "../utils/log";
 import { compactRegisteredPartForPersistence } from "../utils/registered-part-persistence";
 import { inferModelAssetFormat } from "./workbench/format-lineage";
 import { createDirectViewLayout } from "./direct-view-layout";
+import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
 import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
@@ -272,7 +273,7 @@ export class DirectModelView extends FileView {
 
   async onOpen(): Promise<void> {
     this.contentEl.empty();
-    this.contentEl.addClass("ai3d-direct-view");
+    markDirectViewDom(this.contentEl);
 
     if (this.file) {
       await this.loadModel(this.file);
@@ -281,10 +282,12 @@ export class DirectModelView extends FileView {
 
   async onLoadFile(file: TFile): Promise<void> {
     this.contentEl.empty();
+    markDirectViewDom(this.contentEl);
     await this.loadModel(file);
   }
 
   onClose(): Promise<void> {
+    unmarkDirectViewDom(this.contentEl);
     this.clearDeferredEvidenceRegistration();
     this.clearRegisteredMatchPreview();
     if (this.escHandler) {
@@ -299,6 +302,7 @@ export class DirectModelView extends FileView {
   }
 
   private async loadModel(file: TFile): Promise<void> {
+    markDirectViewDom(this.contentEl);
     const gen = ++this.loadGeneration;
     const mobile = isMobile();
     this.clearDeferredEvidenceRegistration();

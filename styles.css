@@ -500,11 +500,28 @@ body {
 .workspace-leaf-content[data-type="ai3d-direct-view"] {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ai3d-direct-view-leaf {
   min-height: 0;
 }
 
+.ai3d-direct-view-leaf-content,
+.workspace-leaf-content.ai3d-direct-view-leaf-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ai3d-direct-view-leaf-content > .view-content.ai3d-direct-view,
 .workspace-leaf-content[data-type="ai3d-direct-view"] > .view-content.ai3d-direct-view {
   flex: 1 1 auto;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
