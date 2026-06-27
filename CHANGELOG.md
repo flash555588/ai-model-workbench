@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+- None yet.
+
+## 0.7.1 - 2026-06-28
+
 - Review: remove the disallowed `obsidianmd/prefer-create-el` disable directive, keep staged DOM creation detached without native `createElement`, tighten typed path-cache/buffer helpers, and replace the direct-view `!important` CSS override with a higher-specificity selector.
+- Release: publish the Obsidian source-review cleanup as `0.7.1` without changing the `0.7.0` renderer routing, conversion behavior, STEP/CAD warnings, or generated-side-file contract.
 
 ## 0.7.0 - 2026-06-28
 

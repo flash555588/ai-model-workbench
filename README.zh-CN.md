@@ -78,17 +78,21 @@
 
 ## 当前版本
 
-`0.7.0` 是面向大型本地模型工作流的兼容性、性能和支持边界版本。它保留 Babylon.js 兼容模式作为单模型预览默认路线，新增“转换 GLB 的 Three 快速路径”开关，允许用户自定义转换副文件位置，并把 STEP/CAD 转换、大型装配体、生成副文件、移动端限制和远程草稿隐私风险写入入口文档。
+`0.7.1` 是 `0.7.0` 兼容性、性能和支持边界版本的源码审核补丁版。它不改变 `0.7.0` 的渲染路线、转换行为、STEP/CAD 风险提示、生成副文件控制和大型模型加载策略，只修复 Obsidian 源码审核报告中的 source/CSS lint 项。
 
 发布亮点：
 
+- 移除不允许的 `obsidianmd/prefer-create-el` 禁用注释，同时保留 CodeMirror widget 和预览 canvas 所需的离线 DOM 创建能力。
+- 收紧路径缓存和二进制 buffer helper 的类型处理，消除不必要断言和 unsafe iterator value 审核提示。
+- 将直接文件视图里的 `!important` CSS 覆盖改为更高特异性的选择器。
+- 保留全部 `0.7.0` 兼容行为：Babylon.js 仍是默认单模型路线，转换 GLB 的 Three 快速路径仍可配置，STEP/CAD 仍是转换支持。
 - Babylon.js 兼容模式仍是单模型预览默认路线，Three.js 继续作为显式启用的可选路线。
 - STEP/FBX/3MF/DAE 等转换后的 GLB 可以通过独立开关使用 Three.js 快速路径，并在失败时静默回退到 Babylon.js。
 - 转换副文件可以放到用户指定的辅助文件夹，不再只能放在 Obsidian 配置目录下。
 - 直接文件视图、`3dgrid`、测量、相机缩放和大型模型加载路径获得更多稳定性与性能优化。
 - README 已集中补充 STEP/CAD 转换限制、外部转换器风险、大模型资源压力、生成副文件、渲染路线差异、移动端限制和远程草稿隐私提醒。
 
-完整 `0.7.0` 发布日志见 [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md) 和 [CHANGELOG.md](CHANGELOG.md)，历史版本见 [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md) 与 [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md)。
+完整发布日志见 [docs/release-notes/0.7.1.md](docs/release-notes/0.7.1.md)、[docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -615,7 +619,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.7.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.7.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.7.1`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.7.1`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

@@ -45,6 +45,8 @@ Use this page to choose the right document before changing code.
 - `../CHANGELOG.md` - current unreleased and release history.
 - `release-notes/0.6.0-plus.md` - user-facing rolling update log for the
   `0.6.0+` release line.
+- `release-notes/0.7.1.md` - GitHub release notes for the `0.7.1` source-review patch.
+- `release-notes/0.7.0.md` - GitHub release notes for the `0.7.0` compatibility release.
 - `release-notes/0.6.1.md` - GitHub release notes for the `0.6.1` source-review patch.
 - `release-notes/0.6.0.md` - GitHub release notes for the `0.6.0` capability-tree release.
 - `../.github/workflows/release.yml` - release asset publishing workflow.
