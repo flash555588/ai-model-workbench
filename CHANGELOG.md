@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Performance: include external `.gltf` buffers and textures in pre-parse render budgeting so large resource-backed scenes start with safer quality settings.
 - Performance: defer reading-mode `3d` and `3dgrid` code block runtime imports until the rendered block approaches the viewport, reducing workspace restore work for long notes with offscreen model blocks.
 - Performance: deduplicate and limit concurrent Three.js `.gltf` external buffer/texture reads, reducing I/O and memory spikes for large resource-heavy models.
 - Performance: reuse cached Three.js renderable indexes while disposing switched or closed models, reducing repeated scene-tree walks for large assemblies.

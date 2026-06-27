@@ -40,9 +40,26 @@ function summary(tier: ModelPreviewSummary["performanceTier"]): ModelPreviewSumm
 }
 
 function createAppWithVaultFileSize(path: string, size: number): App {
+  return createAppWithVaultFiles({ [path]: { size } });
+}
+
+function createAppWithVaultFiles(files: Record<string, { size: number; text?: string }>): App {
+  const fileMap = new Map(
+    Object.entries(files).map(([path, file]) => [path, { path, stat: { size: file.size }, text: file.text }]),
+  );
   return {
     vault: {
-      getAbstractFileByPath: (candidate: string) => candidate === path ? { stat: { size } } : null,
+      getAbstractFileByPath: (candidate: string) => fileMap.get(candidate) ?? null,
+      read: async (file: { path?: string; text?: string }) => {
+        if (typeof file.text === "string") {
+          return file.text;
+        }
+        const matched = file.path ? fileMap.get(file.path) : null;
+        if (typeof matched?.text === "string") {
+          return matched.text;
+        }
+        throw new Error("missing vault text fixture");
+      },
     },
   } as unknown as App;
 }
@@ -95,6 +112,82 @@ describe("model render budget", () => {
 
     expect(nodeShimMocks.moduleLoadCount.value).toBe(0);
     expect(nodeShimMocks.stat).not.toHaveBeenCalled();
+  });
+
+  it("adds relative glTF external resource sizes without loading Node shims", async () => {
+    nodeShimMocks.moduleLoadCount.value = 0;
+    nodeShimMocks.stat.mockReset();
+
+    const gltfText = JSON.stringify({
+      buffers: [{ uri: "assembly.bin", byteLength: 128 }],
+      images: [{ uri: "textures/diffuse%20map.png" }],
+    });
+    const app = createAppWithVaultFiles({
+      "models/assembly.gltf": { size: 1024, text: gltfText },
+      "models/assembly.bin": { size: 70 * 1024 * 1024 },
+      "models/textures/diffuse map.png": { size: 2 * 1024 * 1024 },
+    });
+
+    await expect(getModelPathByteSize(app, "models/assembly.gltf"))
+      .resolves.toBe(1024 + 72 * 1024 * 1024);
+
+    expect(nodeShimMocks.moduleLoadCount.value).toBe(0);
+    expect(nodeShimMocks.stat).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates glTF resources after URI suffix normalization", async () => {
+    const gltfText = JSON.stringify({
+      buffers: [{ uri: "shared.bin" }],
+      images: [{ uri: "shared.bin?cache=1" }],
+    });
+    const app = createAppWithVaultFiles({
+      "models/assembly.gltf": { size: 1024, text: gltfText },
+      "models/shared.bin": { size: 10 * 1024 * 1024 },
+    });
+
+    await expect(getModelPathByteSize(app, "models/assembly.gltf"))
+      .resolves.toBe(1024 + 10 * 1024 * 1024);
+  });
+
+  it("resolves parent-directory glTF external resource paths from the model folder", async () => {
+    const gltfText = JSON.stringify({
+      images: [{ uri: "../textures/panel.png" }],
+    });
+    const app = createAppWithVaultFiles({
+      "models/nested/assembly.gltf": { size: 1024, text: gltfText },
+      "models/textures/panel.png": { size: 4 * 1024 * 1024 },
+    });
+
+    await expect(getModelPathByteSize(app, "models/nested/assembly.gltf"))
+      .resolves.toBe(1024 + 4 * 1024 * 1024);
+  });
+
+  it("falls back to declared glTF buffer byteLength when external stat is missing", async () => {
+    const gltfText = JSON.stringify({
+      buffers: [{ uri: "missing.bin", byteLength: 68 * 1024 * 1024 }],
+    });
+    const app = createAppWithVaultFiles({
+      "models/assembly.gltf": { size: 1024, text: gltfText },
+    });
+
+    await expect(getModelPathByteSize(app, "models/assembly.gltf"))
+      .resolves.toBe(1024 + 68 * 1024 * 1024);
+  });
+
+  it("skips remote and data glTF resource URIs when estimating local byte size", async () => {
+    const gltfText = JSON.stringify({
+      buffers: [
+        { uri: "https://cdn.example.com/huge.bin", byteLength: 512 * 1024 * 1024 },
+        { uri: "data:application/octet-stream;base64,AA==", byteLength: 512 * 1024 * 1024 },
+      ],
+      images: [{ uri: "data:image/png;base64,AA==" }],
+    });
+    const app = createAppWithVaultFiles({
+      "models/assembly.gltf": { size: 2048, text: gltfText },
+    });
+
+    await expect(getModelPathByteSize(app, "models/assembly.gltf"))
+      .resolves.toBe(2048);
   });
 
   it("uses Node stat only for absolute filesystem paths", async () => {
