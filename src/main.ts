@@ -234,7 +234,13 @@ export default class AI3DModelWorkbench extends Plugin {
       if (this.unloaded) {
         return;
       }
-      const exts = registerLazyLivePreviewExtension(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
+      const exts = registerLazyLivePreviewExtension(
+        this.app,
+        () => this.getSettings(),
+        this.convertedAssetCache,
+        getAnnotations,
+        (cleanup) => this.register(cleanup),
+      );
       for (const e of exts) {
         this.registerEditorExtension(e);
       }

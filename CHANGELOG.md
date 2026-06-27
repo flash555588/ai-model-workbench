@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Performance: cache Live Preview embed path resolution across editor scans and clear it on vault file changes, reducing workspace-open work for notes with many model embeds.
 - Performance: lazy-load converter command discovery and conversion factory setup so direct GLB/GLTF/STL/PLY previews do not initialize converter adapters during plugin startup or direct-format preparation.
 - Performance: reuse fresh converted GLB outputs before creating conversion managers so already-converted STEP/FBX/etc. models open without initializing converter adapters.
 - Performance: load the conversion route service only when a model actually needs conversion, keeping direct GLB/GLTF/STL/PLY/OBJ preparation lighter.

@@ -15,6 +15,10 @@ import {
   LIVE_PREVIEW_EMBED_MARKER,
   transactionMayAffectModelEmbeds,
 } from "./live-preview-embed-scan";
+import {
+  createLivePreviewPathResolverCache,
+  type LivePreviewPathResolverCache,
+} from "./live-preview-path-cache";
 
 type LivePreviewModule = typeof import("./live-preview");
 type LivePreviewWidget = InstanceType<LivePreviewModule["ModelEmbedWidget"]>;
@@ -193,6 +197,7 @@ function findEmbeds(
   renderQuality: PluginSettings["renderQuality"],
   renderScale: PluginSettings["renderScale"],
   convertedAssetCache: ConvertedAssetCache,
+  resolvedPathCache: LivePreviewPathResolverCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
 ): Range<Decoration>[] {
   const doc: Text = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
@@ -200,7 +205,6 @@ function findEmbeds(
   if (!docMayContainModelEmbed(doc)) {
     return ranges;
   }
-  const resolvedPathCache = new Map<string, string | null>();
 
   let lineFrom = 0;
   for (const text of doc.iterLines()) {
@@ -244,11 +248,7 @@ function findEmbeds(
         }
       }
 
-      let modelPath = resolvedPathCache.get(filename);
-      if (modelPath === undefined) {
-        modelPath = resolveVaultPath(app, filename);
-        resolvedPathCache.set(filename, modelPath);
-      }
+      const modelPath = resolvedPathCache.resolve(filename);
       if (!modelPath) {
         pos = end + 2;
         continue;
@@ -304,7 +304,21 @@ export function registerLazyLivePreviewExtension(
   getSettings: () => PluginSettings,
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
+  registerCleanup?: (cleanup: () => void) => void,
 ) {
+  const resolvedPathCache = createLivePreviewPathResolverCache(app, resolveVaultPath);
+  const clearResolvedPathCache = () => resolvedPathCache.clear();
+  const vaultEventRefs = [
+    app.vault.on("create", clearResolvedPathCache),
+    app.vault.on("delete", clearResolvedPathCache),
+    app.vault.on("rename", clearResolvedPathCache),
+  ];
+  registerCleanup?.(() => {
+    for (const ref of vaultEventRefs) {
+      app.vault.offref(ref);
+    }
+  });
+
   const embedField = StateField.define<DecoSet>({
     create(state): DecoSet {
       const s = getSettings();
@@ -326,6 +340,7 @@ export function registerLazyLivePreviewExtension(
         s.renderQuality,
         s.renderScale,
         convertedAssetCache,
+        resolvedPathCache,
         getAnnotations,
       );
       return toDecoSet(ranges);
@@ -354,6 +369,7 @@ export function registerLazyLivePreviewExtension(
           s.renderQuality,
           s.renderScale,
           convertedAssetCache,
+          resolvedPathCache,
           getAnnotations,
         );
         return toDecoSet(ranges);
