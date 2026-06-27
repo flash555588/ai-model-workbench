@@ -235,6 +235,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private wireframeOriginalMaterials = new Map<number, Material | Material[]>();
   private sceneConfig: SceneConfig = {};
   private focusSelectionEnabled = false;
+  private explodeStateActive = false;
   private focusedObject: Object3D | null = null;
   private highlightedObject: Object3D | null = null;
   private selectionHelper: BoxHelper | null = null;
@@ -637,8 +638,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   resetView(): void {
-    if (this.rootObject) {
+    if (this.rootObject && this.explodeStateActive) {
       resetThreeExplode(this.rootObject);
+      this.explodeStateActive = false;
+      this.invalidateRootBoundsCache();
+      this.markShadowDirty();
     }
     this.resetDisassembly();
     this.clearFocusedMesh();
@@ -951,7 +955,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   setExplode(factor: number, axis: PreviewAxis): void {
     if (!this.rootObject) return;
+    const nextActive = Math.abs(factor) > Number.EPSILON;
+    if (!nextActive && !this.explodeStateActive) return;
     setThreeExplode(this.rootObject, factor, axis);
+    this.explodeStateActive = nextActive;
     this.invalidateRootBoundsCache();
     this.markShadowDirty();
     this.markDirty();
@@ -959,7 +966,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   resetExplode(): void {
     if (!this.rootObject) return;
+    if (!this.explodeStateActive) return;
     resetThreeExplode(this.rootObject);
+    this.explodeStateActive = false;
     this.invalidateRootBoundsCache();
     this.markShadowDirty();
     this.markDirty();
@@ -991,7 +1000,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   resetDisassembly(): void {
-    this.disassembly?.reset();
+    if (!this.disassembly) return;
+    this.disassembly.reset();
     this.invalidateRootBoundsCache();
   }
 
@@ -1830,6 +1840,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
+    this.explodeStateActive = false;
     this.meshShadowFlagsPrepared = false;
     this.invalidateMeshCache();
     this.markDirty();

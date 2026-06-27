@@ -109,6 +109,10 @@ class ThreeDisassemblyAdapter
   private readonly tempCameraForward = new Vector3();
   private readonly tempCameraRight = new Vector3();
   private readonly tempCameraUp = new Vector3();
+  private readonly tempDragOffset = new Vector3();
+  private readonly tempNextPosition = new Vector3();
+  private readonly tempHelperDelta = new Vector3();
+  private readonly partCenterCache = new Map<number, Vector3>();
   private selectionHelper: BoxHelper | null = null;
   private lastOccluded = false;
   private selected: ThreeDisassemblyPart | null = null;
@@ -175,6 +179,7 @@ class ThreeDisassemblyAdapter
     part.object.quaternion.copy(transform.quaternion);
     part.object.scale.copy(transform.scale);
     part.object.updateMatrixWorld(true);
+    this.invalidatePartCenter(part);
     this.requestRender();
   }
 
@@ -273,7 +278,8 @@ class ThreeDisassemblyAdapter
   }
 
   beginDrag(part: ThreeDisassemblyPart, event: PointerEvent): DragState | null {
-    const startPoint = this.getPointOnDragPlane(part, event);
+    const pivot = this.getPartWorldCenter(part, this.tempCenter).clone();
+    const startPoint = this.getPointOnDragPlane(pivot, event);
     if (!startPoint) return null;
 
     event.preventDefault();
@@ -287,7 +293,6 @@ class ThreeDisassemblyAdapter
       mode = "rotate";
     }
 
-    const pivot = this.tempBox.setFromObject(part.object).getCenter(this.tempCenter).clone();
     const camForward = this.tempCameraForward;
     this.camera.getWorldDirection(camForward);
     const plane = createPreviewPlane(
@@ -323,23 +328,26 @@ class ThreeDisassemblyAdapter
     const point = this.getRayPlanePoint(event, state.plane);
     if (!point) return;
 
-    const offset = point.clone().sub(state.startPoint);
-    state.part.object.position.copy(state.startPosition).add(offset);
+    const offset = this.tempDragOffset.copy(point).sub(state.startPoint);
+    const nextPosition = this.tempNextPosition.copy(state.startPosition).add(offset);
+    const helperDelta = this.tempHelperDelta.copy(nextPosition).sub(state.part.object.position);
+    state.part.object.position.copy(nextPosition);
     state.part.object.updateMatrixWorld(true);
-    this.selectionHelper?.update();
+    this.invalidatePartCenter(state.part);
+    this.translateSelectionHelper(helperDelta);
     this.requestRender();
   }
 
   endDrag(state: DragState | null): void {
     this.controls.enabled = true;
     this.canvas.classList.remove("ai3d-disassembly-dragging");
+    this.selectionHelper?.update();
     this.requestRender();
     if (!state) return;
   }
 
   updateSelectionOcclusion(part: ThreeDisassemblyPart): void {
-    const box = this.tempBox.setFromObject(part.object);
-    const center = box.getCenter(this.tempCenter);
+    const center = this.getPartWorldCenter(part, this.tempCenter);
     const cameraPos = this.camera.position;
 
     const lineOfSight = createPreviewLineOfSight(
@@ -401,6 +409,7 @@ class ThreeDisassemblyAdapter
       result.rotationQuaternion.w,
     );
     state.part.object.updateMatrixWorld(true);
+    this.invalidatePartCenter(state.part);
     this.selectionHelper?.update();
     this.requestRender();
   }
@@ -414,9 +423,7 @@ class ThreeDisassemblyAdapter
     return hit?.object instanceof Mesh ? hit.object as Mesh : null;
   }
 
-  private getPointOnDragPlane(part: ThreeDisassemblyPart, event: PointerEvent): Vector3 | null {
-    const box = this.tempBox.setFromObject(part.object);
-    const center = box.getCenter(this.tempCenter);
+  private getPointOnDragPlane(center: Vector3, event: PointerEvent): Vector3 | null {
     const camForward = this.tempCameraForward;
     this.camera.getWorldDirection(camForward);
     const plane = createPreviewPlane(
@@ -443,6 +450,36 @@ class ThreeDisassemblyAdapter
       plane,
     );
     return point ? new Vector3(point.x, point.y, point.z) : null;
+  }
+
+  private getPartWorldCenter(part: ThreeDisassemblyPart, target: Vector3): Vector3 {
+    const cached = this.partCenterCache.get(part.id);
+    if (cached) {
+      return target.copy(cached);
+    }
+    this.tempBox.setFromObject(part.object).getCenter(target);
+    this.partCenterCache.set(part.id, target.clone());
+    return target;
+  }
+
+  private invalidatePartCenter(part: ThreeDisassemblyPart): void {
+    this.partCenterCache.delete(part.id);
+  }
+
+  private translateSelectionHelper(delta: Vector3): void {
+    if (!this.selectionHelper) return;
+    if (delta.lengthSq() <= Number.EPSILON) return;
+    const position = this.selectionHelper.geometry.getAttribute("position");
+    for (let index = 0; index < position.count; index++) {
+      position.setXYZ(
+        index,
+        position.getX(index) + delta.x,
+        position.getY(index) + delta.y,
+        position.getZ(index) + delta.z,
+      );
+    }
+    position.needsUpdate = true;
+    this.selectionHelper.geometry.computeBoundingSphere();
   }
 }
 
