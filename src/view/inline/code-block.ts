@@ -324,7 +324,10 @@ export function registerCodeBlockProcessor(
               conversionOutputRoot,
             });
             const source = toPreviewSource(prepared);
-            const initialRenderBudget = await getPreviewPathRenderBudget(app, source.path, settings);
+            const initialRenderBudgetPromise = getPreviewPathRenderBudget(app, source.path, settings);
+            const dataPromise = readBinaryPath(app, source.path);
+            void initialRenderBudgetPromise.catch(() => undefined);
+            void dataPromise.catch(() => undefined);
             const pins = getAnnotations?.(modelPath) ?? [];
             const previewOptions = {
               ext: source.ext,
@@ -339,10 +342,11 @@ export function registerCodeBlockProcessor(
               previewOptions,
             );
             preview = nextPreview;
+            const initialRenderBudget = await initialRenderBudgetPromise;
             preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
             toolbar.syncCapabilities();
             loading.setPhaseKey("loading.loadingModel");
-            const data = await readBinaryPath(app, source.path);
+            const data = await dataPromise;
             const readFile = async (p: string) => readBinaryPath(app, p);
 
             if (destroyed) { loading.hide(); return; }

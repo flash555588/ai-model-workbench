@@ -401,18 +401,19 @@ export class DirectModelView extends FileView {
       this.workbenchSourceWarnings = [...source.warnings];
 
       const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
-      const initialRenderBudget = await getPreviewPathRenderBudget(this.app, source.path, settings);
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
       const dataPromise = readBinaryPath(this.app, source.path);
+      const initialRenderBudgetPromise = getPreviewPathRenderBudget(this.app, source.path, settings);
       void dataPromise.catch(() => undefined);
+      void initialRenderBudgetPromise.catch(() => undefined);
       const created = await this.createPreviewWithFallback(
         canvas,
         dataPromise,
+        initialRenderBudgetPromise,
         source,
         basePreviewOptions,
         file.path,
-        initialRenderBudget,
       );
       if (gen !== this.loadGeneration) {
         created.preview.destroy();
@@ -876,10 +877,10 @@ export class DirectModelView extends FileView {
   private async createPreviewWithFallback(
     canvas: HTMLCanvasElement,
     dataPromise: Promise<ArrayBuffer>,
+    initialRenderBudgetPromise: Promise<RenderQualityBudget>,
     source: ReturnType<typeof toPreviewSource>,
     options: DirectViewPreviewOptions,
     modelPath: string,
-    initialRenderBudget: RenderQualityBudget,
   ): Promise<{
       preview: AnnotationPreview;
       summary: Awaited<ReturnType<AnnotationPreview["loadModel"]>>;
@@ -891,6 +892,13 @@ export class DirectModelView extends FileView {
       canvas,
       options,
     );
+    let initialRenderBudget: RenderQualityBudget;
+    try {
+      initialRenderBudget = await initialRenderBudgetPromise;
+    } catch (error) {
+      created.preview.destroy();
+      throw error;
+    }
     this.applyRenderBudget(created.preview, initialRenderBudget);
 
     let data: ArrayBuffer;

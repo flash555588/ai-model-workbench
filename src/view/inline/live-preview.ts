@@ -257,10 +257,13 @@ export class ModelEmbedWidget extends WidgetType {
           rendererRollout: this.previewRendererRollout,
           useThreeRenderer: this.useThreeRenderer,
         } as const;
-        const initialRenderBudget = await getPreviewPathRenderBudget(this.app, prepared.effectivePath, {
+        const initialRenderBudgetPromise = getPreviewPathRenderBudget(this.app, prepared.effectivePath, {
           renderQuality: this.renderQuality,
           renderScale: this.renderScale,
         });
+        const dataPromise = readBinaryPath(this.app, prepared.effectivePath);
+        void initialRenderBudgetPromise.catch(() => undefined);
+        void dataPromise.catch(() => undefined);
         const { preview } = await createLoggedModelPreview(
           log,
           { surface: "live-preview", modelPath: this.modelPath },
@@ -272,9 +275,10 @@ export class ModelEmbedWidget extends WidgetType {
           return;
         }
         this.preview = preview;
+        const initialRenderBudget = await initialRenderBudgetPromise;
         this.preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
         loading.setPhaseKey("loading.loadingModel");
-        const data = await readBinaryPath(this.app, prepared.effectivePath);
+        const data = await dataPromise;
         if (this.destroyed || generation !== this.initGeneration) {
           this.preview?.destroy();
           this.preview = null;
