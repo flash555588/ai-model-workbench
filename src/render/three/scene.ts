@@ -273,6 +273,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private cachedMeshRoot: Object3D | null = null;
   private cachedRenderables: ThreeRenderableObject[] | null = null;
   private cachedRenderableRoot: Object3D | null = null;
+  private cachedRenderableObjectCount: number | null = null;
   private cachedChildMeshMap: ThreeChildRenderableMeshMap | null = null;
   private cachedChildMeshMapRoot: Object3D | null = null;
   private cachedRenderableBoundsMap: ThreeRenderableBoundsMap | null = null;
@@ -1873,6 +1874,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.scene.remove(this.rootObject);
     this.lastDisposalAudit = this.disposeObjectGraph(this.rootObject, reason);
     this.rootObject = null;
+    this.invalidateMeshCache();
     this.markShadowDirty();
   }
 
@@ -1883,9 +1885,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     let meshCount = 0;
     let objectCount = 0;
 
-    root.traverse((object) => {
-      objectCount++;
-      if (!isThreeRenderableObject(object)) return;
+    const disposeRenderable = (object: ThreeRenderableObject): void => {
       if (isMesh(object)) {
         meshCount++;
       }
@@ -1899,7 +1899,20 @@ export class ThreeModelPreview implements WorkbenchPreview {
       for (const material of materialList(object.material)) {
         this.disposeMaterialWithTextures(material, materialIds, textureIds);
       }
-    });
+    };
+
+    if (this.cachedRenderables && this.cachedRenderableRoot === root) {
+      objectCount = this.cachedRenderableObjectCount ?? this.cachedRenderables.length;
+      for (const object of this.cachedRenderables) {
+        disposeRenderable(object);
+      }
+    } else {
+      root.traverse((object) => {
+        objectCount++;
+        if (!isThreeRenderableObject(object)) return;
+        disposeRenderable(object);
+      });
+    }
 
     return {
       reason,
@@ -2035,13 +2048,16 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private getRenderableObjects(root: Object3D): ThreeRenderableObject[] {
     if (this.cachedRenderables && this.cachedRenderableRoot === root) return this.cachedRenderables;
     const renderables: ThreeRenderableObject[] = [];
+    let objectCount = 0;
     root.traverse((object) => {
+      objectCount++;
       if (isThreeRenderableObject(object) && object.geometry) {
         renderables.push(object);
       }
     });
     this.cachedRenderables = renderables;
     this.cachedRenderableRoot = root;
+    this.cachedRenderableObjectCount = objectCount;
     return renderables;
   }
 
@@ -2088,6 +2104,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.cachedMeshRoot = null;
     this.cachedRenderables = null;
     this.cachedRenderableRoot = null;
+    this.cachedRenderableObjectCount = null;
     this.cachedChildMeshMap = null;
     this.cachedChildMeshMapRoot = null;
     this.cachedRenderableBoundsMap = null;
