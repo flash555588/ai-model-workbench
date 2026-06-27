@@ -140,6 +140,7 @@ const FRAME_BUDGET_PIXEL_RATIO_RECOVERY_STEP = 1.08;
 const FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE = 0.62;
 const FRAME_BUDGET_SHADOW_SCALE = 0.86;
 const FRAME_BUDGET_MAX_OBSERVER_STRIDE = 4;
+const ENVIRONMENT_INSTALL_DELAY_MS = 120;
 
 type DisposalReason = "initial" | "model-switch" | "destroy";
 
@@ -191,6 +192,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly defaultLights: Light[] = [];
   private readonly configLights: Light[] = [];
   private environmentTarget: WebGLRenderTarget | null = null;
+  private environmentInstallHandle = 0;
   private rootObject: Object3D | null = null;
   private loadedExt = "";
   private resourceWarnings: string[] = [];
@@ -366,7 +368,6 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderer.setClearColor(DEFAULT_BACKGROUND, 1);
 
     this.scene = new Scene();
-    this.installGlobalEnvironment();
     this.camera = new PerspectiveCamera(this.initialFov, 1, 0.01, 2000);
     this.camera.position.copy(this.initialPosition);
     this.camera.lookAt(this.initialTarget);
@@ -460,6 +461,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (this.bboxEnabled) {
       this.ensureBoundingBoxHelper();
     }
+    this.scheduleGlobalEnvironmentInstall();
     this.disassemblySetup = false;
     this.disassembly?.dispose();
     this.disassembly = null;
@@ -865,6 +867,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.quality = quality;
     this.renderScale = renderScale;
+    this.syncGlobalEnvironmentForQuality();
     this.applyShadowQuality();
     this.resizeRenderer();
   }
@@ -1458,7 +1461,42 @@ export class ThreeModelPreview implements WorkbenchPreview {
     pmrem.dispose();
   }
 
+  private syncGlobalEnvironmentForQuality(): void {
+    if (this.quality === "low") {
+      this.cancelGlobalEnvironmentInstall();
+      this.disposeGlobalEnvironment();
+      this.markDirty();
+      return;
+    }
+    if (this.rootObject && !this.environmentTarget) {
+      this.scheduleGlobalEnvironmentInstall();
+    }
+  }
+
+  private scheduleGlobalEnvironmentInstall(): void {
+    if (this.quality === "low" || this.environmentTarget || this.environmentInstallHandle) {
+      return;
+    }
+    this.environmentInstallHandle = window.setTimeout(() => {
+      this.environmentInstallHandle = 0;
+      if (this.quality === "low" || this.contextLost || !this.rootObject) {
+        return;
+      }
+      this.installGlobalEnvironment();
+      this.markDirty();
+    }, ENVIRONMENT_INSTALL_DELAY_MS);
+  }
+
+  private cancelGlobalEnvironmentInstall(): void {
+    if (!this.environmentInstallHandle) {
+      return;
+    }
+    window.clearTimeout(this.environmentInstallHandle);
+    this.environmentInstallHandle = 0;
+  }
+
   private disposeGlobalEnvironment(): void {
+    this.cancelGlobalEnvironmentInstall();
     this.scene.environment = null;
     this.environmentTarget?.dispose();
     this.environmentTarget = null;
@@ -1783,6 +1821,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private clearLoadedModel(reason: DisposalReason = "model-switch"): void {
+    this.cancelGlobalEnvironmentInstall();
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;

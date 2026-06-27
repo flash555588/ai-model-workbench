@@ -42,6 +42,7 @@
 - Performance: update Three.js focus selection incrementally so switching selected parts in large assemblies no longer restores and re-dims every mesh.
 - Performance: prepare each unique Three.js material once during model load, avoiding repeated texture audit and anisotropy updates on shared-material large models.
 - Performance: skip repeated Three.js texture scans when disposing shared materials during model switches, reducing large-model close/reload stalls.
+- Performance: defer Three.js PMREM environment setup until after a model is visible and skip it for low-quality previews, reducing first-load GPU work for large models and multi-embed notes.
 - Performance: avoid forcing an unchanged plugin `data.json` rewrite during unload; only pending dirty state is flushed.
 - Performance: load inline preview modules in parallel and defer heading-pin DOM observers until the workspace layout is ready, reducing plugin startup work.
 - Performance: add a short settle window between queued inline and Live Preview model loads so notes with multiple large visible embeds give Obsidian time to paint and process input between loads.
