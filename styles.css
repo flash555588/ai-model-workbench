@@ -504,9 +504,10 @@ body {
 }
 .ai3d-workspace {
   display: grid;
-  grid-template-rows: 1fr 4px auto;
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+  position: relative;
 }
 .ai3d-workspace-track-top {
   display: grid;
@@ -664,7 +665,7 @@ body {
   cursor: col-resize;
 }
 .ai3d-resize-handle-v {
-  cursor: row-resize;
+  display: none;
 }
 .ai3d-direct-view .ai3d-preview-host {
   flex: 1;
@@ -672,16 +673,27 @@ body {
 }
 
 .ai3d-direct-workbench-panel {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 3;
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(760px, calc(100% - 236px));
+  max-height: min(34%, 220px);
+  overflow: hidden;
+  gap: 8px;
   align-items: start;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--background-modifier-border);
-  border-top: none;
-  border-radius: 0 0 var(--radius-s) var(--radius-s);
-  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.24);
   font-size: var(--font-ui-smaller);
+}
+
+.ai3d-direct-workbench-panel.is-hidden {
+  display: none;
 }
 
 .ai3d-direct-workbench-overview,
@@ -699,6 +711,12 @@ body {
   flex-direction: column;
 }
 
+.ai3d-direct-workbench-overview {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1.28fr);
+  gap: 8px;
+}
+
 .ai3d-direct-workbench-metrics {
   flex-wrap: wrap;
   align-content: flex-start;
@@ -708,7 +726,7 @@ body {
 .ai3d-direct-workbench-metric,
 .ai3d-direct-workbench-control {
   min-width: 0;
-  padding: 6px 8px;
+  padding: 5px 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary);
@@ -882,7 +900,7 @@ body {
 @media (max-width: 760px) {
   .ai3d-workspace-track-top {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr 4px auto;
+    grid-template-rows: minmax(0, 1fr) 4px auto;
   }
   .ai3d-resize-handle-h {
     cursor: row-resize;
@@ -901,6 +919,14 @@ body {
     min-width: min-content;
   }
   .ai3d-direct-workbench-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 28%;
+    grid-template-columns: 1fr;
+  }
+  .ai3d-direct-workbench-overview {
     grid-template-columns: 1fr;
   }
   .ai3d-direct-workbench-controls {
