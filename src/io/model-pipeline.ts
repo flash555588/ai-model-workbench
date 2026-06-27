@@ -2,7 +2,7 @@ import { getFormatCapability, isDisabledSplatExtension, normalizeModelExt } from
 import type { LoadStrategy } from "./formats/types";
 import type { ConvertedAssetCache } from "./cache/converted-asset-cache";
 import { prepareDirectLoad } from "./direct/direct-load-service";
-import { convertForPreview, type ConversionManagerProvider } from "./conversion/conversion-service";
+import type { ConversionManagerProvider } from "./conversion/conversion-service";
 import { MobileConversionUnavailableError } from "./conversion/errors";
 import { createLogger } from "../utils/log";
 import { isMobile } from "../utils/device";
@@ -74,6 +74,7 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
       log.info("preferred conversion route", { sourceExt, path: input.path, converterId: conversionCapability.converterId });
     }
 
+    const { convertForPreview } = await import("./conversion/conversion-service");
     const result = await convertForPreview({
       sourcePath: input.absolutePath,
       sourceExt,

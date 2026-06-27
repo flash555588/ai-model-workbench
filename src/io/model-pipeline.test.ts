@@ -3,15 +3,19 @@ import type { ConversionManager } from "./conversion/manager";
 
 const conversionMocks = vi.hoisted(() => ({
   convertForPreview: vi.fn(),
+  moduleLoadCount: { value: 0 },
 }));
 
 vi.mock("../utils/device", () => ({
   isMobile: () => false,
 }));
 
-vi.mock("./conversion/conversion-service", () => ({
-  convertForPreview: conversionMocks.convertForPreview,
-}));
+vi.mock("./conversion/conversion-service", () => {
+  conversionMocks.moduleLoadCount.value++;
+  return {
+    convertForPreview: conversionMocks.convertForPreview,
+  };
+});
 
 import { prepareModelInput } from "./model-pipeline";
 
@@ -45,6 +49,7 @@ describe("prepareModelInput", () => {
     });
     expect(createConversionManager).not.toHaveBeenCalled();
     expect(conversionMocks.convertForPreview).not.toHaveBeenCalled();
+    expect(conversionMocks.moduleLoadCount.value).toBe(0);
   });
 
   it("passes a lazy conversion manager provider only when the selected route converts", async () => {

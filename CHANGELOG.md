@@ -4,6 +4,7 @@
 
 - Performance: lazy-load converter command discovery and conversion factory setup so direct GLB/GLTF/STL/PLY previews do not initialize converter adapters during plugin startup or direct-format preparation.
 - Performance: reuse fresh converted GLB outputs before creating conversion managers so already-converted STEP/FBX/etc. models open without initializing converter adapters.
+- Performance: load the conversion route service only when a model actually needs conversion, keeping direct GLB/GLTF/STL/PLY/OBJ preparation lighter.
 - Performance: defer Live Preview model initialization until embeds approach the viewport, preventing hidden large models from reading files during workspace startup.
 - Performance: keep current-preview UI state out of automatic persistence so opening or clearing a model no longer queues a full `data.json` save.
 - Performance: skip direct-view auto part-registration writes when regenerated part candidates match the saved profile.
