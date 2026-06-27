@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use a configurable Three.js rendering path across reading surfaces and direct file view; the file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
+> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use Babylon.js compatibility mode by default, with Three.js available as an explicit opt-in rollout across reading surfaces and direct file view. The file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
@@ -32,9 +32,9 @@
 
 ## Features
 
-- **Direct mesh preview** for GLB/GLTF, STL, OBJ, and PLY (all routed through Three.js by default)
+- **Direct mesh preview** for GLB/GLTF, STL, OBJ, and PLY (Babylon.js compatibility mode by default, Three.js opt-in)
 - **Optional conversion** for CAD, FBX, 3MF, and DAE assets
-- **Hybrid preview routing**: single-model previews use Three.js for GLB/GLTF/STL/PLY/OBJ with a Babylon.js compatibility fallback in settings
+- **Hybrid preview routing**: single-model previews default to Babylon.js compatibility mode, with explicit Three.js rollouts for GLB/GLTF/STL/PLY/OBJ
 - **Inline and file previews**: Live Preview, code blocks, and direct file view
 - **Grid system**: render multiple models in a single viewport with presets
 - **3D annotations**: click-to-pin bookmarks with labels, colors, and depth-aware occlusion
@@ -297,7 +297,7 @@ snapshots, part evidence, and knowledge-note generation.
 | Annotation preview mode | plain-text | How saved annotation content renders inside readonly previews |
 | AI drafting mode | Local evidence only | Keeps knowledge-note drafting local unless an optional remote draft service is configured |
 | Draft service URL | empty | Base URL for a service that accepts `POST /draft-note` |
-| Preview compatibility mode | Reading + file view | Controls how widely the newer single-model GLB preview path is used |
+| Preview compatibility mode | Compatibility mode | Controls how widely the newer single-model GLB preview path is used |
 | Experimental Three workbench | off | Tries the Three.js workbench path for direct GLB/GLTF file views, with automatic Babylon.js fallback |
 | Canvas height | 400 | Preview height in pixels |
 | Auto-rotate | off | Start with turntable animation |
@@ -486,27 +486,23 @@ src/
 ### Model Import Pipeline
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│  1. Format Detection                                        │
-│     └─ getFormatCapability(ext) → { family, strategy }      │
-│                                                             │
-│  2. Source Preparation                                      │
-│     ├─ strategy: "direct" → prepareDirectLoad()             │
-│     └─ strategy: "convert" → convertForPreview()            │
-│                                                             │
-│  3. Preview Route Decision                                  │
-│     ├─ GLB/GLTF/STL/PLY/OBJ single-model → Three.js         │
-│     └─ 3dgrid, conservative workbench, fallback → Babylon   │
-│                                                             │
-│  4. Renderer Loading                                        │
-│     ├─ Three.js → loadThreeGLTF/STL/PLY/OBJ                 │
-│     └─ Babylon.js → SceneLoader or direct STL/PLY buffers   │
-└─────────────────────────────────────────────────────────────┘
+1. Format Detection
+   - getFormatCapability(ext) -> { family, strategy }
+2. Source Preparation
+   - strategy: "direct" -> prepareDirectLoad()
+   - strategy: "convert" -> convertForPreview()
+3. Preview Route Decision
+   - GLB/GLTF/STL/PLY/OBJ default -> Babylon.js compatibility mode
+   - GLB/GLTF/STL/PLY/OBJ opt-in rollout -> Three.js
+   - 3dgrid, conservative workbench, fallback -> Babylon.js
+4. Renderer Loading
+   - Babylon.js -> SceneLoader or direct STL/PLY buffers
+   - Three.js -> loadThreeGLTF/STL/PLY/OBJ
 ```
 
 ### Why Direct Buffer Loading for STL/PLY Fallbacks
 
-Three.js is the default single-model path for STL and PLY, while Babylon.js still backs `3dgrid`, conservative workbench, and fallback routes. Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL strings instead of ArrayBuffer when loading via `SceneLoader.ImportMeshAsync()`. Built-in loaders (GLTF and OBJ) are unaffected.
+Babylon.js compatibility mode is the default single-model path, while Three.js remains available as an explicit opt-in rollout. Babylon.js still backs `3dgrid`, conservative workbench, and fallback routes. Babylon.js v9 SceneLoader has a bug where custom plugins receive data URL strings instead of ArrayBuffer when loading via `SceneLoader.ImportMeshAsync()`. Built-in loaders (GLTF and OBJ) are unaffected.
 
 **Workaround**: STL and PLY parsers are called directly with the raw ArrayBuffer, bypassing SceneLoader entirely.
 

@@ -85,12 +85,19 @@ import type {
   PreviewWorldPoint,
   MeasurementScale,
   MeasurementUnit,
+  CameraZoomState,
   WorkbenchPreview,
 } from "../preview/types";
+import {
+  isPreviewLoadInterruptedError,
+  throwIfPreviewLoadInterrupted,
+  type PreviewLoadOptions,
+} from "../preview/load-control";
 import {
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
+  drawMeasurementLabelCanvas,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
   type MeasurementReading,
@@ -103,6 +110,11 @@ const OBJ_IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff
 const OBJ_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
 const FOCUS_DIM_VISIBILITY = 0.242;
 const FOCUS_WORLD_POINT_ANIMATION_MS = 320;
+const MEASUREMENT_LINE_COLOR = new Color3(0.54, 0.71, 0.97);
+const MEASUREMENT_MARKER_COLOR = new Color3(0.89, 0.91, 0.94);
+const MEASUREMENT_PENDING_COLOR = new Color3(0.96, 0.62, 0.04);
+const MEASUREMENT_HOVER_COLOR = new Color3(0.97, 0.98, 0.99);
+const MEASUREMENT_PREVIEW_COLOR = new Color3(0.8, 0.84, 0.88);
 
 function isShadowLight(light: Light): light is IShadowLight {
   const className = light.getClassName();
@@ -122,8 +134,7 @@ function isBabylonSelectablePartNode(value: unknown): value is BabylonSelectable
 }
 
 function isBabylonNodeDisposed(node: BabylonSelectablePartNode): boolean {
-  const maybeDisposed = node as BabylonSelectablePartNode & { isDisposed?: () => boolean };
-  return typeof maybeDisposed.isDisposed === "function" ? maybeDisposed.isDisposed() : false;
+  return typeof node.isDisposed === "function" ? node.isDisposed() : false;
 }
 
 function isBabylonNodeOrDescendant(candidate: AbstractMesh, target: BabylonSelectablePartNode): boolean {
@@ -135,8 +146,46 @@ function isBabylonNodeOrDescendant(candidate: AbstractMesh, target: BabylonSelec
   return false;
 }
 
+function disposeBabylonLoadedNodes(
+  meshes: readonly AbstractMesh[],
+  transformNodes: readonly TransformNode[] = [],
+): void {
+  for (const mesh of meshes) {
+    if (!mesh.isDisposed()) {
+      mesh.dispose(true, true);
+    }
+  }
+  for (const node of transformNodes) {
+    if (!node.isDisposed()) {
+      node.dispose(false, true);
+    }
+  }
+}
+
 function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
   return new Vector3(value.x, value.y, value.z);
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(value, 1));
+}
+
+function createMeasurementMarkerMaterial(scene: Scene): StandardMaterial {
+  const mat = new StandardMaterial("measure-marker-mat", scene);
+  mat.diffuseColor = MEASUREMENT_MARKER_COLOR.clone();
+  mat.emissiveColor = MEASUREMENT_MARKER_COLOR.clone();
+  mat.specularColor = new Color3(0, 0, 0);
+  mat.disableLighting = true;
+  mat.alpha = 0.96;
+  return mat;
+}
+
+function setMeasurementMarkerColor(marker: Mesh, color: Color3): void {
+  const mat = marker.material as StandardMaterial | null;
+  if (!mat) return;
+  mat.diffuseColor = color.clone();
+  mat.emissiveColor = color.clone();
 }
 
 function firstMtlPath(value: string): string {
@@ -237,11 +286,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private measurementUnit: MeasurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Mesh; label: Mesh }> = [];
   private measurementMarkers: Mesh[] = [];
+  private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
   private pendingMarker: Mesh | null = null;
   private hoveredMarkerIndex = -1;
   private lastPointerClient = { x: 0, y: 0 };
   private previewLine: Mesh | null = null;
+  private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
   private readonly handlePointerMove = (event: PointerEvent) => {
     this.lastPointerClient = { x: event.clientX, y: event.clientY };
     if (!this.measurementActive) return;
@@ -261,15 +312,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
         const prev = this.measurementMarkers[this.hoveredMarkerIndex];
         if (prev !== this.pendingMarker) {
           prev.scaling.setAll(1);
-          (prev.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
-          (prev.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+          setMeasurementMarkerColor(prev, MEASUREMENT_MARKER_COLOR);
         }
       }
       if (newHover >= 0 && newHover < this.measurementMarkers.length) {
         const next = this.measurementMarkers[newHover];
         next.scaling.setAll(1.6);
-        (next.material as StandardMaterial).diffuseColor = new Color3(1, 0.83, 0.23);
-        (next.material as StandardMaterial).emissiveColor = new Color3(1, 0.83, 0.23);
+        setMeasurementMarkerColor(next, MEASUREMENT_HOVER_COLOR);
       }
       this.hoveredMarkerIndex = newHover;
     }
@@ -282,6 +331,32 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private canRender(): boolean {
     const canvas = this.engine.getRenderingCanvas();
     return !!canvas?.isConnected && canvas.clientWidth > 0 && canvas.clientHeight > 0;
+  }
+
+  private getCameraZoomRange(): { current: number; min: number; max: number } | null {
+    if (!this.rootMesh) return null;
+    const current = this.camera.radius;
+    const lower = this.camera.lowerRadiusLimit;
+    const upper = this.camera.upperRadiusLimit;
+    const min = typeof lower === "number" && Number.isFinite(lower) && lower > 0
+      ? lower
+      : Math.max(current * 0.08, 0.00001);
+    const max = typeof upper === "number" && Number.isFinite(upper) && upper > min
+      ? upper
+      : Math.max(current * 8, min * 10);
+    return {
+      current: Math.max(min, Math.min(current, max)),
+      min,
+      max,
+    };
+  }
+
+  private notifyCameraZoomChanged(): void {
+    if (this.cameraZoomObservers.size === 0) return;
+    const state = this.getCameraZoomState();
+    for (const observer of this.cameraZoomObservers) {
+      observer(state);
+    }
   }
 
   private ensureDisassemblyController(): PreviewDisassemblyController | null {
@@ -319,7 +394,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     );
     this.camera.attachControl(canvas, true);
     this.camera.lowerRadiusLimit = 0.1;
-    this.camera.wheelPrecision = 30;
+    this.camera.wheelPrecision = 45;
+    this.camera.onViewMatrixChangedObservable.add(() => this.notifyCameraZoomChanged());
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     canvas.addEventListener("pointermove", this.handlePointerMove);
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
@@ -347,18 +423,16 @@ export class BabylonModelPreview implements WorkbenchPreview {
     ext: string,
     readFile?: (path: string) => Promise<ArrayBuffer>,
     modelPath?: string,
+    options?: PreviewLoadOptions,
   ): Promise<ModelPreviewSummary> {
+    throwIfPreviewLoadInterrupted(options);
     await ensureLoadersRegistered();
+    throwIfPreviewLoadInterrupted(options);
 
     if (this.rootMesh) {
-      const previousRoot = this.rootMesh;
-      previousRoot.dispose(true, true);
-      for (const mesh of this.loadedMeshes) {
-        if (mesh !== previousRoot && !mesh.isDisposed()) {
-          mesh.dispose(true, true);
-        }
-      }
+      disposeBabylonLoadedNodes(this.loadedMeshes, this.loadedTransformNodes);
       this.rootMesh = null;
+      this.notifyCameraZoomChanged();
     }
     this.invalidateMeshCache();
     this.loadedMeshes = [];
@@ -372,6 +446,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const extLower = ext.toLowerCase().replace(".", "");
     this.loadedExt = extLower;
     this.resourceWarnings = [];
+    throwIfPreviewLoadInterrupted(options);
     this.gltfComponentMetadata = collectBabylonGltfComponentMetadata(data, extLower);
     const scene = this.scene;
 
@@ -388,12 +463,41 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
     // Use data URL instead of blob URL — Obsidian's Electron converts
     // blob: URLs to blob:app://... which Babylon's GLTF loader cannot parse.
+    throwIfPreviewLoadInterrupted(options);
     const dataUrl = `data:application/octet-stream;base64,${arrayBufferToBase64(data)}`;
+    throwIfPreviewLoadInterrupted(options);
+
+    const assignImportResult = (result: Awaited<ReturnType<typeof ImportMeshAsync>>): void => {
+      try {
+        throwIfPreviewLoadInterrupted(options);
+      } catch (error) {
+        disposeBabylonLoadedNodes(result.meshes, result.transformNodes);
+        throw error;
+      }
+      this.loadedMeshes = result.meshes;
+      this.loadedTransformNodes = result.transformNodes;
+      if (result.meshes.length > 0) this.rootMesh = result.meshes[0] as Mesh;
+    };
+
+    const disposeCurrentLoadAndThrowIfInterrupted = (): void => {
+      try {
+        throwIfPreviewLoadInterrupted(options);
+      } catch (error) {
+        disposeBabylonLoadedNodes(this.loadedMeshes, this.loadedTransformNodes);
+        this.loadedMeshes = [];
+        this.loadedTransformNodes = [];
+        this.rootMesh = null;
+        this.invalidateMeshCache();
+        this.notifyCameraZoomChanged();
+        throw error;
+      }
+    };
 
     // OBJ: override _loadMTL to read MTL from vault instead of network fetch.
     // Serialized via objMtlLock to prevent concurrent loads from clobbering the prototype.
     if (extLower === "obj" && readFile && modelPath) {
       if (objMtlLock) await objMtlLock;
+      throwIfPreviewLoadInterrupted(options);
       let resolveLock!: () => void;
       objMtlLock = new Promise<void>(r => { resolveLock = r; });
       try {
@@ -414,6 +518,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
           const mtlPath = joinPortablePath(modelDir, mtlFilename);
           try {
             const mtlData = await readFile(mtlPath);
+            throwIfPreviewLoadInterrupted(options);
             const raw = new TextDecoder().decode(new Uint8Array(mtlData));
             const lines = raw.split("\n");
 
@@ -429,12 +534,17 @@ export class BabylonModelPreview implements WorkbenchPreview {
               let resolved = false;
               for (const cand of candidates) {
                 try {
+                  throwIfPreviewLoadInterrupted(options);
                   const texBuf = await readFile(cand);
+                  throwIfPreviewLoadInterrupted(options);
                   const dataUrl = `data:${guessTextureMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
                   lines[i] = `${m[1]} ${dataUrl}`;
                   resolved = true;
                   break;
-                } catch { /* try next candidate */ }
+                } catch (error) {
+                  if (isPreviewLoadInterruptedError(error)) throw error;
+                  /* try next candidate */
+                }
               }
               if (!resolved) {
                 this.resourceWarnings.push(`OBJ material texture not found: ${rawPath}`);
@@ -450,7 +560,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
               filtered.splice(nmIdx >= 0 ? nmIdx + 1 : 0, 0, "Kd 0.80 0.80 0.80");
             }
             mtlContent = filtered.join("\n");
-          } catch {
+          } catch (error) {
+            if (isPreviewLoadInterruptedError(error)) throw error;
             this.resourceWarnings.push(`OBJ material library not found: ${mtlPath}`);
           }
         }
@@ -462,13 +573,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
         };
 
         const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
-        this.loadedMeshes = result.meshes;
-        this.loadedTransformNodes = result.transformNodes;
-        if (result.meshes.length > 0) this.rootMesh = result.meshes[0] as Mesh;
+        assignImportResult(result);
 
         // Restore original _loadMTL
         proto._loadMTL = originalLoadMTL;
       } catch (e) {
+        if (isPreviewLoadInterruptedError(e)) {
+          throw e;
+        }
         console.error("[AI3D] OBJ load error:", e);
         throw e;
       } finally {
@@ -477,18 +589,32 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
     } else if (extLower === "stl") {
       // Direct parse — Babylon v9 SceneLoader mishandles data URLs for custom plugins
-      this.rootMesh = loadSTLBuffer(scene, data);
+      const rootMesh = loadSTLBuffer(scene, data);
+      try {
+        throwIfPreviewLoadInterrupted(options);
+      } catch (error) {
+        rootMesh?.dispose(false, true);
+        throw error;
+      }
+      this.rootMesh = rootMesh;
       if (this.rootMesh) this.loadedMeshes = [this.rootMesh];
     } else if (extLower === "ply") {
       // Direct parse — same Babylon v9 data-URL issue as STL
-      this.rootMesh = loadPLYBuffer(scene, data);
+      const rootMesh = loadPLYBuffer(scene, data);
+      try {
+        throwIfPreviewLoadInterrupted(options);
+      } catch (error) {
+        rootMesh?.dispose(false, true);
+        throw error;
+      }
+      this.rootMesh = rootMesh;
       if (this.rootMesh) this.loadedMeshes = [this.rootMesh];
     } else {
       const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
-      this.loadedMeshes = result.meshes;
-      this.loadedTransformNodes = result.transformNodes;
-      if (result.meshes.length > 0) this.rootMesh = result.meshes[0] as Mesh;
+      assignImportResult(result);
     }
+
+    disposeCurrentLoadAndThrowIfInterrupted();
 
     if (!this.rootMesh) {
       throw new Error("No mesh found in model file");
@@ -517,6 +643,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       radius: this.camera.radius,
       target: this.camera.target.clone(),
     };
+    this.notifyCameraZoomChanged();
 
     this.startRenderLoop();
     this.engine.resize();
@@ -597,6 +724,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
     if (config.near !== undefined) this.camera.minZ = config.near;
     if (config.far !== undefined) this.camera.maxZ = config.far;
+    this.notifyCameraZoomChanged();
   }
 
   applyLightConfig(lights: LightConfig[]): void {
@@ -835,9 +963,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   toggleMeasurement(): boolean {
     this.measurementActive = !this.measurementActive;
+    this.engine.getRenderingCanvas()?.classList.toggle("ai3d-measurement-active", this.measurementActive);
     if (!this.measurementActive) {
       this.cancelPendingMeasurement();
     }
+    this.notifyMeasurementsChanged();
     return this.measurementActive;
   }
 
@@ -852,6 +982,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private disposeMeasurementOverlays(deactivate: boolean): void {
     if (deactivate) {
       this.measurementActive = false;
+      this.engine.getRenderingCanvas()?.classList.remove("ai3d-measurement-active");
     }
     this.cancelPendingMeasurement(false);
     for (const segment of this.measurementSegments) {
@@ -863,12 +994,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
       marker.dispose(false, true);
     }
     this.measurementMarkers = [];
+    this.notifyMeasurementsChanged();
   }
 
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
     this.updateMeasurementLabels();
+    this.notifyMeasurementsChanged();
   }
 
   getMeasurementScale(): MeasurementScale {
@@ -878,6 +1011,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   setMeasurementUnit(unit: MeasurementUnit): void {
     this.measurementUnit = normalizeMeasurementUnit(unit);
     this.updateMeasurementLabels();
+    this.notifyMeasurementsChanged();
   }
 
   getMeasurementUnit(): MeasurementUnit {
@@ -903,6 +1037,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return createMeasurementMarkdown(this.createMeasurementRecords());
   }
 
+  observeMeasurements(callback: () => void): () => void {
+    this.measurementObservers.add(callback);
+    callback();
+    return () => {
+      this.measurementObservers.delete(callback);
+    };
+  }
+
   updateMeasurementLabels(): void {
     if (this.measurementSegments.length === 0) return;
     const markerSize = this.getMeasurementMarkerSize() * 4;
@@ -911,6 +1053,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
       segment.label.dispose(false, true);
       const mid = Vector3.Center(segment.start, segment.end);
       segment.label = this.createMeasurementLabelMesh(labelText, mid, markerSize);
+    }
+  }
+
+  private notifyMeasurementsChanged(): void {
+    for (const callback of Array.from(this.measurementObservers)) {
+      callback();
     }
   }
 
@@ -949,6 +1097,35 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const mobileBoost = isMobile() ? 1.5 : 1;
     this.engine.setHardwareScalingLevel(qualityScale * mobileBoost / clamped);
     return clamped;
+  }
+
+  getCameraZoomState(): CameraZoomState | null {
+    const range = this.getCameraZoomRange();
+    if (!range) return null;
+    const value = (range.max - range.current) / (range.max - range.min);
+    const clamped = clampUnit(value);
+    return {
+      value: clamped,
+      percentage: Math.round(clamped * 100),
+    };
+  }
+
+  setCameraZoom(value: number): CameraZoomState | null {
+    const range = this.getCameraZoomRange();
+    if (!range) return null;
+    const clamped = clampUnit(value);
+    this.camera.radius = range.max - clamped * (range.max - range.min);
+    this.startRenderLoop();
+    this.notifyCameraZoomChanged();
+    return this.getCameraZoomState();
+  }
+
+  observeCameraZoom(callback: (state: CameraZoomState | null) => void): () => void {
+    this.cameraZoomObservers.add(callback);
+    callback(this.getCameraZoomState());
+    return () => {
+      this.cameraZoomObservers.delete(callback);
+    };
   }
 
   getPerformanceSnapshot() {
@@ -1042,6 +1219,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.beta = this.initialCamera.beta;
     this.camera.radius = this.initialCamera.radius;
     this.camera.target = this.initialCamera.target.clone();
+    this.startRenderLoop();
+    this.notifyCameraZoomChanged();
   }
 
   exportModelInfo(modelPath?: string): string {
@@ -1266,6 +1445,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.focusWorldPointFrame = 0;
     }
     this._onPickCallbacks = [];
+    this.cameraZoomObservers.clear();
     this.cleanupPicking?.();
     this.cleanupPicking = null;
     this.gizmo?.dispose();
@@ -1273,6 +1453,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disposeMeasurementOverlays(true);
+    this.measurementObservers.clear();
     this.clearFocusedMesh();
     this.originalMeshVisibility.clear();
     this.bboxMesh?.dispose();
@@ -1473,8 +1654,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       pendingMarker.dispose(false, true);
     } else if (pendingMarker) {
       pendingMarker.scaling.setAll(1);
-      (pendingMarker.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
-      (pendingMarker.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+      setMeasurementMarkerColor(pendingMarker, MEASUREMENT_MARKER_COLOR);
     }
 
     if (markDirty) {
@@ -1512,18 +1692,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
         const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
         marker.position = usePoint;
         marker.isPickable = false;
-        const mat = new StandardMaterial("measure-marker-mat", this.scene);
-        mat.diffuseColor = new Color3(1, 0.42, 0.42);
-        mat.emissiveColor = new Color3(1, 0.42, 0.42);
-        marker.material = mat;
+        marker.material = createMeasurementMarkerMaterial(this.scene);
         marker.renderingGroupId = 2;
         this.measurementMarkers.push(marker);
       }
       this.createMeasurementSegment(this.pendingPoint, usePoint);
       if (this.pendingMarker) {
         this.pendingMarker.scaling.setAll(1);
-        (this.pendingMarker.material as StandardMaterial).diffuseColor = new Color3(1, 0.42, 0.42);
-        (this.pendingMarker.material as StandardMaterial).emissiveColor = new Color3(1, 0.42, 0.42);
+        setMeasurementMarkerColor(this.pendingMarker, MEASUREMENT_MARKER_COLOR);
       }
       this.pendingPoint = null;
       this.pendingMarker = null;
@@ -1534,10 +1710,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
         const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
         marker.position = usePoint;
         marker.isPickable = false;
-        const mat = new StandardMaterial("measure-marker-mat", this.scene);
-        mat.diffuseColor = new Color3(1, 0.42, 0.42);
-        mat.emissiveColor = new Color3(1, 0.42, 0.42);
-        marker.material = mat;
+        marker.material = createMeasurementMarkerMaterial(this.scene);
         marker.renderingGroupId = 2;
         this.measurementMarkers.push(marker);
         this.pendingMarker = marker;
@@ -1545,16 +1718,17 @@ export class BabylonModelPreview implements WorkbenchPreview {
         this.pendingMarker = this.measurementMarkers[existingIndex];
       }
       this.pendingMarker.scaling.setAll(1.6);
-      (this.pendingMarker.material as StandardMaterial).diffuseColor = new Color3(0.32, 0.81, 0.4);
-      (this.pendingMarker.material as StandardMaterial).emissiveColor = new Color3(0.32, 0.81, 0.4);
+      setMeasurementMarkerColor(this.pendingMarker, MEASUREMENT_PENDING_COLOR);
       this.pendingPoint = usePoint;
       this.ensurePreviewLine();
     }
+    this.notifyMeasurementsChanged();
   }
 
   private createMeasurementSegment(start: Vector3, end: Vector3): void {
     const line = MeshBuilder.CreateLines("measure-line", { points: [start, end] }, this.scene);
-    line.color = new Color3(1, 0.42, 0.42);
+    line.color = MEASUREMENT_LINE_COLOR.clone();
+    line.alpha = 0.94;
     line.isPickable = false;
     line.renderingGroupId = 2;
 
@@ -1566,27 +1740,16 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementLabelMesh(text: { primary: string; secondary: string }, position: Vector3, scale: number): Mesh {
-    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 5, height: scale * 1.25 }, this.scene);
+    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 4, height: scale * 0.95 }, this.scene);
     plane.position = position;
     plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
     plane.renderingGroupId = 2;
 
     const texture = new DynamicTexture("measure-label-tex", { width: 640, height: 160 }, this.scene);
+    texture.hasAlpha = true;
     const ctx = texture.getContext() as CanvasRenderingContext2D;
-    ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
-    ctx.fillRect(0, 0, 640, 160);
-    ctx.strokeStyle = "#ff6b6b";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(0, 0, 640, 160);
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = "bold 46px sans-serif";
-    ctx.fillText(text.primary, 320, 58);
-    ctx.font = "28px sans-serif";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
-    ctx.fillText(text.secondary, 320, 112);
+    drawMeasurementLabelCanvas(ctx, text, 640, 160);
     texture.update();
 
     const mat = new StandardMaterial("measure-label-mat", this.scene);
@@ -1594,6 +1757,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     mat.emissiveColor = new Color3(1, 1, 1);
     mat.disableLighting = true;
     mat.opacityTexture = texture;
+    mat.useAlphaFromDiffuseTexture = true;
     plane.material = mat;
     return plane;
   }
@@ -1604,8 +1768,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
       points: [Vector3.Zero(), Vector3.Zero()],
       updatable: true,
     }, this.scene);
-    (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
-    (this.previewLine as LinesMesh).alpha = 0.5;
+    (this.previewLine as LinesMesh).color = MEASUREMENT_PREVIEW_COLOR.clone();
+    (this.previewLine as LinesMesh).alpha = 0.68;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }
@@ -1629,8 +1793,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
       points: [this.pendingPoint, endPoint],
       instance: this.previewLine as LinesMesh,
     }, this.scene);
-    (this.previewLine as LinesMesh).color = new Color3(1, 1, 1);
-    (this.previewLine as LinesMesh).alpha = 0.5;
+    (this.previewLine as LinesMesh).color = MEASUREMENT_PREVIEW_COLOR.clone();
+    (this.previewLine as LinesMesh).alpha = 0.68;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }

@@ -17,9 +17,13 @@ Read it before changing code. For deeper product/spec context, use
 
 - This is an Obsidian plugin for rendering 3D assets and turning model evidence into
   linked knowledge notes.
-- Single-model GLB/GLTF/STL/PLY/OBJ preview paths use Three.js by default.
-- Babylon.js remains the production capability backend for `3dgrid`, conservative
-  fallback behavior, and any future local-only SPLAT restoration.
+- Single-model GLB/GLTF/STL/PLY/OBJ preview paths use Babylon.js compatibility
+  mode by default.
+- Three.js remains available as an explicit opt-in single-model rollout for
+  reading surfaces, direct file view, and Experimental Three workbench probes.
+- Babylon.js remains the production capability backend for default single-model
+  previews, `3dgrid`, conservative fallback behavior, and any future local-only
+  SPLAT restoration.
 - Direct file view can opt into Experimental Three workbench for direct GLB/GLTF and
   falls back to Babylon on failure.
 - Knowledge generation is local-first. Remote draft support is optional and sends only

@@ -3,6 +3,7 @@ import {
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading,
+  drawMeasurementLabelCanvas,
   formatMeasurementValue,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
@@ -40,6 +41,27 @@ describe("measurement helpers", () => {
     expect(label.secondary).toContain("X 6");
     expect(label.secondary).toContain("Y 4");
     expect(label.secondary).toContain("Z 6");
+  });
+
+  it("draws scene labels as transparent dimension text instead of a card", () => {
+    const calls: string[] = [];
+    const ctx = {
+      clearRect: () => calls.push("clearRect"),
+      fill: () => calls.push("fill"),
+      fillRect: () => calls.push("fillRect"),
+      fillText: () => calls.push("fillText"),
+      stroke: () => calls.push("stroke"),
+      strokeText: () => calls.push("strokeText"),
+    } as unknown as CanvasRenderingContext2D;
+
+    drawMeasurementLabelCanvas(ctx, { primary: "12 mm", secondary: "X 12  Y 0  Z 0  mm" });
+
+    expect(calls).toContain("clearRect");
+    expect(calls.filter((call) => call === "fillText")).toHaveLength(2);
+    expect(calls.filter((call) => call === "strokeText")).toHaveLength(2);
+    expect(calls).not.toContain("fillRect");
+    expect(calls).not.toContain("fill");
+    expect(calls).not.toContain("stroke");
   });
 
   it("exports measurement records as Markdown", () => {

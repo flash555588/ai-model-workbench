@@ -29,6 +29,7 @@ import {
   createPreviewOrbitCameraFitFromRadius,
 } from "../preview/camera-fit";
 import type { PreviewGridRenderer } from "../preview/grid";
+import type { CameraZoomState } from "../preview/types";
 
 /** Babylon.js uses 32-bit layerMask — one bit per cell, so max 32 cells. */
 const MAX_CELLS = 32;
@@ -39,6 +40,11 @@ function escapeTableCell(value: string): string {
 
 function toBabylonVector3(value: { x: number; y: number; z: number }): Vector3 {
   return new Vector3(value.x, value.y, value.z);
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(value, 1));
 }
 
 interface GridCell {
@@ -59,7 +65,9 @@ class BabylonGridRenderer implements PreviewGridRenderer {
   private rendering = false;
   private dirty = true;
   private contextLost = false;
+  private warmupFrame: number | null = null;
   private resizeObs: ResizeObserver;
+  private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -72,6 +80,47 @@ class BabylonGridRenderer implements PreviewGridRenderer {
 
   private markDirty(): void {
     this.dirty = true;
+  }
+
+  private getCameraZoomRange(camera: ArcRotateCamera): { current: number; min: number; max: number } {
+    const current = camera.radius;
+    const lower = camera.lowerRadiusLimit;
+    const upper = camera.upperRadiusLimit;
+    const min = typeof lower === "number" && Number.isFinite(lower) && lower > 0
+      ? lower
+      : Math.max(current * 0.08, 0.00001);
+    const max = typeof upper === "number" && Number.isFinite(upper) && upper > min
+      ? upper
+      : Math.max(current * 8, min * 10);
+    return {
+      current: Math.max(min, Math.min(current, max)),
+      min,
+      max,
+    };
+  }
+
+  private notifyCameraZoomChanged(): void {
+    if (this.cameraZoomObservers.size === 0) return;
+    const state = this.getCameraZoomState();
+    for (const observer of this.cameraZoomObservers) {
+      observer(state);
+    }
+  }
+
+  private scheduleWarmupFrames(remaining = 8): void {
+    if (this.warmupFrame !== null) {
+      window.cancelAnimationFrame(this.warmupFrame);
+    }
+    this.warmupFrame = window.requestAnimationFrame(() => {
+      this.warmupFrame = null;
+      if (!this.canRender() || this.contextLost) {
+        return;
+      }
+      this.markDirty();
+      if (remaining > 1) {
+        this.scheduleWarmupFrames(remaining - 1);
+      }
+    });
   }
 
   private getCellBounds(meshes: readonly AbstractMesh[]) {
@@ -133,6 +182,8 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     this.startRenderLoop();
     this.markDirty();
     this.engine.resize();
+    this.scheduleWarmupFrames();
+    this.notifyCameraZoomChanged();
   }
 
   /**
@@ -216,7 +267,10 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     }
 
     this.startRenderLoop();
+    this.markDirty();
     this.engine.resize();
+    this.scheduleWarmupFrames();
+    this.notifyCameraZoomChanged();
   }
 
   /**
@@ -307,7 +361,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     camera.maxZ = fit.far;
     camera.lowerRadiusLimit = fit.lowerRadiusLimit;
     camera.upperRadiusLimit = fit.upperRadiusLimit;
-    camera.wheelPrecision = 30;
+    camera.wheelPrecision = 45;
     camera.viewport = new Viewport(
       cellDef.viewport.x,
       cellDef.viewport.y,
@@ -316,7 +370,13 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     );
     camera.layerMask = 1 << globalIndex;
     const canvas = this.engine.getRenderingCanvas();
-    if (canvas) { camera.attachControl(canvas, true); camera.onViewMatrixChangedObservable.add(() => this.markDirty()); }
+    if (canvas) {
+      camera.attachControl(canvas, true);
+      camera.onViewMatrixChangedObservable.add(() => {
+        this.markDirty();
+        this.notifyCameraZoomChanged();
+      });
+    }
     this.initialCameras.push({
       alpha: camera.alpha, beta: camera.beta,
       radius: camera.radius, target: camera.target.clone(),
@@ -383,11 +443,17 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     camera.maxZ = fit.far;
     camera.lowerRadiusLimit = fit.lowerRadiusLimit;
     camera.upperRadiusLimit = fit.upperRadiusLimit;
-    camera.wheelPrecision = 30;
+    camera.wheelPrecision = 45;
     camera.viewport = new Viewport(vx, vy, vw, vh);
     camera.layerMask = 1 << index;
     const canvas = this.engine.getRenderingCanvas();
-    if (canvas) { camera.attachControl(canvas, true); camera.onViewMatrixChangedObservable.add(() => this.markDirty()); }
+    if (canvas) {
+      camera.attachControl(canvas, true);
+      camera.onViewMatrixChangedObservable.add(() => {
+        this.markDirty();
+        this.notifyCameraZoomChanged();
+      });
+    }
     this.initialCameras.push({
       alpha: camera.alpha, beta: camera.beta,
       radius: camera.radius, target: camera.target.clone(),
@@ -411,6 +477,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     this.engine.resize();
     this.startRenderLoop();
     this.markDirty();
+    this.scheduleWarmupFrames();
   };
 
   private renderFrame(): void {
@@ -474,6 +541,39 @@ class BabylonGridRenderer implements PreviewGridRenderer {
     return clamped;
   }
 
+  getCameraZoomState(): CameraZoomState | null {
+    const camera = this.cells[0]?.camera;
+    if (!camera) return null;
+    const range = this.getCameraZoomRange(camera);
+    const value = (range.max - range.current) / (range.max - range.min);
+    const clamped = clampUnit(value);
+    return {
+      value: clamped,
+      percentage: Math.round(clamped * 100),
+    };
+  }
+
+  setCameraZoom(value: number): CameraZoomState | null {
+    if (this.cells.length === 0) return null;
+    const clamped = clampUnit(value);
+    for (const cell of this.cells) {
+      const range = this.getCameraZoomRange(cell.camera);
+      cell.camera.radius = range.max - clamped * (range.max - range.min);
+    }
+    this.markDirty();
+    this.startRenderLoop();
+    this.notifyCameraZoomChanged();
+    return this.getCameraZoomState();
+  }
+
+  observeCameraZoom(callback: (state: CameraZoomState | null) => void): () => void {
+    this.cameraZoomObservers.add(callback);
+    callback(this.getCameraZoomState());
+    return () => {
+      this.cameraZoomObservers.delete(callback);
+    };
+  }
+
   resetView(): void {
     for (let i = 0; i < this.cells.length; i++) {
       const cam = this.cells[i].camera;
@@ -485,6 +585,8 @@ class BabylonGridRenderer implements PreviewGridRenderer {
         cam.target = init.target.clone();
       }
     }
+    this.markDirty();
+    this.notifyCameraZoomChanged();
   }
 
   toggleWireframe(): boolean {
@@ -526,6 +628,11 @@ class BabylonGridRenderer implements PreviewGridRenderer {
   }
 
   destroy(): void {
+    this.cameraZoomObservers.clear();
+    if (this.warmupFrame !== null) {
+      window.cancelAnimationFrame(this.warmupFrame);
+      this.warmupFrame = null;
+    }
     this.engine.stopRenderLoop();
     for (const cell of this.cells) cell.camera.detachControl();
     const canvas = this.engine.getRenderingCanvas();

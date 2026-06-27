@@ -42,6 +42,30 @@ function createState(): PluginState {
 }
 
 describe("diagnostics report", () => {
+  it("reports Babylon as the default route capability context", () => {
+    const state = createState();
+    state.settings = {
+      ...DEFAULT_SETTINGS,
+    };
+
+    const report = buildDiagnosticsReport({
+      manifest: {
+        id: "ai-model-workbench",
+        name: "AI Model Workbench",
+        version: "0.5.8",
+        minAppVersion: "1.5.0",
+        description: "",
+        author: "",
+      },
+      state,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(report).toContain("Current route: babylon");
+    expect(report).toContain("Route capability profile: babylon; formats=glb/gltf/stl/ply/obj/splat/converted-glb");
+    expect(report).toContain("Route color pipeline: Babylon material pipeline with conservative fallback behavior");
+  });
+
   it("includes renderer route capability and color pipeline context", () => {
     const report = buildDiagnosticsReport({
       manifest: {

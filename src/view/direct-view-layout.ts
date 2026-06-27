@@ -47,8 +47,9 @@ export function createDirectViewLayout(options: DirectViewLayoutOptions): Direct
   mainArea.appendChild(host);
 
   const sidebarContent = sidebar.createDiv({ cls: "ai3d-sidebar-content" });
+  const workbenchPanel = sidebarContent.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
+  const sidebarBody = sidebarContent.createDiv({ cls: "ai3d-sidebar-body" });
   const vHandle = workspace.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-v" });
-  const workbenchPanel = workspace.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
 
   if (mobile) {
     mainArea.createDiv({
@@ -65,7 +66,7 @@ export function createDirectViewLayout(options: DirectViewLayoutOptions): Direct
     host,
     canvas,
     modeOverlay,
-    sidebarContent,
+    sidebarContent: sidebarBody,
     vHandle,
     workbenchPanel,
   };

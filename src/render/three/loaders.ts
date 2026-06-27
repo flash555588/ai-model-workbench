@@ -11,6 +11,7 @@ import {
   getAdaptivePointSize,
   prepareThreeMaterialForColorAccuracy,
 } from "./material-quality";
+import { throwIfPreviewLoadInterrupted, type PreviewLoadOptions } from "../preview/load-control";
 
 const IMAGE_MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
@@ -113,13 +114,16 @@ async function runLimited<T>(
   tasks: readonly T[],
   concurrency: number,
   worker: (task: T) => Promise<void>,
+  options?: PreviewLoadOptions,
 ): Promise<void> {
   let nextIndex = 0;
   const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (nextIndex < tasks.length) {
+      throwIfPreviewLoadInterrupted(options);
       const task = tasks[nextIndex++];
       await worker(task);
+      throwIfPreviewLoadInterrupted(options);
     }
   }));
 }
@@ -128,13 +132,16 @@ async function createGltfBlobResourceResolver(
   readFile: (path: string) => Promise<ArrayBuffer>,
   modelDir: string,
   gltfJson: GltfJson,
+  options?: PreviewLoadOptions,
 ): Promise<GltfBlobResourceResolver> {
   const lookup = new Map<string, string>();
   const objectUrls: string[] = [];
   const manager = new LoadingManager();
 
   const register = async (task: GltfExternalResourceTask): Promise<void> => {
+    throwIfPreviewLoadInterrupted(options);
     const resource = await readRelativeResource(readFile, modelDir, task.uri);
+    throwIfPreviewLoadInterrupted(options);
     const objectUrl = URL.createObjectURL(new Blob([resource.data], { type: task.mimeType ?? guessMime(resource.path) }));
     objectUrls.push(objectUrl);
     for (const alias of task.aliases) {
@@ -142,11 +149,19 @@ async function createGltfBlobResourceResolver(
     }
   };
 
-  await runLimited(
-    collectGltfExternalResourceTasks(gltfJson),
-    GLTF_EXTERNAL_RESOURCE_CONCURRENCY,
-    register,
-  );
+  try {
+    await runLimited(
+      collectGltfExternalResourceTasks(gltfJson),
+      GLTF_EXTERNAL_RESOURCE_CONCURRENCY,
+      register,
+      options,
+    );
+  } catch (error) {
+    for (const objectUrl of objectUrls) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    throw error;
+  }
 
   manager.setURLModifier((url) => {
     const key = normalizeResourceLookupKey(url);
@@ -222,8 +237,10 @@ export async function loadThreeGLTF(
   ext: string,
   readFile?: (path: string) => Promise<ArrayBuffer>,
   modelPath?: string,
+  options?: PreviewLoadOptions,
 ): Promise<{ scene: Object3D; animations: AnimationClip[]; warnings: string[] }> {
   const warnings: string[] = [];
+  throwIfPreviewLoadInterrupted(options);
 
   if (ext === "gltf" && readFile && modelPath) {
     // GLTF JSON may reference external .bin and textures. Keep the original JSON
@@ -232,9 +249,11 @@ export async function loadThreeGLTF(
     const gltfText = new TextDecoder().decode(new Uint8Array(data));
     const gltfJson = JSON.parse(gltfText) as GltfJson;
     const modelDir = getPortableDirname(modelPath);
-    const resolver = await createGltfBlobResourceResolver(readFile, modelDir, gltfJson);
+    const resolver = await createGltfBlobResourceResolver(readFile, modelDir, gltfJson, options);
+    throwIfPreviewLoadInterrupted(options);
     const loader = new GLTFLoader(resolver.manager);
     try {
+      throwIfPreviewLoadInterrupted(options);
       const gltf = await loader.parseAsync(data, modelDir ? `${modelDir}/` : "");
       const root = gltf.scene || gltf.scenes?.[0];
       if (!root) throw new Error("GLTF did not contain a scene");
@@ -245,6 +264,7 @@ export async function loadThreeGLTF(
   }
 
   // .glb binary path
+  throwIfPreviewLoadInterrupted(options);
   const loader = new GLTFLoader();
   const gltf = await loader.parseAsync(data, "");
   const root = gltf.scene || gltf.scenes?.[0];

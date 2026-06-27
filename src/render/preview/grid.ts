@@ -1,6 +1,7 @@
 import type { GridBlockConfig, ModelConfig, PresetResult } from "../../domain/models";
+import type { CameraZoomPreview } from "./types";
 
-export interface PreviewGridRenderer {
+export interface PreviewGridRenderer extends CameraZoomPreview {
   loadModels(
     models: ModelConfig[],
     config: GridBlockConfig,

@@ -32,6 +32,8 @@ describe("preview capability profile", () => {
       toggleOrientationGizmo: () => true,
       toggleBoundingBox: () => true,
       setRenderScale: () => 1,
+      getCameraZoomState: () => ({ value: 0.5, percentage: 50 }),
+      setCameraZoom: () => ({ value: 0.5, percentage: 50 }),
       setExplode: () => undefined,
       resetExplode: () => undefined,
       focusWorldPoint: () => undefined,
@@ -47,6 +49,7 @@ describe("preview capability profile", () => {
       "orientation-gizmo",
       "bounding-box",
       "render-scale",
+      "camera-zoom",
       "workbench",
     ]);
   });

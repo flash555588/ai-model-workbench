@@ -19,6 +19,7 @@ import {
   createLivePreviewPathResolverCache,
   type LivePreviewPathResolverCache,
 } from "./live-preview-path-cache";
+import { createStagedDiv } from "../../utils/dom";
 
 type LivePreviewModule = typeof import("./live-preview");
 type LivePreviewWidget = InstanceType<LivePreviewModule["ModelEmbedWidget"]>;
@@ -85,8 +86,7 @@ class LazyModelEmbedWidget extends WidgetType {
   }
 
   override toDOM(): HTMLElement {
-    const placeholder = activeDocument.createElement("div");
-    placeholder.className = "ai3d-embed-preview ai3d-cm-widget ai3d-embed-preview-lazy";
+    const placeholder = createStagedDiv("ai3d-embed-preview ai3d-cm-widget ai3d-embed-preview-lazy");
     placeholder.setAttribute("contenteditable", "false");
     placeholder.style.setProperty("--ai3d-embed-height", `${this.height}px`);
 
@@ -134,7 +134,7 @@ class LazyModelEmbedWidget extends WidgetType {
     } catch (error) {
       console.warn("[AI3D] Failed to load Live Preview widget runtime:", error);
       if (!this.destroyed && placeholder.isConnected) {
-        placeholder.textContent = "AI3D live preview failed to load.";
+        placeholder.textContent = "Ai3d live preview failed to load.";
       }
       return;
     }

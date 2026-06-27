@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { App } from "obsidian";
+import { TFile, type App } from "obsidian";
 import {
   getFileSizeRenderBudget,
   getModelPathByteSize,
@@ -11,6 +11,10 @@ import type { ModelPreviewSummary, PluginSettings } from "../domain/models";
 const nodeShimMocks = vi.hoisted(() => ({
   moduleLoadCount: { value: 0 },
   stat: vi.fn(),
+}));
+
+vi.mock("obsidian", () => ({
+  TFile: class TFile {},
 }));
 
 vi.mock("../utils/node-shim", () => {
@@ -25,7 +29,10 @@ const baseSettings: Pick<PluginSettings, "renderQuality" | "renderScale"> = {
   renderScale: 1.5,
 };
 
-function summary(tier: ModelPreviewSummary["performanceTier"]): ModelPreviewSummary {
+function summary(
+  tier: ModelPreviewSummary["performanceTier"],
+  overrides: Partial<ModelPreviewSummary> = {},
+): ModelPreviewSummary {
   return {
     meshCount: 1,
     triangleCount: 1,
@@ -36,6 +43,7 @@ function summary(tier: ModelPreviewSummary["performanceTier"]): ModelPreviewSumm
     resourceWarnings: [],
     boundingSize: { x: 1, y: 1, z: 1 },
     rootName: "fixture",
+    ...overrides,
   };
 }
 
@@ -44,8 +52,14 @@ function createAppWithVaultFileSize(path: string, size: number): App {
 }
 
 function createAppWithVaultFiles(files: Record<string, { size: number; text?: string }>): App {
+  const createFile = (path: string, file: { size: number; text?: string }) =>
+    Object.assign(Object.create(TFile.prototype), { path, stat: { size: file.size }, text: file.text }) as TFile & {
+      path: string;
+      stat: { size: number };
+      text?: string;
+    };
   const fileMap = new Map(
-    Object.entries(files).map(([path, file]) => [path, { path, stat: { size: file.size }, text: file.text }]),
+    Object.entries(files).map(([path, file]) => [path, createFile(path, file)]),
   );
   return {
     vault: {
@@ -73,25 +87,37 @@ describe("model render budget", () => {
   it("caps medium-sized files before model parsing", () => {
     expect(getFileSizeRenderBudget(baseSettings, 80 * 1024 * 1024)).toEqual({
       renderQuality: "medium",
-      renderScale: 0.85,
+      renderScale: 1.25,
     });
   });
 
   it("caps very large files before model parsing", () => {
     expect(getFileSizeRenderBudget(baseSettings, 240 * 1024 * 1024)).toEqual({
-      renderQuality: "low",
-      renderScale: 0.65,
+      renderQuality: "medium",
+      renderScale: 1,
     });
   });
 
-  it("uses summary tiers for final large-model budget", () => {
-    expect(getSummaryRenderBudget(baseSettings, summary("heavy"))).toEqual({
-      renderQuality: "medium",
-      renderScale: 0.85,
+  it("keeps full resolution for mesh-heavy summaries that are not pixel-heavy", () => {
+    expect(getSummaryRenderBudget(baseSettings, summary("extreme", {
+      meshCount: 7_841,
+      triangleCount: 36_164,
+      materialCount: 20,
+    }))).toEqual(baseSettings);
+  });
+
+  it("uses summary tiers for final pixel-heavy model budgets", () => {
+    expect(getSummaryRenderBudget(baseSettings, summary("medium", { triangleCount: 180_000 }))).toEqual({
+      renderQuality: "high",
+      renderScale: 1.25,
     });
-    expect(getSummaryRenderBudget(baseSettings, summary("extreme"))).toEqual({
-      renderQuality: "low",
-      renderScale: 0.65,
+    expect(getSummaryRenderBudget(baseSettings, summary("heavy", { triangleCount: 450_000 }))).toEqual({
+      renderQuality: "medium",
+      renderScale: 1,
+    });
+    expect(getSummaryRenderBudget(baseSettings, summary("extreme", { triangleCount: 1_200_000 }))).toEqual({
+      renderQuality: "medium",
+      renderScale: 1,
     });
   });
 

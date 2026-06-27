@@ -1,10 +1,17 @@
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import type { ModelPreviewSummary, PluginSettings } from "../domain/models";
 
 export type RenderQualityBudget = Pick<PluginSettings, "renderQuality" | "renderScale">;
 
 const MEDIUM_FILE_SIZE_BYTES = 64 * 1024 * 1024;
 const HEAVY_FILE_SIZE_BYTES = 192 * 1024 * 1024;
+const MEDIUM_PIXEL_COUNT = 180_000;
+const HEAVY_PIXEL_COUNT = 450_000;
+const EXTREME_PIXEL_COUNT = 1_200_000;
+const MEDIUM_SPLAT_COUNT = 650_000;
+const EXTREME_SPLAT_COUNT = 1_500_000;
+const MEDIUM_RENDER_SCALE_CAP = 1.25;
+const HEAVY_RENDER_SCALE_CAP = 1;
 const REMOTE_URI_RE = /^[a-z][a-z0-9+.-]*:/i;
 
 interface GltfExternalResource {
@@ -34,19 +41,41 @@ export function getFileSizeRenderBudget(
 
   if ((byteSize ?? 0) >= HEAVY_FILE_SIZE_BYTES) {
     return {
-      renderQuality: "low",
-      renderScale: Math.min(settings.renderScale, 0.65),
+      renderQuality: settings.renderQuality === "high" ? "medium" : settings.renderQuality,
+      renderScale: Math.min(settings.renderScale, HEAVY_RENDER_SCALE_CAP),
     };
   }
 
   if ((byteSize ?? 0) >= MEDIUM_FILE_SIZE_BYTES) {
     return {
       renderQuality: settings.renderQuality === "low" ? "low" : "medium",
-      renderScale: Math.min(settings.renderScale, 0.85),
+      renderScale: Math.min(settings.renderScale, MEDIUM_RENDER_SCALE_CAP),
     };
   }
 
   return settingsBudget(settings);
+}
+
+function summaryPrimaryPixelCount(summary: ModelPreviewSummary): number {
+  return summary.splatCount ?? summary.triangleCount;
+}
+
+function isPixelHeavySummary(summary: ModelPreviewSummary): boolean {
+  return summary.splatCount !== undefined
+    ? summary.splatCount >= MEDIUM_SPLAT_COUNT
+    : summaryPrimaryPixelCount(summary) >= HEAVY_PIXEL_COUNT;
+}
+
+function isPixelExtremeSummary(summary: ModelPreviewSummary): boolean {
+  return summary.splatCount !== undefined
+    ? summary.splatCount >= EXTREME_SPLAT_COUNT
+    : summaryPrimaryPixelCount(summary) >= EXTREME_PIXEL_COUNT;
+}
+
+function isPixelMediumSummary(summary: ModelPreviewSummary): boolean {
+  return summary.splatCount !== undefined
+    ? summary.splatCount >= MEDIUM_SPLAT_COUNT
+    : summaryPrimaryPixelCount(summary) >= MEDIUM_PIXEL_COUNT;
 }
 
 export function getSummaryRenderBudget(
@@ -54,21 +83,30 @@ export function getSummaryRenderBudget(
   summary: ModelPreviewSummary,
 ): RenderQualityBudget {
   if (summary.performanceTier === "extreme") {
+    if (!isPixelExtremeSummary(summary)) {
+      return settingsBudget(settings);
+    }
     return {
-      renderQuality: "low",
-      renderScale: Math.min(settings.renderScale, 0.65),
+      renderQuality: settings.renderQuality === "low" ? "low" : "medium",
+      renderScale: Math.min(settings.renderScale, HEAVY_RENDER_SCALE_CAP),
     };
   }
   if (summary.performanceTier === "heavy") {
+    if (!isPixelHeavySummary(summary)) {
+      return settingsBudget(settings);
+    }
     return {
       renderQuality: settings.renderQuality === "low" ? "low" : "medium",
-      renderScale: Math.min(settings.renderScale, 0.85),
+      renderScale: Math.min(settings.renderScale, HEAVY_RENDER_SCALE_CAP),
     };
   }
   if (summary.performanceTier === "medium") {
+    if (!isPixelMediumSummary(summary)) {
+      return settingsBudget(settings);
+    }
     return {
       renderQuality: settings.renderQuality,
-      renderScale: Math.min(settings.renderScale, 1),
+      renderScale: Math.min(settings.renderScale, MEDIUM_RENDER_SCALE_CAP),
     };
   }
   return settingsBudget(settings);
@@ -171,11 +209,11 @@ async function readGltfText(app: App, path: string): Promise<string | null> {
 
   const file = app.vault.getAbstractFileByPath(path);
   const vault = app.vault as typeof app.vault & { read?: (file: TFile) => Promise<string> };
-  if (!file || typeof vault.read !== "function") {
+  if (!(file instanceof TFile) || typeof vault.read !== "function") {
     return null;
   }
   try {
-    return await vault.read(file as TFile);
+    return await vault.read(file);
   } catch {
     return null;
   }

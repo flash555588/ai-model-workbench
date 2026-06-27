@@ -12,18 +12,18 @@ Use it to answer two questions quickly:
 
 ## Current Routing
 
-The table below assumes the default rollout setting: `Reading + file view (Recommended)` (`three-direct-glb`).
+The table below assumes the default rollout setting: `Compatibility mode` (`babylon-safe`).
 
 | Surface | Input / capability | Renderer | Current rule |
 |---------|--------------------|----------|--------------|
-| Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Three.js | `ext ∈ THREE_FORMATS`, `annotationMode=none`, `requireWorkbenchFeatures=false` |
-| Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with readonly annotations | Three.js | `ext ∈ THREE_FORMATS`, `annotationMode=readonly`, `requireWorkbenchFeatures=false` |
+| Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Babylon.js | default `rendererRollout=babylon-safe` |
+| Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with readonly annotations | Babylon.js | default `rendererRollout=babylon-safe` |
 | Inline `3d` | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` route to Babylon |
-| Live Preview embed | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Three.js | same as inline simple preview |
-| Live Preview embed | readonly annotations present | Three.js | readonly annotations use the Three annotation provider |
-| Direct file view | `GLB/GLTF/STL/PLY/OBJ` single-model edit view | Three.js | `ext ∈ THREE_FORMATS`, `annotationMode=edit`, `allowEditModeOnThree=true` |
+| Live Preview embed | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Babylon.js | default `rendererRollout=babylon-safe` |
+| Live Preview embed | readonly annotations present | Babylon.js | default `rendererRollout=babylon-safe` |
+| Direct file view | `GLB/GLTF/STL/PLY/OBJ` single-model edit view | Babylon.js | default `rendererRollout=babylon-safe` |
 | Direct file view | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` direct view still routes to Babylon |
-| Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Three.js | converted GLB outputs use the same edit-preview fast path; full workbench and `3dgrid` stay conservative |
+| Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Babylon.js | default `rendererRollout=babylon-safe`; Three remains opt-in |
 | Workbench | any current model | Babylon.js | `requireWorkbenchFeatures=true`; retained on Babylon after phase-3 evaluation |
 | `3dgrid` | compare / gallery / compose / preset layouts | Babylon.js | retained on Babylon after phase-4 decision |
 
@@ -35,7 +35,8 @@ The table below assumes the default rollout setting: `Reading + file view (Recom
 
 The runtime route decision is intentionally conservative:
 
-- Three.js is the fast path for all common single-model formats (GLB, GLTF, STL, PLY, OBJ) across reading surfaces and direct view, including annotation overlays.
+- Babylon.js is the default path for all preview surfaces unless the user explicitly enables a Three.js rollout.
+- Three.js remains the opt-in fast path for common single-model formats (GLB, GLTF, STL, PLY, OBJ) across reading surfaces and direct view, including annotation overlays.
 - Babylon.js remains the intentional capability path for:
   - full workbench features outside the direct file edit-preview path
   - grid layouts
@@ -49,7 +50,7 @@ The phase-3 / phase-4 decision note lives in `docs/workbench-3dgrid-feasibility-
 
 The plugin exposes a `Preview compatibility mode` setting:
 
-- `Compatibility mode` (`babylon-safe`)
+- `Compatibility mode` (`babylon-safe`) - default
   - inline `3d` -> Babylon.js
   - Live Preview embed -> Babylon.js
   - direct file view -> Babylon.js
@@ -57,7 +58,7 @@ The plugin exposes a `Preview compatibility mode` setting:
   - inline `3d` -> Three.js
   - Live Preview embed -> Three.js
   - direct file view -> Babylon.js
-- `Reading + file view (Recommended)` (`three-direct-glb`)
+- `Reading + file view` (`three-direct-glb`)
   - inline `3d` -> Three.js
   - Live Preview embed -> Three.js
   - direct file view -> Three.js

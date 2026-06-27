@@ -17,7 +17,7 @@ vi.mock("./node-shim", () => ({
   pathNormalize: (path: string) => path.replace(/\\/g, "/"),
 }));
 
-import { joinPortablePath, readBinaryPath } from "./resolve-path";
+import { joinPortablePath, joinVaultConfigPath, readBinaryPath } from "./resolve-path";
 
 describe("portable path helpers", () => {
   it("resolves encoded parent-directory resource URIs from the model folder", () => {
@@ -28,6 +28,17 @@ describe("portable path helpers", () => {
   it("normalizes direct relative resources without escaping above the vault root", () => {
     expect(joinPortablePath("models", "./Geometry%20Data.BIN")).toBe("models/Geometry Data.BIN");
     expect(joinPortablePath("", "../outside.bin")).toBe("outside.bin");
+  });
+
+  it("joins plugin config paths using the vault config directory", () => {
+    const app = {
+      vault: {
+        configDir: ".custom-obsidian",
+      },
+    } as App;
+
+    expect(joinVaultConfigPath(app, "ai-model-workbench/converted-assets"))
+      .toBe(".custom-obsidian/ai-model-workbench/converted-assets");
   });
 });
 

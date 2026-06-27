@@ -1,6 +1,7 @@
 import type { App, MarkdownPostProcessorContext } from "obsidian";
 import type { AnnotationPin, PluginSettings } from "../../domain/models";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
+import { createStagedDiv } from "../../utils/dom";
 
 type CodeBlockModule = typeof import("./code-block");
 type CodeBlockHandler = (source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) => Promise<unknown> | void;
@@ -15,8 +16,7 @@ function loadCodeBlockModule(): Promise<CodeBlockModule> {
 
 function createLazyCodeBlockHandler(getHandler: () => Promise<CodeBlockHandler>): CodeBlockHandler {
   return (source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
-    const placeholder = activeDocument.createElement("div");
-    placeholder.className = "ai3d-preview-host ai3d-code-block-lazy";
+    const placeholder = createStagedDiv("ai3d-preview-host ai3d-code-block-lazy");
     placeholder.setAttribute("aria-busy", "true");
     el.appendChild(placeholder);
 
@@ -33,14 +33,14 @@ function createLazyCodeBlockHandler(getHandler: () => Promise<CodeBlockHandler>)
         await handler(source, el, ctx);
       } catch (error) {
         console.warn("[AI3D] Failed to load inline code block runtime:", error);
-        const errorEl = placeholder.isConnected ? placeholder : activeDocument.createElement("div");
+        const errorEl = placeholder.isConnected ? placeholder : createStagedDiv();
         if (!placeholder.isConnected) {
           el.appendChild(errorEl);
         }
         errorEl.classList.remove("ai3d-preview-host");
         errorEl.classList.add("ai3d-inline-empty");
         errorEl.removeAttribute("aria-busy");
-        errorEl.textContent = "AI3D inline preview failed to load.";
+        errorEl.textContent = "Ai3d inline preview failed to load.";
       }
     };
 

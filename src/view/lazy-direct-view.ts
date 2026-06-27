@@ -6,6 +6,9 @@ import { t } from "../i18n";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
 import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
 
+const DIRECT_AUTOLOAD_EXTENSIONS = new Set(["glb", "gltf", "stl", "ply", "obj"]);
+const LARGE_DIRECT_AUTOLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
+
 type DirectViewDelegate = FileView & {
   contentEl: HTMLElement;
   file: TFile | null;
@@ -18,6 +21,7 @@ export class LazyDirectModelView extends FileView {
   private delegate: DirectViewDelegate | null = null;
   private delegatePromise: Promise<DirectViewDelegate | null> | null = null;
   private closed = false;
+  private manualLoadRequested = false;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -43,12 +47,24 @@ export class LazyDirectModelView extends FileView {
   async onOpen(): Promise<void> {
     this.closed = false;
     if (this.file) {
-      await this.onLoadFile(this.file);
+      await this.loadOrDeferFile(this.file, true);
     }
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    await this.loadOrDeferFile(file, false);
+  }
+
+  private async loadOrDeferFile(file: TFile, restoredFromWorkspace: boolean): Promise<void> {
     this.closed = false;
+    if (!this.delegate && !this.manualLoadRequested && shouldDeferDirectAutoload(file, restoredFromWorkspace)) {
+      this.renderDeferredLoad(file);
+      return;
+    }
+    await this.loadFileNow(file);
+  }
+
+  private async loadFileNow(file: TFile): Promise<void> {
     const delegate = await this.ensureDelegate();
     if (!delegate || this.closed) {
       return;
@@ -91,4 +107,57 @@ export class LazyDirectModelView extends FileView {
     this.delegate = delegate;
     return delegate;
   }
+
+  private renderDeferredLoad(file: TFile): void {
+    this.contentEl.empty();
+    markDirectViewDom(this.contentEl);
+    const shell = this.contentEl.createDiv({ cls: "ai3d-inline-empty ai3d-direct-load-gate" });
+    shell.createDiv({ cls: "ai3d-direct-load-gate-title", text: t("directView.deferredLoadTitle") });
+    shell.createDiv({
+      cls: "ai3d-direct-load-gate-message",
+      text: t("directView.deferredLoadMessage"),
+    });
+    const meta = shell.createDiv({ cls: "ai3d-direct-load-gate-meta" });
+    meta.createSpan({ text: file.name });
+    meta.createSpan({ text: formatBytes(file.stat.size) });
+    const button = shell.createEl("button", {
+      cls: "ai3d-direct-load-gate-button",
+      text: t("directView.deferredLoadButton"),
+    });
+    button.addEventListener("click", () => {
+      this.manualLoadRequested = true;
+      void this.loadFileNow(file).finally(() => {
+        this.manualLoadRequested = false;
+      });
+    });
+  }
+}
+
+export function shouldDeferDirectAutoload(
+  file: Pick<TFile, "extension" | "stat">,
+  restoredFromWorkspace: boolean,
+): boolean {
+  if (!restoredFromWorkspace) {
+    return false;
+  }
+  const ext = file.extension.toLowerCase();
+  if (!DIRECT_AUTOLOAD_EXTENSIONS.has(ext)) {
+    return true;
+  }
+  return file.stat.size >= LARGE_DIRECT_AUTOLOAD_LIMIT_BYTES;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
 }

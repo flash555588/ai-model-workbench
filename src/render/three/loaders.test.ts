@@ -89,13 +89,22 @@ function createExternalBufferGltf(): { gltf: ArrayBuffer; bin: ArrayBuffer } {
   };
   return {
     gltf: encodeAscii(JSON.stringify(gltf)),
-    bin: positions.buffer.slice(positions.byteOffset, positions.byteOffset + positions.byteLength) as ArrayBuffer,
+    bin: positions.buffer.slice(positions.byteOffset, positions.byteOffset + positions.byteLength),
   };
+}
+
+interface ExternalBufferGltfDocument {
+  buffers?: Array<{ uri: string; byteLength: number }>;
+  [key: string]: unknown;
 }
 
 function withExternalBuffers(fixture: { gltf: ArrayBuffer; bin: ArrayBuffer }, buffers: Array<{ uri: string; byteLength: number }>): { gltf: ArrayBuffer; bin: ArrayBuffer } {
   const text = new TextDecoder().decode(new Uint8Array(fixture.gltf));
-  const gltf = JSON.parse(text);
+  const parsed: unknown = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Expected GLTF JSON object");
+  }
+  const gltf = parsed as ExternalBufferGltfDocument;
   gltf.buffers = buffers;
   return {
     gltf: encodeAscii(JSON.stringify(gltf)),
@@ -128,6 +137,19 @@ describe("Three loaders", () => {
       createSpy.mockRestore();
       revokeSpy.mockRestore();
     }
+  });
+
+  it("stops GLTF external resource reads when the load is interrupted", async () => {
+    const fixture = createExternalBufferGltf();
+    const controller = new AbortController();
+    const readFile = vi.fn(async () => fixture.bin);
+
+    controller.abort();
+
+    await expect(loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf", {
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: "PreviewLoadInterruptedError" });
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it("deduplicates repeated GLTF external resource reads", async () => {
@@ -192,7 +214,7 @@ describe("Three loaders", () => {
     const readFile = vi.fn(async () => {
       activeReads += 1;
       maxActiveReads = Math.max(maxActiveReads, activeReads);
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 2));
+      await new Promise((resolve) => setTimeout(resolve, 2));
       activeReads -= 1;
       return fixture.bin;
     });

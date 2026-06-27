@@ -5,6 +5,7 @@ import {
   supportsBoundingBoxPreview,
   supportsDisassemblyPreview,
   supportsFocusSelectionPreview,
+  supportsCameraZoomPreview,
   supportsMeasurementPreview,
   supportsOrientationGizmoPreview,
   supportsRenderScalePreview,
@@ -28,6 +29,7 @@ export function collectPreviewCapabilities(preview: unknown): PreviewCapabilityI
   if (supportsOrientationGizmoPreview(preview)) capabilities.push("orientation-gizmo");
   if (supportsBoundingBoxPreview(preview)) capabilities.push("bounding-box");
   if (supportsRenderScalePreview(preview)) capabilities.push("render-scale");
+  if (supportsCameraZoomPreview(preview)) capabilities.push("camera-zoom");
   if (supportsWorkbenchPreview(preview)) capabilities.push("workbench");
   return capabilities;
 }
@@ -82,6 +84,7 @@ export function describePreviewRouteCapabilities(route: PreviewRouteDecision): P
       "orientation-gizmo",
       "bounding-box",
       "render-scale",
+      "camera-zoom",
       "workbench",
     ];
     return createPreviewCapabilityProfile("three", capabilities);
@@ -97,6 +100,7 @@ export function describePreviewRouteCapabilities(route: PreviewRouteDecision): P
     "orientation-gizmo",
     "bounding-box",
     "render-scale",
+    "camera-zoom",
     "workbench",
   ]);
 }

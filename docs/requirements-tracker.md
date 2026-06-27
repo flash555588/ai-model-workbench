@@ -213,7 +213,7 @@ future agent notes can refer to the same requirement over time.
 - Acceptance criteria:
   - Missing converter UI tells the user which converter id is required.
   - Timeout does not block preview indefinitely.
-  - New converted outputs are written under `.obsidian/ai-model-workbench/converted-assets`; existing side-by-side `.ai3d-converted.glb` files are reused only when newer than source.
+  - New converted outputs are written under the active Obsidian config folder at `ai-model-workbench/converted-assets`; existing side-by-side `.ai3d-converted.glb` files are reused only when newer than source.
   - Unsafe converter command paths are rejected before execution.
   - Diagnostics omit draft service URL and converter command paths.
   - Diagnostics redact vault-relative paths unless explicitly requested.

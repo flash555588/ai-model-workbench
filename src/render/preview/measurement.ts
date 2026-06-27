@@ -2,6 +2,17 @@ import type { MeasurementReading, MeasurementRecord, MeasurementScale, Measureme
 
 export type { MeasurementReading, MeasurementRecord } from "./types";
 
+export const MEASUREMENT_STYLE = {
+  line: "#8ab4f8",
+  marker: "#e2e8f0",
+  pending: "#f59e0b",
+  hover: "#f8fafc",
+  preview: "#cbd5e1",
+  labelText: "#f8fafc",
+  labelSecondary: "rgba(226, 232, 240, 0.58)",
+  labelOutline: "rgba(0, 0, 0, 0.45)",
+} as const;
+
 const UNIT_FACTORS_TO_METERS: Record<MeasurementUnit, number> = {
   um: 0.000001,
   mm: 0.001,
@@ -106,6 +117,35 @@ export function createMeasurementLabel(reading: MeasurementReading): { primary: 
       getMeasurementUnitLabel(reading.unit),
     ].join("  "),
   };
+}
+
+export function drawMeasurementLabelCanvas(
+  ctx: CanvasRenderingContext2D,
+  text: { primary: string; secondary: string },
+  width = 640,
+  height = 160,
+): void {
+  ctx.clearRect(0, 0, width, height);
+
+  const centerX = width / 2;
+  const primaryY = height / 2 - 10;
+  const secondaryY = height / 2 + 20;
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = MEASUREMENT_STYLE.labelOutline;
+  ctx.fillStyle = MEASUREMENT_STYLE.labelText;
+  ctx.font = "650 28px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.strokeText(text.primary, centerX, primaryY, width - 120);
+  ctx.fillText(text.primary, centerX, primaryY, width - 120);
+
+  ctx.lineWidth = 3;
+  ctx.fillStyle = MEASUREMENT_STYLE.labelSecondary;
+  ctx.font = "500 14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.strokeText(text.secondary, centerX, secondaryY, width - 160);
+  ctx.fillText(text.secondary, centerX, secondaryY, width - 160);
 }
 
 export function createMeasurementMarkdown(records: readonly MeasurementRecord[]): string {

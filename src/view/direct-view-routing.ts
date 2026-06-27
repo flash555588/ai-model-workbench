@@ -37,12 +37,13 @@ export function createDirectViewPreviewOptions(
   source: PreviewSource,
 ): DirectViewPreviewOptions {
   const allowWorkbenchFeaturesOnThree = canUseExperimentalThreeWorkbench(settings, source);
+  const useThreeDirectFileView = canUseThreeDirectFileView(source);
   return {
     ext: source.ext,
     annotationMode: "edit",
     allowEditModeOnThree: true,
     allowWorkbenchFeaturesOnThree,
-    requireWorkbenchFeatures: allowWorkbenchFeaturesOnThree || !canUseThreeDirectFileView(source),
+    requireWorkbenchFeatures: allowWorkbenchFeaturesOnThree || !useThreeDirectFileView,
     rendererRollout: settings.previewRendererRollout,
     useThreeRenderer: settings.useThreeRenderer,
   };

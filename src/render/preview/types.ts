@@ -5,6 +5,7 @@ import type {
   PreviewRendererRollout,
   ThreeDBlockConfig,
 } from "../../domain/models";
+import type { PreviewLoadOptions } from "./load-control";
 
 export interface PreviewWorldPoint {
   x: number;
@@ -41,6 +42,7 @@ export interface ModelPreview {
     ext: string,
     readFile?: (path: string) => Promise<ArrayBuffer>,
     modelPath?: string,
+    options?: PreviewLoadOptions,
   ): Promise<ModelPreviewSummary>;
   applyConfig(config: ThreeDBlockConfig): void;
   destroy(): void;
@@ -63,6 +65,9 @@ export interface ModelPreview {
   setWireframe?(enabled: boolean): void;
   setRenderQuality?(quality: "low" | "medium" | "high", renderScale?: number): void;
   setRenderScale?(scale: number): number;
+  getCameraZoomState?(): CameraZoomState | null;
+  setCameraZoom?(value: number): CameraZoomState | null;
+  observeCameraZoom?(callback: (state: CameraZoomState | null) => void): () => void;
   getPerformanceSnapshot?(): ModelPreviewPerformanceSnapshot;
   getQualitySnapshot?(): PreviewQualitySnapshot;
 }
@@ -77,6 +82,7 @@ export type PreviewCapabilityId =
   | "orientation-gizmo"
   | "bounding-box"
   | "render-scale"
+  | "camera-zoom"
   | "workbench";
 
 export interface PreviewCapabilityProfile {
@@ -203,6 +209,7 @@ export interface MeasurementPreview {
   getMeasurementRecords(): MeasurementRecord[];
   updateMeasurementLabels(): void;
   exportMeasurements(): string;
+  observeMeasurements?(callback: () => void): () => void;
 }
 
 export interface DisassemblyPreview {
@@ -240,6 +247,17 @@ export interface BoundingBoxPreview {
 
 export interface RenderScalePreview {
   setRenderScale(scale: number): number;
+}
+
+export interface CameraZoomState {
+  value: number;
+  percentage: number;
+}
+
+export interface CameraZoomPreview {
+  getCameraZoomState(): CameraZoomState | null;
+  setCameraZoom(value: number): CameraZoomState | null;
+  observeCameraZoom?(callback: (state: CameraZoomState | null) => void): () => void;
 }
 
 export interface RenderQualityPreview {
@@ -317,6 +335,10 @@ export function supportsBoundingBoxPreview(preview: unknown): preview is Boundin
 
 export function supportsRenderScalePreview(preview: unknown): preview is RenderScalePreview {
   return hasMethod(preview, "setRenderScale");
+}
+
+export function supportsCameraZoomPreview(preview: unknown): preview is CameraZoomPreview {
+  return hasMethod(preview, "getCameraZoomState") && hasMethod(preview, "setCameraZoom");
 }
 
 export function supportsWorkbenchPreview(preview: unknown): preview is WorkbenchPreview {

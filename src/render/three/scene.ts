@@ -1,7 +1,6 @@
 import {
   AmbientLight,
   AnimationMixer,
-  Box3,
   BoxHelper,
   BufferGeometry,
   CanvasTexture,
@@ -18,6 +17,7 @@ import {
   MeshStandardMaterial,
   NoToneMapping,
   Object3D,
+  type Object3DEventMap,
   OrthographicCamera,
   PCFSoftShadowMap,
   PerspectiveCamera,
@@ -58,6 +58,7 @@ import type {
   ThreeDBlockConfig,
 } from "../../domain/models";
 import { isMobile } from "../../utils/device";
+import { createStagedEl } from "../../utils/dom";
 import {
   getPreviewBoundsCenter,
   getPreviewBoundsSize,
@@ -77,8 +78,13 @@ import type {
   PreviewWorldPoint,
   MeasurementScale,
   MeasurementUnit,
+  CameraZoomState,
   PreviewQualitySnapshot,
 } from "../preview/types";
+import {
+  throwIfPreviewLoadInterrupted,
+  type PreviewLoadOptions,
+} from "../preview/load-control";
 import {
   createAnnotationViewportProvider,
   formatAnnotationCameraStateKey,
@@ -91,6 +97,7 @@ import {
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
+  drawMeasurementLabelCanvas,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
   type MeasurementReading,
@@ -144,6 +151,11 @@ const FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE = 0.62;
 const FRAME_BUDGET_SHADOW_SCALE = 0.86;
 const FRAME_BUDGET_MAX_OBSERVER_STRIDE = 4;
 const ENVIRONMENT_INSTALL_DELAY_MS = 120;
+const MEASUREMENT_LINE_COLOR = 0x8ab4f8;
+const MEASUREMENT_MARKER_COLOR = 0xe2e8f0;
+const MEASUREMENT_PENDING_COLOR = 0xf59e0b;
+const MEASUREMENT_HOVER_COLOR = 0xf8fafc;
+const MEASUREMENT_PREVIEW_COLOR = 0xcbd5e1;
 
 type DisposalReason = "initial" | "model-switch" | "destroy";
 
@@ -177,6 +189,15 @@ function isShadowCastingLight(light: Light): light is ShadowCastingLight {
   return light instanceof DirectionalLight || light instanceof PointLight || light instanceof SpotLight;
 }
 
+function isThreeObject3D(value: unknown): value is Object3D<Object3DEventMap> {
+  return value instanceof Object3D;
+}
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(value, 1));
+}
+
 // TODO(P2): decompose this class into loader/camera/light/annotation modules.
 // Scene class is >2,000 lines and mixes rendering, interaction, and knowledge capture (debt: renderer-three).
 export class ThreeModelPreview implements WorkbenchPreview {
@@ -188,6 +209,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly raycaster = new Raycaster();
   private readonly occlusionRaycaster = new Raycaster();
   private readonly renderObservers = new Set<() => void>();
+  private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
   private readonly pointer = new Vector2();
   private readonly annotationProjection = new Vector3();
   private readonly annotationDirection = new Vector3();
@@ -255,6 +277,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private measurementUnit: MeasurementUnit = "mm";
   private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Line; label: Sprite }> = [];
   private measurementMarkers: Mesh[] = [];
+  private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
   private pendingMarker: Mesh | null = null;
   private hoveredMarkerIndex = -1;
@@ -292,6 +315,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly handleControlsChange = () => {
     this.prepareInteractiveFrameBudget();
     this.markDirty();
+    this.notifyCameraZoomChanged();
   };
   private readonly handleViewportIntersection: IntersectionObserverCallback = (entries) => {
     const entry = entries[entries.length - 1];
@@ -344,13 +368,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
         const prev = this.measurementMarkers[this.hoveredMarkerIndex];
         if (prev !== this.pendingMarker) {
           prev.scale.setScalar(1);
-          (prev.material as MeshBasicMaterial).color.setHex(0xff6b6b);
+          (prev.material as MeshBasicMaterial).color.setHex(MEASUREMENT_MARKER_COLOR);
         }
       }
       if (newHover >= 0 && newHover < this.measurementMarkers.length) {
         const next = this.measurementMarkers[newHover];
         next.scale.setScalar(1.6);
-        (next.material as MeshBasicMaterial).color.setHex(0xffd43b);
+        (next.material as MeshBasicMaterial).color.setHex(MEASUREMENT_HOVER_COLOR);
       }
       this.hoveredMarkerIndex = newHover;
       this.markDirty();
@@ -383,7 +407,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.zoomSpeed = 0.85;
+    this.controls.zoomSpeed = 0.65;
     this.controls.screenSpacePanning = true;
     this.controls.target.copy(this.initialTarget);
     this.controls.addEventListener("change", this.handleControlsChange);
@@ -415,64 +439,81 @@ export class ThreeModelPreview implements WorkbenchPreview {
     ext: string,
     readFile?: (path: string) => Promise<ArrayBuffer>,
     modelPath?: string,
+    options?: PreviewLoadOptions,
   ): Promise<ModelPreviewSummary> {
+    throwIfPreviewLoadInterrupted(options);
     this.clearLoadedModel("model-switch");
+    throwIfPreviewLoadInterrupted(options);
     this.loadedExt = ext.toLowerCase();
     this.resourceWarnings = [];
     this.textureAudit = createEmptyTextureAudit();
 
-    let root: Object3D;
+    let root: Object3D | null = null;
     let animations: import("three").AnimationClip[] = [];
 
-    if (this.loadedExt === "glb" || this.loadedExt === "gltf") {
-      const gltfResult = await loadThreeGLTF(data, this.loadedExt, readFile, modelPath);
-      root = gltfResult.scene;
-      animations = gltfResult.animations;
-      this.resourceWarnings = gltfResult.warnings;
-    } else if (this.loadedExt === "stl") {
-      root = await loadThreeSTL(data);
-      this.stlMaterial = isMesh(root) ? (root.material as MeshStandardMaterial) : null;
-    } else if (this.loadedExt === "ply") {
-      root = await loadThreePLY(data);
-    } else if (this.loadedExt === "obj") {
-      const objResult = await loadThreeOBJ(data, readFile, modelPath);
-      root = objResult.object;
-      this.resourceWarnings = objResult.warnings;
-    } else {
-      throw new Error(`Three preview does not support .${this.loadedExt} format`);
-    }
-
-    this.rootObject = root;
-    this.scene.add(root);
-    this.invalidateMeshCache();
-    const renderableObjects = this.getRenderableObjects(root);
-    this.prepareModelForQuality(renderableObjects);
-    this.syncShadowFeatures();
-    const rootBounds = this.getRootPreviewBounds(root);
-    this.updateShadowFraming(rootBounds);
-    this.syncSceneHelpers();
-    this.markDirty();
-
-    if (animations.length > 0) {
-      this.mixer = new AnimationMixer(root);
-      for (const clip of animations) {
-        this.mixer.clipAction(clip).play();
+    try {
+      if (this.loadedExt === "glb" || this.loadedExt === "gltf") {
+        const gltfResult = await loadThreeGLTF(data, this.loadedExt, readFile, modelPath, options);
+        root = gltfResult.scene;
+        animations = gltfResult.animations;
+        this.resourceWarnings = gltfResult.warnings;
+      } else if (this.loadedExt === "stl") {
+        root = await loadThreeSTL(data);
+        this.stlMaterial = isMesh(root) ? (root.material as MeshStandardMaterial) : null;
+      } else if (this.loadedExt === "ply") {
+        root = await loadThreePLY(data);
+      } else if (this.loadedExt === "obj") {
+        const objResult = await loadThreeOBJ(data, readFile, modelPath);
+        root = objResult.object;
+        this.resourceWarnings = objResult.warnings;
+      } else {
+        throw new Error(`Three preview does not support .${this.loadedExt} format`);
       }
-      this.animationPlaying = true;
-    }
 
-    const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings, rootBounds ?? undefined);
-    // Geometry quality stats require per-object bounds and are only needed for diagnostics/performance snapshots.
-    this.cachedGeometryQualityStats = null;
-    this.fitCameraToObject(root, rootBounds ?? undefined);
-    if (this.bboxEnabled) {
-      this.ensureBoundingBoxHelper();
+      throwIfPreviewLoadInterrupted(options);
+      this.rootObject = root;
+      this.scene.add(root);
+      this.invalidateMeshCache();
+      const renderableObjects = this.getRenderableObjects(root);
+      this.prepareModelForQuality(renderableObjects);
+      throwIfPreviewLoadInterrupted(options);
+      this.syncShadowFeatures();
+      const rootBounds = this.getRootPreviewBounds(root);
+      this.updateShadowFraming(rootBounds);
+      this.syncSceneHelpers();
+      this.markDirty();
+
+      if (animations.length > 0) {
+        this.mixer = new AnimationMixer(root);
+        for (const clip of animations) {
+          this.mixer.clipAction(clip).play();
+        }
+        this.animationPlaying = true;
+      }
+
+      const summary = createThreeModelPreviewSummary(root, renderableObjects, this.resourceWarnings, rootBounds ?? undefined);
+      // Geometry quality stats require per-object bounds and are only needed for diagnostics/performance snapshots.
+      this.cachedGeometryQualityStats = null;
+      this.fitCameraToObject(root, rootBounds ?? undefined);
+      if (this.bboxEnabled) {
+        this.ensureBoundingBoxHelper();
+      }
+      this.scheduleGlobalEnvironmentInstall();
+      this.disassemblySetup = false;
+      this.disassembly?.dispose();
+      this.disassembly = null;
+      return summary;
+    } catch (error) {
+      if (root) {
+        root.removeFromParent();
+        if (this.rootObject === root) {
+          this.rootObject = null;
+        }
+        this.lastDisposalAudit = this.disposeObjectGraph(root, "model-switch");
+        this.invalidateMeshCache();
+      }
+      throw error;
     }
-    this.scheduleGlobalEnvironmentInstall();
-    this.disassemblySetup = false;
-    this.disassembly?.dispose();
-    this.disassembly = null;
-    return summary;
   }
 
   applyConfig(config: ThreeDBlockConfig): void {
@@ -500,6 +541,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     cancelAnimationFrame(this.cameraAnimHandle);
     this._onPickCallbacks = [];
     this.renderObservers.clear();
+    this.cameraZoomObservers.clear();
+    this.measurementObservers.clear();
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
@@ -608,7 +651,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getSelectedPartInfo(): ModelPartSummary | null {
     const object = this.focusedObject
-      ?? (this._lastPickResult.mesh instanceof Object3D ? this._lastPickResult.mesh : null);
+      ?? (isThreeObject3D(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
     if (!object) return null;
     const renderableMeshes = this.rootObject ? this.getRenderableMeshes(this.rootObject) : [];
     const childMeshMap = this.rootObject ? this.getChildRenderableMeshMap(this.rootObject) : undefined;
@@ -625,7 +668,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return toPreviewWorldPoint(result.pickedPoint as { x: number; y: number; z: number });
     }
 
-    if (result.mesh instanceof Object3D) {
+    if (isThreeObject3D(result.mesh)) {
       return getPreviewBoundsCenter(getObjectPreviewBounds(result.mesh));
     }
 
@@ -662,6 +705,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls.update();
     this.markDirty();
     this.renderNow(performance.now());
+    this.notifyCameraZoomChanged();
   }
 
   toggleFocusSelection(): boolean {
@@ -783,9 +827,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   toggleMeasurement(): boolean {
     this.measurementActive = !this.measurementActive;
+    this.renderer.domElement.classList.toggle("ai3d-measurement-active", this.measurementActive);
     if (!this.measurementActive) {
       this.cancelPendingMeasurement();
     }
+    this.notifyMeasurementsChanged();
     return this.measurementActive;
   }
 
@@ -800,6 +846,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private disposeMeasurementOverlays(deactivate: boolean): void {
     if (deactivate) {
       this.measurementActive = false;
+      this.renderer.domElement.classList.remove("ai3d-measurement-active");
     }
     this.cancelPendingMeasurement(false);
     for (const segment of this.measurementSegments) {
@@ -824,12 +871,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     this.measurementMarkers = [];
     this.markDirty();
+    this.notifyMeasurementsChanged();
   }
 
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
     this.updateMeasurementLabels();
+    this.notifyMeasurementsChanged();
   }
 
   getMeasurementScale(): MeasurementScale {
@@ -839,6 +888,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setMeasurementUnit(unit: MeasurementUnit): void {
     this.measurementUnit = normalizeMeasurementUnit(unit);
     this.updateMeasurementLabels();
+    this.notifyMeasurementsChanged();
   }
 
   getMeasurementUnit(): MeasurementUnit {
@@ -858,6 +908,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   exportMeasurements(): string {
     return createMeasurementMarkdown(this.createMeasurementRecords());
+  }
+
+  observeMeasurements(callback: () => void): () => void {
+    this.measurementObservers.add(callback);
+    callback();
+    return () => {
+      this.measurementObservers.delete(callback);
+    };
   }
 
   updateMeasurementLabels(): void {
@@ -887,6 +945,51 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderScale = Math.min(2, Math.max(0.25, scale));
     this.resizeRenderer();
     return Number(this.renderScale.toFixed(2));
+  }
+
+  getCameraZoomState(): CameraZoomState | null {
+    const range = this.getCameraZoomRange();
+    if (!range) return null;
+    const value = range.mode === "distance"
+      ? (range.max - range.current) / (range.max - range.min)
+      : (range.current - range.min) / (range.max - range.min);
+    const clamped = clampUnit(value);
+    return {
+      value: clamped,
+      percentage: Math.round(clamped * 100),
+    };
+  }
+
+  setCameraZoom(value: number): CameraZoomState | null {
+    const range = this.getCameraZoomRange();
+    if (!range) return null;
+    const clamped = clampUnit(value);
+    if (range.mode === "distance") {
+      const distance = range.max - clamped * (range.max - range.min);
+      const direction = this.camera.position.clone().sub(this.controls.target);
+      if (direction.lengthSq() < Number.EPSILON) {
+        direction.copy(this.initialPosition).sub(this.initialTarget);
+      }
+      direction.normalize();
+      this.camera.position.copy(this.controls.target).addScaledVector(direction, distance);
+      this.camera.lookAt(this.controls.target);
+    } else {
+      this.camera.zoom = range.min + clamped * (range.max - range.min);
+      this.camera.updateProjectionMatrix();
+    }
+    this.controls.update();
+    this.prepareInteractiveFrameBudget();
+    this.markDirty();
+    this.notifyCameraZoomChanged();
+    return this.getCameraZoomState();
+  }
+
+  observeCameraZoom(callback: (state: CameraZoomState | null) => void): () => void {
+    this.cameraZoomObservers.add(callback);
+    callback(this.getCameraZoomState());
+    return () => {
+      this.cameraZoomObservers.delete(callback);
+    };
   }
 
   getPerformanceSnapshot() {
@@ -1292,6 +1395,49 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
+  private getCameraZoomRange(): { mode: "distance" | "zoom"; current: number; min: number; max: number } | null {
+    if (!this.rootObject) return null;
+    if (this.camera instanceof OrthographicCamera) {
+      const fallbackMin = Math.max(this.initialZoom * 0.25, 0.05);
+      const fallbackMax = Math.max(this.initialZoom * 6, fallbackMin * 2);
+      const min = Number.isFinite(this.controls.minZoom) && this.controls.minZoom > 0
+        ? this.controls.minZoom
+        : fallbackMin;
+      const max = Number.isFinite(this.controls.maxZoom) && this.controls.maxZoom > min
+        ? this.controls.maxZoom
+        : fallbackMax;
+      return {
+        mode: "zoom",
+        current: Math.max(min, Math.min(this.camera.zoom, max)),
+        min,
+        max,
+      };
+    }
+
+    const current = this.camera.position.distanceTo(this.controls.target);
+    const fallbackMin = Math.max(current * 0.08, 0.00001);
+    const min = Number.isFinite(this.controls.minDistance) && this.controls.minDistance > 0
+      ? this.controls.minDistance
+      : fallbackMin;
+    const max = Number.isFinite(this.controls.maxDistance) && this.controls.maxDistance > min
+      ? this.controls.maxDistance
+      : Math.max(current * 8, min * 10);
+    return {
+      mode: "distance",
+      current: Math.max(min, Math.min(current, max)),
+      min,
+      max,
+    };
+  }
+
+  private notifyCameraZoomChanged(): void {
+    if (this.cameraZoomObservers.size === 0) return;
+    const state = this.getCameraZoomState();
+    for (const observer of this.cameraZoomObservers) {
+      observer(state);
+    }
+  }
+
   private computeOrthographicViewSpan(): number {
     if (!this.rootObject) return 2;
     const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
@@ -1396,6 +1542,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.camera.updateProjectionMatrix();
     this.controls.update();
     this.markDirty();
+    this.notifyCameraZoomChanged();
   }
 
   private applyLightConfig(lights: LightConfig[]): void {
@@ -1855,6 +2002,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.wireframeEnabled = false;
     this.wireframeOriginalMaterials.clear();
     this.stlMaterial = null;
+    this.notifyCameraZoomChanged();
     this.bboxHelper?.removeFromParent();
     this.bboxHelper = null;
     this.bboxEnabled = false;
@@ -1967,6 +2115,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const fitDistance = this.initialPosition.distanceTo(this.initialTarget);
     this.controls.minDistance = Math.max(fit.near * 4, maxSpan * 0.02, 0.00001);
     this.controls.maxDistance = Math.max(fitDistance * 8, this.controls.minDistance * 10);
+    this.controls.minZoom = 0.25;
+    this.controls.maxZoom = 8;
     this.raycaster.params.Points = { threshold: Math.max(maxSpan * 0.01, 0.00001) };
     this.raycaster.params.Line = { threshold: Math.max(maxSpan * 0.002, 0.00001) };
     this.occlusionRaycaster.params.Points = { threshold: Math.max(maxSpan * 0.006, 0.00001) };
@@ -1980,6 +2130,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.camera.far = fit.far;
     this.camera.updateProjectionMatrix();
     this.markDirty();
+    this.notifyCameraZoomChanged();
   }
 
   private getAnnotationCameraStateKey(): string {
@@ -2279,7 +2430,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.disposeMeasurementMarker(pendingMarker);
     } else if (pendingMarker) {
       pendingMarker.scale.setScalar(1);
-      (pendingMarker.material as MeshBasicMaterial).color.setHex(0xff6b6b);
+      (pendingMarker.material as MeshBasicMaterial).color.setHex(MEASUREMENT_MARKER_COLOR);
     }
 
     if (markDirty) {
@@ -2326,7 +2477,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
         const markerGeometry = new SphereGeometry(size, 16, 16);
-        const markerMaterial = new MeshBasicMaterial({ color: 0xff6b6b, depthTest: false });
+        const markerMaterial = new MeshBasicMaterial({
+          color: MEASUREMENT_MARKER_COLOR,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.96,
+        });
         const marker = new Mesh(markerGeometry, markerMaterial);
         marker.position.copy(usePoint);
         marker.renderOrder = 999;
@@ -2337,7 +2493,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       // 恢复起点标记颜色
       if (this.pendingMarker) {
         this.pendingMarker.scale.setScalar(1);
-        (this.pendingMarker.material as MeshBasicMaterial).color.setHex(0xff6b6b);
+        (this.pendingMarker.material as MeshBasicMaterial).color.setHex(MEASUREMENT_MARKER_COLOR);
       }
       this.pendingPoint = null;
       this.pendingMarker = null;
@@ -2346,7 +2502,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
         const markerGeometry = new SphereGeometry(size, 16, 16);
-        const markerMaterial = new MeshBasicMaterial({ color: 0xff6b6b, depthTest: false });
+        const markerMaterial = new MeshBasicMaterial({
+          color: MEASUREMENT_MARKER_COLOR,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.96,
+        });
         const marker = new Mesh(markerGeometry, markerMaterial);
         marker.position.copy(usePoint);
         marker.renderOrder = 999;
@@ -2357,16 +2518,25 @@ export class ThreeModelPreview implements WorkbenchPreview {
         this.pendingMarker = this.measurementMarkers[existingIndex];
       }
       this.pendingMarker.scale.setScalar(1.6);
-      (this.pendingMarker.material as MeshBasicMaterial).color.setHex(0x51cf66);
+      (this.pendingMarker.material as MeshBasicMaterial).color.setHex(MEASUREMENT_PENDING_COLOR);
       this.pendingPoint = usePoint;
       this.ensurePreviewLine();
     }
     this.markDirty();
+    this.notifyMeasurementsChanged();
   }
 
   private createMeasurementSegment(start: Vector3, end: Vector3): void {
     const geometry = new BufferGeometry().setFromPoints([start, end]);
-    const line = new Line(geometry, new LineBasicMaterial({ color: 0xff6b6b, depthTest: false }));
+    const line = new Line(
+      geometry,
+      new LineBasicMaterial({
+        color: MEASUREMENT_LINE_COLOR,
+        transparent: true,
+        opacity: 0.94,
+        depthTest: false,
+      }),
+    );
     line.renderOrder = 998;
     this.scene.add(line);
 
@@ -2379,31 +2549,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementLabelSprite(text: { primary: string; secondary: string }, position: Vector3, scale: number): Sprite {
-    const canvas = activeDocument.createEl("canvas");
+    const canvas = createStagedEl("canvas");
     const ctx = canvas.getContext("2d")!;
     canvas.width = 640;
     canvas.height = 160;
-    ctx.fillStyle = "rgba(32, 36, 46, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(0, 0, 640, 160, 18);
-    ctx.fill();
-    ctx.strokeStyle = "#ff6b6b";
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = "bold 46px sans-serif";
-    ctx.fillText(text.primary, 320, 58);
-    ctx.font = "28px sans-serif";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
-    ctx.fillText(text.secondary, 320, 112);
+    drawMeasurementLabelCanvas(ctx, text, canvas.width, canvas.height);
 
     const texture = new CanvasTexture(canvas);
-    const material = new SpriteMaterial({ map: texture, depthTest: false });
+    const material = new SpriteMaterial({ map: texture, depthTest: false, transparent: true });
     const sprite = new Sprite(material);
     sprite.position.copy(position);
-    sprite.scale.set(scale * 5, scale * 1.25, 1);
+    sprite.scale.set(scale * 4, scale * 0.95, 1);
     sprite.renderOrder = 1000;
     return sprite;
   }
@@ -2413,7 +2569,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const geometry = new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]);
     this.previewLine = new Line(
       geometry,
-      new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthTest: false }),
+      new LineBasicMaterial({
+        color: MEASUREMENT_PREVIEW_COLOR,
+        transparent: true,
+        opacity: 0.68,
+        depthTest: false,
+      }),
     );
     this.previewLine.renderOrder = 997;
     this.scene.add(this.previewLine);
@@ -2483,6 +2644,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private toMeasurementPoint(point: Vector3): PreviewWorldPoint {
     return { x: point.x, y: point.y, z: point.z };
+  }
+
+  private notifyMeasurementsChanged(): void {
+    for (const callback of Array.from(this.measurementObservers)) {
+      callback();
+    }
   }
 
 }

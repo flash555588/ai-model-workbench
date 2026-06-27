@@ -25,18 +25,18 @@ function makeSettings(partial: Partial<PluginSettings> = {}): PluginSettings {
 }
 
 describe("createDirectViewPreviewOptions", () => {
-  it("routes default direct GLB file view through the Three edit path", () => {
+  it("routes default direct GLB file view through Babylon", () => {
     const options = createDirectViewPreviewOptions(makeSettings(), makeSource({}));
     const route = resolvePreviewRoute(options);
 
     expect(options.requireWorkbenchFeatures).toBe(false);
-    expect(route.backend).toBe("three");
-    expect(route.reason).toBe("glb direct view edit preview");
+    expect(route.backend).toBe("babylon");
+    expect(route.reason).toBe("useThreeRenderer=false");
   });
 
-  it("routes converted GLB outputs through the Three edit path", () => {
+  it("keeps converted GLB outputs on Babylon when compatibility mode is enabled", () => {
     const options = createDirectViewPreviewOptions(
-      makeSettings(),
+      makeSettings({ previewRendererRollout: "babylon-safe", useThreeRenderer: false }),
       makeSource({
         path: "C:\\vault\\models\\test-step.ai3d-converted.glb",
         strategy: "convert",
@@ -47,13 +47,19 @@ describe("createDirectViewPreviewOptions", () => {
     const route = resolvePreviewRoute(options);
 
     expect(options.requireWorkbenchFeatures).toBe(false);
-    expect(route.backend).toBe("three");
-    expect(route.reason).toBe("glb direct view edit preview");
+    expect(options.rendererRollout).toBe("babylon-safe");
+    expect(options.useThreeRenderer).toBe(false);
+    expect(route.backend).toBe("babylon");
+    expect(route.reason).toBe("useThreeRenderer=false");
   });
 
   it("uses the guarded Three workbench route only when the experimental file-view setting is enabled", () => {
     const options = createDirectViewPreviewOptions(
-      makeSettings({ experimentalThreeWorkbench: true }),
+      makeSettings({
+        experimentalThreeWorkbench: true,
+        previewRendererRollout: "three-direct-glb",
+        useThreeRenderer: true,
+      }),
       makeSource({}),
     );
     const route = resolvePreviewRoute(options);
@@ -66,7 +72,11 @@ describe("createDirectViewPreviewOptions", () => {
 
   it("does not force non-GLTF direct formats into the experimental workbench route", () => {
     const options = createDirectViewPreviewOptions(
-      makeSettings({ experimentalThreeWorkbench: true }),
+      makeSettings({
+        experimentalThreeWorkbench: true,
+        previewRendererRollout: "three-direct-glb",
+        useThreeRenderer: true,
+      }),
       makeSource({
         path: "models/bracket.stl",
         ext: "stl",

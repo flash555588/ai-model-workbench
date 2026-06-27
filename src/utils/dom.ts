@@ -1,9 +1,10 @@
+/* eslint-disable obsidianmd/prefer-create-el */
 /**
  * Staged element creation helpers.
  *
- * These helpers create a detached staging `<div>`, call the Obsidian enhanced
- * helpers on it, then return the child. This keeps callers away from raw DOM
- * creation while still avoiding accidental appends to a live container.
+ * These helpers create detached elements for places such as CodeMirror widgets,
+ * where Obsidian's enhanced Document.createEl/createDiv would try to append the
+ * element directly to the document root.
  */
 
 /**
@@ -12,8 +13,9 @@
  * @param cls Optional CSS class(es) to apply.
  */
 export function createStagedDiv(cls?: string): HTMLDivElement {
-  const s = createDiv();
-  return s.createDiv(cls ? { cls } : undefined);
+  const el = activeDocument.createElement("div");
+  if (cls) el.className = cls;
+  return el;
 }
 
 /**
@@ -26,6 +28,7 @@ export function createStagedEl<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   cls?: string,
 ): HTMLElementTagNameMap[K] {
-  const s = createDiv();
-  return s.createEl(tag, cls ? { cls } : undefined);
+  const el = activeDocument.createElement(tag);
+  if (cls) el.className = cls;
+  return el;
 }

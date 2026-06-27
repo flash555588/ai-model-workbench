@@ -18,6 +18,7 @@ import {
 import type {
   AnimationPreview,
   BoundingBoxPreview,
+  CameraZoomPreview,
   DisassemblyPreview,
   FocusSelectionPreview,
   ModelPreview,
@@ -30,6 +31,8 @@ import type {
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
 import { getPortableStem } from "../../utils/resolve-path";
+import { formatMeasurementValue } from "../../render/preview/measurement";
+import { createCameraZoomControl } from "./zoom-control";
 
 /** Create an SVG icon that follows its button color via currentColor. */
 function createSvgIcon(inner: string): SVGSVGElement {
@@ -65,7 +68,7 @@ export type SnapshotProvider =
     | "exportModelInfo"
     | "exportSelectedPartInfo"
   >>
-  & Partial<AnimationPreview & BoundingBoxPreview & DisassemblyPreview & FocusSelectionPreview & MeasurementPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
+  & Partial<AnimationPreview & BoundingBoxPreview & CameraZoomPreview & DisassemblyPreview & FocusSelectionPreview & MeasurementPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
 
 /** Handle returned by createHelperButtons — callers hold a direct reference. */
 export interface HelperToolbar {
@@ -133,6 +136,9 @@ export function createHelperButtons(
     toolbar.classList.add("is-mobile");
     setMobileInteractionMode(previewHost, false);
   }
+  const zoomControl = createCameraZoomControl(previewHost, getPreview);
+  let boundMeasurementPreview: MeasurementPreview | null = null;
+  let releaseMeasurementObserver: (() => void) | null = null;
 
   const markSecondary = <T extends HTMLButtonElement>(button: T): T => {
     button.classList.add("is-secondary");
@@ -234,11 +240,10 @@ export function createHelperButtons(
       toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
-    toggleCapabilityButton(clearMeasureBtn, !!preview && supportsMeasurementPreview(preview));
-    toggleCapabilityButton(copyMeasureBtn, !!preview && supportsMeasurementPreview(preview));
-    toggleCapabilityButton(calibrateBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
+    syncMeasurementDetails();
     syncGroupVisibility();
+    zoomControl.sync();
   };
 
   // Reset view button (refresh arrow)
@@ -429,52 +434,104 @@ export function createHelperButtons(
     if (!active) {
       setTogglePressed(clearMeasureBtn, false);
     }
+    syncMeasurementDetails();
   });
 
-  // Clear measurements button
-  const clearMeasureBtn = markSecondary(inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.clearMeasurementsLabel") },
-  }));
-  setAction(clearMeasureBtn, "clear-measurements");
-  clearMeasureBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>`));
-  clearMeasureBtn.addEventListener("click", () => {
+  function clearMeasurementRecords(trigger: HTMLElement): void {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     preview.clearMeasurements();
     setTogglePressed(measureBtn, preview.isMeasurementActive());
-    showTooltip(clearMeasureBtn, t("helper.measurementsCleared"));
-  });
+    syncMeasurementDetails();
+    showTooltip(trigger, t("helper.measurementsCleared"));
+  }
 
-  const copyMeasureBtn = markSecondary(inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.copyMeasurementsLabel") },
-  }));
-  setAction(copyMeasureBtn, "copy-measurements");
-  copyMeasureBtn.appendChild(createSvgIcon(`<path d="M4 19h16"/><path d="M7 16V8"/><path d="M12 16V5"/><path d="M17 16v-6"/><path d="M4 4h16"/>`));
-  copyMeasureBtn.addEventListener("click", () => {
+  function copyMeasurementRecords(trigger: HTMLElement): void {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     const markdown = preview.exportMeasurements();
     if (!markdown) {
-      showTooltip(copyMeasureBtn, t("helper.noMeasurements"));
+      showTooltip(trigger, t("helper.noMeasurements"));
       return;
     }
     void navigator.clipboard.writeText(markdown).then(() => {
-      showTooltip(copyMeasureBtn, t("helper.measurementsCopied"));
+      showTooltip(trigger, t("helper.measurementsCopied"));
     }).catch(() => {
-      showTooltip(copyMeasureBtn, t("helper.failed"));
+      showTooltip(trigger, t("helper.failed"));
     });
+  }
+
+  const measurementStrip = inspectGroup.createEl("button", {
+    cls: "ai3d-measurement-strip is-hidden",
+    attr: {
+      "aria-expanded": "false",
+      "aria-label": t("helper.calibrateLabel"),
+    },
   });
+  setAction(measurementStrip, "toggle-measurement-details");
+  measurementStrip.setAttribute("aria-live", "polite");
+  const measurementStripValue = measurementStrip.createSpan({ cls: "ai3d-measurement-strip-value" });
+  const measurementStripMeta = measurementStrip.createSpan({ cls: "ai3d-measurement-strip-meta" });
 
+  function getMeasurementPreview(): MeasurementPreview | null {
+    const preview = getPreview();
+    return preview && supportsMeasurementPreview(preview) ? preview : null;
+  }
 
-  // Calibration button (scale)
-  const calibrateBtn = markSecondary(inspectGroup.createEl("button", {
-    cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.calibrateLabel") },
-  }));
-  setAction(calibrateBtn, "toggle-calibration");
-  calibrateBtn.appendChild(createSvgIcon(`<rect x="2" y="8" width="20" height="8" rx="1"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="14"/>`));
+  function bindMeasurementPreview(preview: MeasurementPreview | null): void {
+    if (preview === boundMeasurementPreview) return;
+    releaseMeasurementObserver?.();
+    releaseMeasurementObserver = null;
+    boundMeasurementPreview = preview;
+    if (preview?.observeMeasurements) {
+      releaseMeasurementObserver = preview.observeMeasurements(syncMeasurementDetails);
+    }
+  }
+
+  function syncMeasurementDetails(): void {
+    const preview = getMeasurementPreview();
+    bindMeasurementPreview(preview);
+    if (!preview) {
+      measurementStrip.classList.add("is-hidden");
+      measurementDetails.classList.add("is-hidden");
+      measurementStrip.classList.remove("is-expanded");
+      measurementStrip.setAttribute("aria-expanded", "false");
+      copyMeasureBtn.disabled = true;
+      clearMeasureBtn.disabled = true;
+      return;
+    }
+
+    const active = preview.isMeasurementActive();
+    const records = preview.getMeasurementRecords();
+    const latest = records[records.length - 1] ?? null;
+    const hasRecords = records.length > 0;
+    const unit = preview.getMeasurementUnit();
+
+    measurementStrip.classList.toggle("is-hidden", !active && !hasRecords);
+    if (!active && !hasRecords) {
+      measurementDetails.classList.add("is-hidden");
+      measurementStrip.classList.remove("is-expanded");
+      measurementStrip.setAttribute("aria-expanded", "false");
+    }
+    measurementStrip.classList.toggle("is-active", active);
+    measurementStrip.classList.toggle("has-records", hasRecords);
+    measurementStripValue.textContent = latest
+      ? formatMeasurementValue(latest.reading.distance, latest.reading.unit)
+      : active ? t("helper.measurementStripActive") : t("helper.measurementStripEmpty");
+    measurementStripMeta.textContent = hasRecords
+      ? formatT("helper.measurementStripSaved", { count: String(records.length) })
+      : unit;
+    measurementStrip.setAttribute("aria-label", [
+      t("helper.measurementStripTitle"),
+      measurementStripValue.textContent,
+      measurementStripMeta.textContent,
+      t("helper.calibrateLabel"),
+    ].filter(Boolean).join(" "));
+    const canExport = hasRecords;
+    copyMeasureBtn.disabled = !canExport;
+    clearMeasureBtn.disabled = !canExport;
+    setTogglePressed(measureBtn, active);
+  }
 
   // Copy snapshot button (clipboard)
   const copyBtn = outputGroup.createEl("button", { cls: "ai3d-inline-btn", attr: { "aria-label": t("helper.copySnapshotLabel") } });
@@ -619,23 +676,47 @@ export function createHelperButtons(
   // Move toolbar to sit right after previewHost
   parentEl.insertBefore(toolbar, previewHost.nextSibling);
 
-  // Calibration panel
-  const calibratePanel = parentEl.createDiv({ cls: "ai3d-calibrate-panel is-hidden" });
-  calibratePanel.createDiv({ cls: "ai3d-calibrate-title", text: t("helper.calibrateTitle") });
-  const boundsRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
-  boundsRow.createSpan({ cls: "ai3d-calibrate-label", text: t("helper.calibrateCurrent") });
-  const boundsX = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
-  const boundsY = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
-  const boundsZ = boundsRow.createSpan({ cls: "ai3d-calibrate-readonly" });
+  // Measurement details live inside the helper toolbar so the mode feels native to the inspector controls.
+  const measurementDetails = toolbar.createDiv({ cls: "ai3d-measurement-details is-hidden" });
+  measurementDetails.setAttribute("role", "group");
+  measurementDetails.setAttribute("aria-label", t("helper.calibrateTitle"));
+  measurementDetails.addEventListener("pointerdown", stopToolbarEvent);
+  measurementDetails.addEventListener("mousedown", stopToolbarEvent);
+  measurementDetails.addEventListener("click", stopToolbarEvent);
+  measurementDetails.createDiv({ cls: "ai3d-measurement-details-title", text: t("helper.calibrateTitle") });
+  const measurementActionsRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-actions" });
+  const copyMeasureBtn = measurementActionsRow.createEl("button", {
+    cls: "ai3d-inline-btn ai3d-measurement-detail-action",
+    attr: { "aria-label": t("helper.copyMeasurementsLabel") },
+  });
+  setAction(copyMeasureBtn, "copy-measurements");
+  copyMeasureBtn.appendChild(createSvgIcon(`<path d="M4 19h16"/><path d="M7 16V8"/><path d="M12 16V5"/><path d="M17 16v-6"/><path d="M4 4h16"/>`));
+  copyMeasureBtn.addEventListener("click", () => {
+    copyMeasurementRecords(copyMeasureBtn);
+  });
+  const clearMeasureBtn = measurementActionsRow.createEl("button", {
+    cls: "ai3d-inline-btn ai3d-measurement-detail-action",
+    attr: { "aria-label": t("helper.clearMeasurementsLabel") },
+  });
+  setAction(clearMeasureBtn, "clear-measurements");
+  clearMeasureBtn.appendChild(createSvgIcon(`<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>`));
+  clearMeasureBtn.addEventListener("click", () => {
+    clearMeasurementRecords(clearMeasureBtn);
+  });
+  const boundsRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
+  boundsRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateCurrent") });
+  const boundsX = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
+  const boundsY = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
+  const boundsZ = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
 
-  const realRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
-  realRow.createSpan({ cls: "ai3d-calibrate-label", text: t("helper.calibrateReal") });
-  const inputX = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "X" } });
-  const inputY = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Y" } });
-  const inputZ = realRow.createEl("input", { cls: "ai3d-calibrate-input", attr: { type: "number", step: "any", placeholder: "Z" } });
+  const realRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
+  realRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateReal") });
+  const inputX = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "X" } });
+  const inputY = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Y" } });
+  const inputZ = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Z" } });
 
-  const unitRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row" });
-  const unitSelect = unitRow.createEl("select", { cls: "ai3d-calibrate-select" });
+  const unitRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
+  const unitSelect = unitRow.createEl("select", { cls: "ai3d-measurement-detail-select" });
   for (const unit of ["um", "mm", "cm", "m"] as const) {
     const option = unitSelect.createEl("option");
     option.value = unit;
@@ -643,11 +724,11 @@ export function createHelperButtons(
   }
   unitSelect.value = "mm";
 
-  const lockLabel = unitRow.createEl("label", { cls: "ai3d-calibrate-lock" });
+  const lockLabel = unitRow.createEl("label", { cls: "ai3d-measurement-detail-lock" });
   const lockCheck = lockLabel.createEl("input", { attr: { type: "checkbox", checked: "true" } });
   lockLabel.appendChild(activeDocument.createTextNode(" " + t("helper.calibrateLock")));
 
-  const btnRow = calibratePanel.createDiv({ cls: "ai3d-calibrate-row ai3d-calibrate-actions" });
+  const btnRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-scale-actions" });
   const applyBtn = btnRow.createEl("button", { cls: "ai3d-inline-btn", text: t("helper.calibrateApply") });
   const resetBtn2 = btnRow.createEl("button", { cls: "ai3d-inline-btn is-secondary", text: t("helper.calibrateReset") });
 
@@ -685,6 +766,7 @@ export function createHelperButtons(
     };
     preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
     preview.setMeasurementScale?.(scale);
+    syncMeasurementDetails();
     showTooltip(applyBtn, t("helper.calibrated"));
   }
 
@@ -703,6 +785,7 @@ export function createHelperButtons(
       inputY.value = "";
       inputZ.value = "";
     }
+    syncMeasurementDetails();
     showTooltip(resetBtn2, t("helper.calibrateResetDone"));
   }
 
@@ -726,27 +809,42 @@ export function createHelperButtons(
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     preview.setMeasurementUnit(unitSelect.value as MeasurementUnit);
+    syncMeasurementDetails();
   });
   applyBtn.addEventListener("click", applyScaleFromInputs);
   resetBtn2.addEventListener("click", resetScale);
 
-  calibrateBtn.addEventListener("click", () => {
-    const isHidden = calibratePanel.classList.contains("is-hidden");
-    if (isHidden) {
-      updateBoundsDisplay();
-      if (originalBounds) {
-        const preview = getPreview();
-        const scale = preview && supportsMeasurementPreview(preview)
-          ? preview.getMeasurementScale()
-          : { x: 1, y: 1, z: 1 };
-        inputX.value = (originalBounds.x * scale.x).toFixed(3);
-        inputY.value = (originalBounds.y * scale.y).toFixed(3);
-        inputZ.value = (originalBounds.z * scale.z).toFixed(3);
-      }
+  function prepareMeasurementDetails(): void {
+    updateBoundsDisplay();
+    if (originalBounds) {
+      const preview = getPreview();
+      const scale = preview && supportsMeasurementPreview(preview)
+        ? preview.getMeasurementScale()
+        : { x: 1, y: 1, z: 1 };
+      inputX.value = (originalBounds.x * scale.x).toFixed(3);
+      inputY.value = (originalBounds.y * scale.y).toFixed(3);
+      inputZ.value = (originalBounds.z * scale.z).toFixed(3);
+    } else {
+      inputX.value = "";
+      inputY.value = "";
+      inputZ.value = "";
     }
-    calibratePanel.classList.toggle("is-hidden", !isHidden);
-    setTogglePressed(calibrateBtn, isHidden);
-    showTooltip(calibrateBtn, isHidden ? t("helper.calibrateOpen") : t("helper.calibrateClose"));
+  }
+
+  function setMeasurementDetailsOpen(open: boolean, trigger: HTMLElement): void {
+    if (open) {
+      prepareMeasurementDetails();
+    }
+    measurementDetails.classList.toggle("is-hidden", !open);
+    measurementStrip.classList.toggle("is-expanded", open);
+    measurementStrip.setAttribute("aria-expanded", String(open));
+    syncMeasurementDetails();
+    showTooltip(trigger, open ? t("helper.calibrateOpen") : t("helper.calibrateClose"));
+  }
+
+  measurementStrip.addEventListener("click", () => {
+    if (measurementStrip.classList.contains("is-hidden")) return;
+    setMeasurementDetailsOpen(measurementDetails.classList.contains("is-hidden"), measurementStrip);
   });
 
 

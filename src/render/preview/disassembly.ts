@@ -196,18 +196,20 @@ class PreviewDisassemblySessionController<TPart, TTransform, TDragState> impleme
 }
 
 function requestDragAnimationFrame(callback: FrameRequestCallback): number {
-  if (typeof globalThis.requestAnimationFrame === "function") {
-    return globalThis.requestAnimationFrame(callback);
+  const frameWindow = typeof activeWindow === "undefined" ? window : activeWindow;
+  if (typeof frameWindow.requestAnimationFrame === "function") {
+    return frameWindow.requestAnimationFrame(callback);
   }
-  return globalThis.setTimeout(() => callback(performance.now()), 16) as unknown as number;
+  return frameWindow.setTimeout(() => callback(frameWindow.performance.now()), 16);
 }
 
 function cancelDragAnimationFrame(handle: number): void {
-  if (typeof globalThis.cancelAnimationFrame === "function") {
-    globalThis.cancelAnimationFrame(handle);
+  const frameWindow = typeof activeWindow === "undefined" ? window : activeWindow;
+  if (typeof frameWindow.cancelAnimationFrame === "function") {
+    frameWindow.cancelAnimationFrame(handle);
     return;
   }
-  globalThis.clearTimeout(handle);
+  frameWindow.clearTimeout(handle);
 }
 
 export function createPreviewDisassemblyController<TPart, TTransform, TDragState>(

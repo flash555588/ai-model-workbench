@@ -67,8 +67,7 @@ function getNodeUniqueId(node: BabylonSelectablePartNode): number {
 }
 
 function isNodeDisposed(node: BabylonSelectablePartNode): boolean {
-  const maybeDisposed = node as BabylonSelectablePartNode & { isDisposed?: () => boolean };
-  return typeof maybeDisposed.isDisposed === "function" ? maybeDisposed.isDisposed() : false;
+  return typeof node.isDisposed === "function" ? node.isDisposed() : false;
 }
 
 function getPartCenter(part: BabylonDisassemblyPart): Vector3 {

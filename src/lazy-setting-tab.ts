@@ -11,7 +11,7 @@ export class LazyAI3DSettingTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
-    this.containerEl.createEl("p", { cls: "setting-item-description", text: "Loading AI Model Workbench settings..." });
+    this.containerEl.createEl("p", { cls: "setting-item-description", text: "Loading AI model workbench settings..." });
     void this.ensureDelegate()
       .then((delegate) => {
         delegate.containerEl = this.containerEl;

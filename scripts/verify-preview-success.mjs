@@ -45,7 +45,11 @@ const cases = [
   },
   {
     label: "Workbench GLB Three.js capability probe",
-    args: ["--mode", "workbench", "--allow-workbench-three"],
+    args: ["--mode", "workbench", "--allow-workbench-three", "--rollout", "three-direct-glb"],
+  },
+  {
+    label: "3dgrid multi-block WebGL lifecycle preview",
+    args: ["--mode", "grid"],
   },
   {
     label: "Workbench STL remains Babylon with experimental Three enabled",
@@ -63,27 +67,34 @@ const cases = [
   // STL format test
   {
     label: "STL preview (Three.js)",
-    args: ["--model", join(rootDir, "models", "test.stl")],
+    args: ["--model", join(rootDir, "models", "test.stl"), "--rollout", "three-direct-glb"],
   },
   // PLY format test
   {
     label: "PLY preview (Three.js)",
-    args: ["--model", join(rootDir, "models", "test.ply")],
+    args: ["--model", join(rootDir, "models", "test.ply"), "--rollout", "three-direct-glb"],
   },
   // OBJ format test
   {
     label: "OBJ preview (Three.js)",
-    args: ["--model", join(rootDir, "models", "test.obj")],
+    args: ["--model", join(rootDir, "models", "test.obj"), "--rollout", "three-direct-glb"],
   },
   {
     label: "External GLTF resources with spaces and Chinese paths",
-    args: ["--model", join(rootDir, "models", "resource-fixtures", "gltf-external", "外部 资源.gltf")],
+    args: [
+      "--model",
+      join(rootDir, "models", "resource-fixtures", "gltf-external", "外部 资源.gltf"),
+      "--rollout",
+      "three-direct-glb",
+    ],
   },
   {
     label: "GLTF named groups register as part candidates",
     args: [
       "--model",
       join(rootDir, "models", "resource-fixtures", "grouped-parts", "grouped parts.gltf"),
+      "--rollout",
+      "three-direct-glb",
       "--expect-group-parts",
     ],
   },
@@ -92,6 +103,8 @@ const cases = [
     args: [
       "--model",
       join(rootDir, "models", "resource-fixtures", "obj-mtl", "case texture.obj"),
+      "--rollout",
+      "three-direct-glb",
       "--expect-no-warnings",
     ],
   },
@@ -100,6 +113,8 @@ const cases = [
     args: [
       "--model",
       join(rootDir, "models", "resource-fixtures", "obj-missing-texture", "missing texture.obj"),
+      "--rollout",
+      "three-direct-glb",
       "--expect-warning",
       "OBJ material texture not found",
     ],
@@ -109,6 +124,8 @@ const cases = [
     args: [
       "--model",
       join(rootDir, "models", "quality-fixtures", "three-color-fidelity.glb"),
+      "--rollout",
+      "three-direct-glb",
       "--expect-color-fidelity",
       "--route-only",
     ],
@@ -118,6 +135,8 @@ const cases = [
     args: [
       "--model",
       join(rootDir, "models", "quality-fixtures", "three-small-parts.glb"),
+      "--rollout",
+      "three-direct-glb",
       "--expect-small-parts",
       "--route-only",
     ],
@@ -125,7 +144,7 @@ const cases = [
   // GLB alternate path (confirms path resolution works)
   {
     label: "GLB alternate path (Three.js)",
-    args: ["--model", join(rootDir, "models", "test-model.glb")],
+    args: ["--model", join(rootDir, "models", "test-model.glb"), "--rollout", "three-direct-glb"],
   },
 ];
 

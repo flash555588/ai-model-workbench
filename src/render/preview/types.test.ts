@@ -3,6 +3,7 @@ import {
   supportsAnnotationPreview,
   supportsAnimationPreview,
   supportsBoundingBoxPreview,
+  supportsCameraZoomPreview,
   supportsDisassemblyPreview,
   supportsFocusSelectionPreview,
   supportsMeasurementPreview,
@@ -17,6 +18,7 @@ describe("preview capability guards", () => {
     expect(supportsAnnotationPreview({ getAnnotationProvider: true })).toBe(false);
     expect(supportsAnimationPreview({ hasAnimations: true, toggleAnimation: () => true })).toBe(false);
     expect(supportsBoundingBoxPreview({ toggleBoundingBox: true })).toBe(false);
+    expect(supportsCameraZoomPreview({ getCameraZoomState: true, setCameraZoom: () => null })).toBe(false);
     expect(supportsDisassemblyPreview({
       toggleDisassembly: () => true,
       resetDisassembly: () => undefined,
@@ -40,6 +42,10 @@ describe("preview capability guards", () => {
     expect(supportsAnnotationPreview({ getAnnotationProvider: () => ({}) })).toBe(true);
     expect(supportsAnimationPreview({ hasAnimations: () => true, toggleAnimation: () => true })).toBe(true);
     expect(supportsBoundingBoxPreview({ toggleBoundingBox: () => true })).toBe(true);
+    expect(supportsCameraZoomPreview({
+      getCameraZoomState: () => ({ value: 0.5, percentage: 50 }),
+      setCameraZoom: () => ({ value: 0.5, percentage: 50 }),
+    })).toBe(true);
     expect(supportsDisassemblyPreview({
       toggleDisassembly: () => true,
       resetDisassembly: () => undefined,

@@ -62,6 +62,98 @@ body {
   display: block;
 }
 
+.ai3d-zoom-control {
+  --ai3d-zoom-percent: 0%;
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 168px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 46%, transparent);
+  opacity: 0.72;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  pointer-events: auto;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.ai3d-zoom-control:hover,
+.ai3d-zoom-control:focus-within,
+.ai3d-zoom-control.is-dragging {
+  opacity: 1;
+  background: color-mix(in srgb, var(--background-primary) 68%, transparent);
+}
+
+.ai3d-zoom-control.is-hidden {
+  display: none;
+}
+
+.ai3d-zoom-track {
+  position: relative;
+  width: 4px;
+  height: 132px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ai3d-zoom-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--ai3d-zoom-percent);
+  border-radius: inherit;
+  background: var(--interactive-accent);
+}
+
+.ai3d-zoom-track::after {
+  content: "";
+  position: absolute;
+  top: calc(100% - var(--ai3d-zoom-percent));
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--background-primary);
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+}
+
+.ai3d-zoom-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: ns-resize;
+  opacity: 0;
+  pointer-events: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+
+@media (max-width: 600px) {
+  .ai3d-zoom-control {
+    right: 6px;
+    width: 24px;
+    height: 126px;
+  }
+
+  .ai3d-zoom-track {
+    height: 96px;
+  }
+}
+
 .ai3d-preview-host canvas.ai3d-disassembly-active,
 .ai3d-grid-host canvas.ai3d-disassembly-active,
 .ai3d-embed-preview canvas.ai3d-disassembly-active {
@@ -73,6 +165,12 @@ body {
 .ai3d-grid-host canvas.ai3d-disassembly-dragging,
 .ai3d-embed-preview canvas.ai3d-disassembly-dragging {
   cursor: grabbing;
+}
+
+.ai3d-preview-host canvas.ai3d-measurement-active,
+.ai3d-grid-host canvas.ai3d-measurement-active,
+.ai3d-embed-preview canvas.ai3d-measurement-active {
+  cursor: crosshair;
 }
 
 .ai3d-preview-host.is-mobile-scroll-mode canvas,
@@ -108,6 +206,67 @@ body {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   line-height: 1.5;
+}
+
+.ai3d-direct-load-gate {
+  display: flex;
+  min-height: min(420px, 70vh);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--background-primary);
+}
+
+.ai3d-direct-load-gate-title {
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+}
+
+.ai3d-direct-load-gate-message {
+  max-width: 420px;
+  color: var(--text-muted);
+}
+
+.ai3d-direct-load-gate-meta {
+  display: flex;
+  max-width: min(520px, 90%);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai3d-direct-load-gate-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai3d-direct-load-gate-meta span + span::before {
+  content: "/";
+  margin-right: 6px;
+  color: var(--background-modifier-border);
+}
+
+.ai3d-direct-load-gate-button {
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai3d-direct-load-gate-button:hover {
+  background: var(--interactive-hover);
 }
 
 .ai3d-load-feedback-shell {
@@ -307,8 +466,71 @@ body {
   border-left: 1px solid var(--background-modifier-border);
 }
 
+.ai3d-helper-group-inspect {
+  min-width: 0;
+}
+
+.ai3d-measurement-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 190px;
+  min-height: 28px;
+  padding: 0 5px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ai3d-measurement-strip:hover,
+.ai3d-measurement-strip.is-expanded {
+  background: var(--background-modifier-hover);
+}
+
+.ai3d-measurement-strip.is-active,
+.ai3d-measurement-strip.is-expanded {
+  color: var(--text-normal);
+}
+
+.ai3d-measurement-strip-value {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai3d-measurement-strip-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai3d-measurement-strip-meta::before {
+  content: "/";
+  margin-right: 6px;
+  color: var(--background-modifier-border);
+}
+
 .ai3d-helper-toolbar.is-mobile .ai3d-helper-group {
   gap: 4px;
+}
+
+.ai3d-helper-toolbar.is-mobile .ai3d-measurement-strip {
+  flex: 1 1 auto;
+  max-width: none;
+  padding-left: 6px;
 }
 
 .ai3d-helper-toolbar.is-mobile .ai3d-helper-group + .ai3d-helper-group {
@@ -389,6 +611,11 @@ body {
     gap: 4px;
   }
 
+  .ai3d-helper-toolbar-adaptive .ai3d-measurement-strip {
+    flex: 1 1 auto;
+    max-width: 150px;
+  }
+
   .ai3d-helper-toolbar-adaptive .ai3d-helper-group + .ai3d-helper-group {
     margin-left: 0;
     padding-left: 0;
@@ -438,7 +665,8 @@ body {
 /* --- Grid Host (3dgrid) --- */
 
 .ai3d-grid-host {
-  height: var(--grid-height, auto);
+  height: var(--grid-height, clamp(280px, 42vh, 460px));
+  min-height: 250px;
   border-radius: var(--ai3d-radius) var(--ai3d-radius) 0 0;
   border: 1px solid var(--background-modifier-border);
   overflow: hidden;
@@ -509,11 +737,20 @@ body {
   min-height: 0;
 }
 
+.ai3d-direct-view-leaf > .workspace-leaf-content:not(.ai3d-direct-view-leaf-content) {
+  display: none !important;
+}
+
+.ai3d-direct-view-leaf > .workspace-leaf-content.ai3d-direct-view-leaf-content {
+  flex: 1 1 0;
+}
+
 .ai3d-direct-view-leaf-content,
 .workspace-leaf-content.ai3d-direct-view-leaf-content {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -524,6 +761,7 @@ body {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  padding: 0;
 }
 
 .ai3d-direct-view {
@@ -533,6 +771,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 0;
 }
 .ai3d-workspace {
   display: grid;
@@ -580,6 +819,12 @@ body {
   padding: 8px;
   min-height: 0;
   overflow-y: auto;
+}
+.ai3d-sidebar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
 }
 .ai3d-sidebar-content .ai3d-direct-workbench-control {
   min-width: 0;
@@ -729,6 +974,31 @@ body {
 
 .ai3d-direct-workbench-panel.is-hidden {
   display: none;
+}
+
+.ai3d-sidebar-content > .ai3d-direct-workbench-panel {
+  position: static;
+  left: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  box-shadow: none;
+  background: var(--background-primary);
+}
+
+.ai3d-sidebar-content > .ai3d-direct-workbench-panel .ai3d-direct-workbench-overview {
+  grid-template-columns: 1fr;
+}
+
+.ai3d-sidebar-content > .ai3d-direct-workbench-panel .ai3d-direct-workbench-metrics {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai3d-sidebar-content > .ai3d-direct-workbench-panel .ai3d-direct-workbench-metric {
+  flex: 0 0 auto;
 }
 
 .ai3d-direct-workbench-overview,
@@ -1873,73 +2143,126 @@ body .is-hidden.is-hidden.is-hidden {
   display: none;
 }
 
-/* Measurement calibration panel */
-.ai3d-calibrate-panel {
-  padding: 8px 12px;
-  margin-top: 4px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  font-size: 12px;
+/* Measurement details inside the helper toolbar */
+.ai3d-measurement-details {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding: 5px 2px 1px;
+  margin-top: 2px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: 0;
   color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
 }
 
-.ai3d-calibrate-panel.is-hidden {
+.ai3d-measurement-details.is-hidden {
   display: none;
 }
 
-.ai3d-calibrate-title {
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: var(--text-normal);
+.ai3d-measurement-details-title {
+  display: none;
 }
 
-.ai3d-calibrate-row {
+.ai3d-measurement-detail-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px;
   margin-bottom: 4px;
 }
 
-.ai3d-calibrate-label {
-  min-width: 70px;
+.ai3d-measurement-detail-actions {
+  justify-content: flex-end;
+  margin-bottom: 2px;
+}
+
+.ai3d-measurement-detail-action {
+  width: 28px;
+  height: 26px;
   color: var(--text-muted);
 }
 
-.ai3d-calibrate-readonly {
-  font-size: 11px;
+.ai3d-measurement-detail-action:disabled {
   color: var(--text-faint);
+  opacity: 0.5;
+  cursor: default;
 }
 
-.ai3d-calibrate-input {
-  width: 60px;
-  padding: 2px 4px;
-  font-size: 12px;
+.ai3d-measurement-detail-label {
+  flex: 0 0 72px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai3d-measurement-detail-readonly {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai3d-measurement-detail-input {
+  width: 68px;
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: var(--font-ui-smaller);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai3d-measurement-detail-select {
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
   color: var(--text-normal);
 }
 
-.ai3d-calibrate-select {
-  padding: 2px 4px;
-  font-size: 12px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  color: var(--text-normal);
-}
-
-.ai3d-calibrate-lock {
+.ai3d-measurement-detail-lock {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   cursor: pointer;
 }
 
-.ai3d-calibrate-actions {
-  margin-top: 6px;
-  gap: 6px;
+.ai3d-measurement-detail-scale-actions {
+  margin-top: 2px;
+  gap: 4px;
+}
+
+.ai3d-measurement-detail-scale-actions .ai3d-inline-btn {
+  width: auto;
+  min-width: 56px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.ai3d-measurement-detail-scale-actions .ai3d-inline-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ai3d-inline-btn[data-ai3d-action="toggle-measurement"].ai3d-btn-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 40%, transparent);
 }

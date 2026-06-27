@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Performance: cancel stale direct-file preview load sessions during rapid model switches and dispose interrupted Three.js/Babylon.js GLB results before they can keep competing with the newest load.
+- Routing: default all single-model preview surfaces to Babylon.js compatibility mode while keeping Three.js available as an explicit opt-in rollout.
+- Stability: pause restored direct-file previews for large or conversion-backed models until the user clicks Load model, preventing workspace restore from locking the vault on startup.
+- UI: redesign distance measurement as an inspector-toolbar readout with synced records, transparent in-scene dimension text, crosshair cursor feedback, and copy/clear/calibration actions folded into an internal toolbar details row.
+- UI: add a draggable right-side camera zoom control to model previews and make wheel zoom less jumpy across Three.js, Babylon.js, and `3dgrid` views.
+- Compatibility: write converted GLB outputs under the active Obsidian `Vault#configDir` instead of assuming the config folder is named `.obsidian`.
+- Testing: add a multi-block `3dgrid` preview verification path that checks nonblank pixels and WebGL context-loss warnings.
+- Stability: keep Babylon `3dgrid` warmup frames dirty briefly after model load so shader compilation cannot leave the first visible grid blank.
+- Performance: release offscreen `3dgrid` Babylon engines and give grid canvases a stable default height so long demo notes avoid WebGL context loss and blank previews.
 - UI: keep direct file view model canvases full-height by turning the workbench metrics panel into a compact overlay and marking the live Obsidian leaf so its file-view height chain fills the pane.
 - Performance: overlap pre-parse render-budget checks with model file reads for direct, inline, and Live Preview single-model loads, shortening visible large-model loading waits without changing renderer routing.
 - Performance: scale Three.js texture anisotropy by render quality so heavy textured models avoid max GPU sampling cost on low and medium budgets.
@@ -73,13 +82,13 @@
 - Rendering: promote Three.js and Babylon picks on converted component child meshes to their parent registered component/group so selection, focus, and disassembly dragging do not collapse to a single surface fragment.
 - Rendering: preserve Three.js component world transforms when entering disassembly drag so nested converted GLB parts no longer jump to the scene origin or change orientation.
 - Performance: open large converted models faster by reusing fresh `.ai3d-converted.glb` outputs before probing converter identity and by deferring direct-view evidence registration until after the preview is visible.
-- Performance: route conversion-backed GLB direct file views through Three.js and avoid extra full-buffer copies during GLB parsing.
+- Performance: keep conversion-backed GLB direct file views on Babylon.js by default and avoid extra full-buffer copies during GLB parsing.
 - Performance: cap automatic registered-part writes for highly fragmented models so large imports do not keep growing the plugin state file with low-value surface shards.
 - Performance: normalize oversized saved registered-part lists on load, strip transient registered-match caches, and quickly persist the compact state so future workspace startup parses less data.
 - Performance: avoid rewriting unchanged plugin state during startup or unload, reducing extra `data.json` disk I/O in large vaults.
 - Performance: make direct-view registered-part match previews skip sidecar reads, cap current/candidate part samples, and reuse indexed match tokens to reduce large-model UI stalls.
 - Performance: apply direct-file render quality settings immediately and automatically lower resolution/shadow cost for heavy and extreme model previews.
-- Conversion: write new converted GLB outputs to `.obsidian/ai-model-workbench/converted-assets` while continuing to reuse existing side-by-side `.ai3d-converted.glb` files.
+- Conversion: write new converted GLB outputs to the vault's Obsidian config folder under `ai-model-workbench/converted-assets` while continuing to reuse existing side-by-side `.ai3d-converted.glb` files.
 - UI: always dismiss direct-view and Live Preview loading overlays when a preview load is interrupted, avoiding stale dark shields during rapid reloads or verification runs.
 - Knowledge: merge generic tiny mesh fragments into a lower-confidence detail cluster so imported models keep meaningful small parts without over-splitting renderer noise.
 - Knowledge: preserve part-splitting format lineage across direct and converted formats, including source format, rendered format, and direct/convert strategy in reports, sidecars, draft input, and registered part profiles.

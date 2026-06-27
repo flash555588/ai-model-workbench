@@ -4,6 +4,7 @@ import { PreviewLoadScheduler } from "./preview-load-scheduler";
 describe("PreviewLoadScheduler", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("runs scheduled loads one at a time by default", async () => {
@@ -49,6 +50,7 @@ describe("PreviewLoadScheduler", () => {
 
   it("can leave a short settle window between queued loads", async () => {
     vi.useFakeTimers();
+    vi.stubGlobal("activeWindow", { setTimeout, clearTimeout });
     const scheduler = new PreviewLoadScheduler(1, 50);
     const order: string[] = [];
 

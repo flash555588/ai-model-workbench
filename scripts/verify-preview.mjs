@@ -35,9 +35,9 @@ function parseMode() {
 function parseRollout() {
   const rolloutIndex = process.argv.indexOf("--rollout");
   if (rolloutIndex >= 0) {
-    return process.argv[rolloutIndex + 1] ?? "three-direct-glb";
+    return process.argv[rolloutIndex + 1] ?? "babylon-safe";
   }
-  return "three-direct-glb";
+  return "babylon-safe";
 }
 
 function parseAllowWorkbenchThree() {
@@ -166,6 +166,22 @@ async function buildHarness() {
       "export class TFolder { constructor() { this.children = []; } }",
       "export class Notice {}",
       "export class Plugin {}",
+      "const pathShim = {",
+      "  delimiter: ';',",
+      "  join(...segments) { return segments.filter(Boolean).join('/').replace(/\\/+/g, '/'); },",
+      "  normalize(value) { return String(value).replace(/\\\\/g, '/').replace(/\\/+/g, '/'); },",
+      "  isAbsolute(value) { return /^([A-Za-z]:[\\\\/]|\\/)/.test(String(value)); },",
+      "  dirname(value) { const normalized = pathShim.normalize(value).replace(/\\/+$/, ''); const index = normalized.lastIndexOf('/'); return index > 0 ? normalized.slice(0, index) : ''; },",
+      "  basename(value, ext = '') { const name = pathShim.normalize(value).split('/').pop() || ''; return ext && name.endsWith(ext) ? name.slice(0, -ext.length) : name; },",
+      "  extname(value) { const name = pathShim.basename(value); const index = name.lastIndexOf('.'); return index > 0 ? name.slice(index) : ''; },",
+      "};",
+      "if (typeof window !== 'undefined' && !window.require) {",
+      "  window.require = (id) => {",
+      "    if (id === 'node:path') return pathShim;",
+      "    if (id === 'node:process') return { platform: 'browser', env: {} };",
+      "    throw new Error(`Harness module not available: ${id}`);",
+      "  };",
+      "}",
       "export class Component {",
       "  constructor() { this.children = []; }",
       "  load() {}",
@@ -198,6 +214,9 @@ async function buildHarness() {
     format: "iife",
     target: "es2020",
     sourcemap: "inline",
+    loader: {
+      ".py": "text",
+    },
     logLevel: "silent",
     banner: {
       js: "var activeWindow = window;",
@@ -233,6 +252,9 @@ function createStaticServer() {
     .preview-card { width: 960px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 20px; background: #171b23; border-radius: 20px; }
     .ai3d-preview-host { min-height: 640px; }
     #preview-canvas { display: block; width: 100%; height: 640px; background: #20242e; border-radius: 14px; }
+    .grid-preview-card { margin-block: 80px; }
+    .grid-code-block-host .ai3d-grid-host { min-height: 300px; }
+    .grid-code-block-host canvas { display: block; width: 100%; height: 300px; background: #20242e; border-radius: 14px; }
   </style>
 </head>
 <body>
@@ -277,8 +299,8 @@ function createStaticServer() {
   });
 }
 
-async function canvasPixelStats(page) {
-  return page.locator("#preview-canvas").evaluate((canvas) => {
+async function canvasPixelStatsForLocator(locator) {
+  return locator.evaluate((canvas) => {
     const gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true })
       ?? canvas.getContext("webgl", { preserveDrawingBuffer: true });
     if (!gl) {
@@ -329,6 +351,10 @@ async function canvasPixelStats(page) {
       contrast: max - min,
     };
   });
+}
+
+async function canvasPixelStats(page) {
+  return canvasPixelStatsForLocator(page.locator("#preview-canvas"));
 }
 
 async function verifyCanvasAccessibility(page) {
@@ -544,6 +570,25 @@ async function findMeasurementClickPair(page, box, firstPick) {
 
 async function verifyHelperToolbar(page) {
   await page.waitForSelector(".ai3d-helper-toolbar", { timeout: 5000 });
+  await page.waitForSelector(".ai3d-zoom-control:not(.is-hidden) .ai3d-zoom-range", { timeout: 5000 });
+
+  const beforeZoom = await page.evaluate(() => window.__ai3dPreview?.getCameraZoomState?.()?.value ?? null);
+  assert(typeof beforeZoom === "number", `Camera zoom state was unavailable: ${beforeZoom}`);
+  const targetZoom = beforeZoom > 0.5 ? 0.2 : 0.8;
+  const zoomTrackBox = await page.locator(".ai3d-zoom-track").first().boundingBox();
+  assert(zoomTrackBox, "Camera zoom track was not visible for drag verification");
+  const dragX = zoomTrackBox.x + zoomTrackBox.width / 2;
+  const dragY = zoomTrackBox.y + zoomTrackBox.height * (1 - targetZoom);
+  await page.mouse.move(dragX, zoomTrackBox.y + zoomTrackBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dragX, dragY, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const afterZoom = await page.evaluate(() => window.__ai3dPreview?.getCameraZoomState?.()?.value ?? null);
+  assert(
+    typeof afterZoom === "number" && Math.abs(afterZoom - targetZoom) < 0.08,
+    `Camera zoom control did not update preview state: before=${beforeZoom}, target=${targetZoom}, after=${afterZoom}`,
+  );
 
   const verifyToggleButton = async (button, label) => {
     const before = await button.evaluate((entry) => entry.classList.contains("ai3d-btn-active"));
@@ -598,6 +643,36 @@ async function verifyMeasurementTool(page, box, firstPick) {
     records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
     `Measurement axis deltas were empty: ${JSON.stringify(records[0])}`,
   );
+  const detachedMeasurementGroupCount = await page.locator(".ai3d-helper-group-measurement").count();
+  assert(detachedMeasurementGroupCount === 0, `Measurement controls should be integrated into inspect tools, found detached groups: ${detachedMeasurementGroupCount}`);
+  const measurementStrip = await page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").first();
+  await measurementStrip.waitFor({ timeout: 5000 });
+  const measurementStripState = await measurementStrip.evaluate((strip) => ({
+    text: strip.textContent ?? "",
+    value: strip.querySelector(".ai3d-measurement-strip-value")?.textContent ?? "",
+    meta: strip.querySelector(".ai3d-measurement-strip-meta")?.textContent ?? "",
+    toolbarActionCount: document.querySelectorAll(".ai3d-helper-toolbar > button.ai3d-measurement-action, .ai3d-helper-group button.ai3d-measurement-action, .ai3d-helper-group button.ai3d-measurement-detail-action").length,
+    borderStyle: getComputedStyle(strip).borderStyle,
+  }));
+  assert(measurementStripState.toolbarActionCount === 0, `Measurement actions should not appear as extra toolbar buttons: ${JSON.stringify(measurementStripState)}`);
+  assert(
+    measurementStripState.value.trim().length > 0 && measurementStripState.meta.includes("1"),
+    `Measurement readout did not reflect the saved record: ${JSON.stringify(measurementStripState)}`,
+  );
+  assert(
+    measurementStripState.borderStyle === "none",
+    `Measurement readout should use the native toolbar surface, not a boxed card: ${JSON.stringify(measurementStripState)}`,
+  );
+  await measurementStrip.click();
+  const legacyDetailsCount = await page.locator(".ai3d-calibrate-panel").count();
+  assert(legacyDetailsCount === 0, `Measurement details should not use legacy calibration panel classes: ${legacyDetailsCount}`);
+  await page.locator(".ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden)").waitFor({ timeout: 5000 });
+  const detachedDetailsCount = await page.locator(".ai3d-measurement-details:not(.is-hidden)").evaluateAll((entries) =>
+    entries.filter((entry) => !entry.parentElement?.classList.contains("ai3d-helper-toolbar")).length
+  );
+  assert(detachedDetailsCount === 0, `Measurement details should be inside the helper toolbar, found detached panels: ${detachedDetailsCount}`);
+  const detailActionCount = await page.locator(".ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden) button.ai3d-measurement-detail-action").count();
+  assert(detailActionCount === 2, `Measurement detail actions were not available in the docked details row: ${detailActionCount}`);
 
   const calibrated = await page.evaluate(() => {
     const preview = window.__ai3dPreview;
@@ -624,13 +699,15 @@ async function verifyMeasurementTool(page, box, firstPick) {
   assert(toggledOff.active === false, `Measurement mode did not turn off: ${JSON.stringify(toggledOff)}`);
   assert(toggledOff.records.length === 1, "Completed measurements were cleared when measurement mode toggled off");
 
-  const copyBtn = await getToolbarButton(page, toolbarLabels.copyMeasurements);
+  const copyBtn = page.locator(`.ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden) button[aria-label="${toolbarLabels.copyMeasurements}"]`).first();
+  await copyBtn.waitFor({ state: "visible", timeout: 5000 });
   await copyBtn.click();
   await page.waitForTimeout(100);
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText().catch(() => ""));
   assert(clipboardText.includes("## Measurements") && clipboardText.includes("cm"), `Copied measurements were unexpected: ${clipboardText}`);
 
-  const clearBtn = await getToolbarButton(page, toolbarLabels.clearMeasurements);
+  const clearBtn = page.locator(`.ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden) button[aria-label="${toolbarLabels.clearMeasurements}"]`).first();
+  await clearBtn.waitFor({ state: "visible", timeout: 5000 });
   await clearBtn.click();
   await page.waitForTimeout(100);
   const cleared = await page.evaluate(() => ({
@@ -641,6 +718,8 @@ async function verifyMeasurementTool(page, box, firstPick) {
   assert(cleared.active === false, "Clearing measurements unexpectedly enabled measurement mode");
   assert(cleared.records.length === 0, `Clear measurements left records behind: ${JSON.stringify(cleared.records)}`);
   assert(cleared.markdown === "", `Clear measurements left Markdown behind: ${cleared.markdown}`);
+  const visibleMeasurementStripCount = await page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").count();
+  assert(visibleMeasurementStripCount === 0, `Measurement strip stayed visible after clearing records: ${visibleMeasurementStripCount}`);
 
   await measureBtn.click();
   await page.waitForTimeout(100);
@@ -1021,6 +1100,49 @@ async function verifyDisassemblyDragResponsive(page, pickPoint) {
   assert(setup.before !== result.after, "Disassembly drag did not refresh the canvas immediately");
 }
 
+async function waitForCanvasNonBlank(page, locator, label) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      const stats = await canvasPixelStatsForLocator(locator);
+      if (stats.nonBackgroundRatio > 0.005 && stats.contrast > 8) {
+        return stats;
+      }
+      lastError = new Error(`${label} still looks blank: ${JSON.stringify(stats)}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw lastError ?? new Error(`${label} did not produce readable pixels`);
+}
+
+async function verifyGridMode(page, state, browserMessages) {
+  assert(state?.mode === "grid", `Expected grid mode, received ${state?.mode ?? "unknown"}`);
+  assert(state.gridBlockCount >= 3, `Expected at least 3 grid blocks, got ${state.gridBlockCount ?? "unknown"}`);
+  const canvases = page.locator(".grid-code-block-host canvas");
+  const count = await canvases.count();
+  assert(count === state.gridBlockCount, `Grid canvas count mismatch: state=${state.gridBlockCount}, dom=${count}`);
+  const stats = [];
+  for (let index = 0; index < count; index++) {
+    const canvas = canvases.nth(index);
+    await canvas.scrollIntoViewIfNeeded();
+    stats.push(await waitForCanvasNonBlank(page, canvas, `3dgrid canvas ${index + 1}`));
+  }
+  const contextLostCount = await page.evaluate(() => window.__ai3dPreviewVerify?.gridContextLostCount ?? 0);
+  assert(contextLostCount === 0, `3dgrid reported WebGL context loss count=${contextLostCount}`);
+  const contextWarnings = browserMessages.filter((message) =>
+    /webglcontextlost|too many active webgl contexts|context lost/i.test(message)
+  );
+  assert(contextWarnings.length === 0, `3dgrid emitted WebGL context warnings: ${contextWarnings.join("\n")}`);
+  console.log("3dgrid preview verification passed");
+  console.log(JSON.stringify({
+    mode: verifyMode,
+    gridBlockCount: count,
+    pixelStats: stats,
+  }, null, 2));
+}
+
 async function saveFailureArtifacts(page, browserMessages, error) {
   await mkdir(failureDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1111,6 +1233,10 @@ async function verify() {
       state?.status === "ready",
       `Preview failed: ${state?.error ?? "unknown error"}\n${browserMessages.join("\n")}`,
     );
+    if (verifyMode === "grid") {
+      await verifyGridMode(page, state, browserMessages);
+      return;
+    }
     assert(state.summary.meshCount > 0, "Model summary reports zero meshes");
     assert(state.summary.triangleCount > 0, "Model summary reports zero triangles");
     assert(state.summary.vertexCount > 0, "Model summary reports zero vertices");

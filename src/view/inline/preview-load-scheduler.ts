@@ -4,9 +4,13 @@ type ScheduledTask<T> = {
   reject: (reason?: unknown) => void;
 };
 
+function getSchedulerWindow(): Window {
+  return typeof activeWindow === "undefined" ? window : activeWindow;
+}
+
 export class PreviewLoadScheduler {
   private active = 0;
-  private drainTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private drainTimer: number | null = null;
   private readonly queue: ScheduledTask<unknown>[] = [];
 
   constructor(
@@ -25,7 +29,7 @@ export class PreviewLoadScheduler {
   schedule<T>(run: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.queue.push({
-        run: run as () => Promise<unknown>,
+        run,
         resolve: resolve as (value: unknown) => void,
         reject,
       });
@@ -64,7 +68,7 @@ export class PreviewLoadScheduler {
     if (this.drainTimer !== null) {
       return;
     }
-    this.drainTimer = globalThis.setTimeout(() => {
+    this.drainTimer = getSchedulerWindow().setTimeout(() => {
       this.drainTimer = null;
       this.drain();
     }, this.settleDelayMs);

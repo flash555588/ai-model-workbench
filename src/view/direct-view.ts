@@ -1,14 +1,19 @@
-import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
+import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
 import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, ModelPartSummary, PartRecord } from "../domain/models";
 import type { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
 import type { AnnotationPreview } from "../render/preview/types";
+import {
+  isPreviewLoadInterruptedError,
+  throwIfPreviewLoadInterrupted,
+  type PreviewLoadOptions,
+} from "../render/preview/load-control";
 import { createHelperButtons } from "./inline/helper-buttons";
 import type { ConvertedAssetCache } from "../io/cache/converted-asset-cache";
 import type { PluginStore } from "../store/plugin-store";
 import { prepareModelInput } from "../io/model-pipeline";
 import { toPreviewSource, type PreviewSource } from "../io/preview/preview-source";
-import { readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
+import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath } from "../utils/resolve-path";
 import { listPreferredConversionExts } from "../io/formats/route-preferences";
 import { createLoadingOverlay } from "./inline/loading-overlay";
 import { describeModelLoadFailure, isMissingConverterError } from "../io/conversion/errors";
@@ -40,7 +45,7 @@ const MAX_MATCH_PREVIEW_EVIDENCE_PARTS = 64;
 const MAX_MATCH_PREVIEW_REGISTERED_PARTS = 512;
 const REGISTERED_MATCH_PREVIEW_DELAY_MS = 250;
 const MEDIUM_REGISTERED_MATCH_PREVIEW_DELAY_MS = 1_000;
-const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
+const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
 
 import { createDefaultProfile } from "../store/plugin-store";
 
@@ -236,6 +241,7 @@ export class DirectModelView extends FileView {
   private annotationMgr: AnnotationManager | null = null;
   private annotationMode = false;
   private loadGeneration = 0;
+  private activeLoadController: AbortController | null = null;
   private getSettings: () => PluginSettings;
   private convertedAssetCache: ConvertedAssetCache;
   private ps: PluginStore;
@@ -288,6 +294,9 @@ export class DirectModelView extends FileView {
 
   onClose(): Promise<void> {
     unmarkDirectViewDom(this.contentEl);
+    this.loadGeneration++;
+    this.activeLoadController?.abort();
+    this.activeLoadController = null;
     this.clearDeferredEvidenceRegistration();
     this.clearRegisteredMatchPreview();
     if (this.escHandler) {
@@ -303,7 +312,16 @@ export class DirectModelView extends FileView {
 
   private async loadModel(file: TFile): Promise<void> {
     markDirectViewDom(this.contentEl);
+    this.activeLoadController?.abort();
+    const loadController = new AbortController();
+    this.activeLoadController = loadController;
     const gen = ++this.loadGeneration;
+    const loadOptions: PreviewLoadOptions = {
+      signal: loadController.signal,
+      isCurrent: () => this.loadGeneration === gen
+        && this.activeLoadController === loadController
+        && !loadController.signal.aborted,
+    };
     const mobile = isMobile();
     this.clearDeferredEvidenceRegistration();
     this.clearRegisteredMatchPreview();
@@ -383,7 +401,7 @@ export class DirectModelView extends FileView {
     try {
       const settings = this.getSettings();
       const absolutePath = resolveVaultAbsolutePath(this.app, file.path) ?? undefined;
-      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+      const conversionOutputRoot = resolveVaultAbsolutePath(this.app, joinVaultConfigPath(this.app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
       loading.setPhaseKey("loading.preparingModel");
       const prepared = await prepareModelInput({
         path: file.path,
@@ -396,10 +414,7 @@ export class DirectModelView extends FileView {
         convertedAssetCache: this.convertedAssetCache,
         conversionOutputRoot,
       });
-      if (gen !== this.loadGeneration) {
-        new Notice(t("directWorkbench.modelLoadInterrupted"));
-        return;
-      }
+      throwIfPreviewLoadInterrupted(loadOptions);
       const source = toPreviewSource(prepared);
       this.workbenchEvidenceLineage = createEvidenceFormatLineage(source);
       this.workbenchSourceWarnings = [...source.warnings];
@@ -407,7 +422,7 @@ export class DirectModelView extends FileView {
       const basePreviewOptions = createDirectViewPreviewOptions(settings, source);
       toolbar?.syncCapabilities();
       loading.setPhaseKey("loading.loadingModel");
-      const dataPromise = readBinaryPath(this.app, source.path);
+      const dataPromise = readBinaryPath(this.app, source.path, { signal: loadController.signal });
       const initialRenderBudgetPromise = getPreviewPathRenderBudget(this.app, source.path, settings);
       void dataPromise.catch(() => undefined);
       void initialRenderBudgetPromise.catch(() => undefined);
@@ -418,12 +433,9 @@ export class DirectModelView extends FileView {
         source,
         basePreviewOptions,
         file.path,
+        loadOptions,
       );
-      if (gen !== this.loadGeneration) {
-        created.preview.destroy();
-        new Notice(t("directWorkbench.modelLoadInterrupted"));
-        return;
-      }
+      throwIfPreviewLoadInterrupted(loadOptions);
       this.preview = created.preview;
       host.dataset.ai3dBackend = created.route.backend;
       host.dataset.ai3dRouteReason = created.route.reason;
@@ -454,7 +466,7 @@ export class DirectModelView extends FileView {
       void this.setupAnnotationManager(file.path, gen, host, toolbar);
       this.scheduleDeferredEvidenceRegistration(file.path, gen, summary);
     } catch (err) {
-      if (gen !== this.loadGeneration) return;
+      if (isPreviewLoadInterruptedError(err) || gen !== this.loadGeneration) return;
       loading.hide();
       this.preview?.destroy();
       this.preview = null;
@@ -471,6 +483,9 @@ export class DirectModelView extends FileView {
       }
       renderModelLoadFailure(host, failure);
     } finally {
+      if (this.activeLoadController === loadController) {
+        this.activeLoadController = null;
+      }
       loading.hide();
     }
   }
@@ -885,20 +900,29 @@ export class DirectModelView extends FileView {
     source: ReturnType<typeof toPreviewSource>,
     options: DirectViewPreviewOptions,
     modelPath: string,
+    loadOptions: PreviewLoadOptions,
   ): Promise<{
       preview: AnnotationPreview;
       summary: Awaited<ReturnType<AnnotationPreview["loadModel"]>>;
       route: Awaited<ReturnType<typeof createLoggedModelPreview<AnnotationPreview>>>["route"];
     }> {
+    throwIfPreviewLoadInterrupted(loadOptions);
     const created = await createLoggedModelPreview<AnnotationPreview>(
       log,
       { surface: "direct-view", modelPath },
       canvas,
       options,
     );
+    try {
+      throwIfPreviewLoadInterrupted(loadOptions);
+    } catch (error) {
+      created.preview.destroy();
+      throw error;
+    }
     let initialRenderBudget: RenderQualityBudget;
     try {
       initialRenderBudget = await initialRenderBudgetPromise;
+      throwIfPreviewLoadInterrupted(loadOptions);
     } catch (error) {
       created.preview.destroy();
       throw error;
@@ -908,19 +932,31 @@ export class DirectModelView extends FileView {
     let data: ArrayBuffer;
     try {
       data = await dataPromise;
+      throwIfPreviewLoadInterrupted(loadOptions);
     } catch (error) {
       created.preview.destroy();
       throw error;
     }
 
     try {
-      const summary = await created.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
+      const summary = await created.preview.loadModel(
+        data,
+        source.ext,
+        (path) => readBinaryPath(this.app, path, { signal: loadOptions.signal }),
+        source.path,
+        loadOptions,
+      );
+      throwIfPreviewLoadInterrupted(loadOptions);
       return { preview: created.preview, summary, route: created.route };
     } catch (error) {
       created.preview.destroy();
+      if (isPreviewLoadInterruptedError(error)) {
+        throw error;
+      }
       if (created.route.backend !== "three" || !options.requireWorkbenchFeatures || !options.allowWorkbenchFeaturesOnThree) {
         throw error;
       }
+      throwIfPreviewLoadInterrupted(loadOptions);
       console.warn("[AI3D] Experimental Three workbench failed; falling back to Babylon:", error);
       const fallbackOptions = {
         ...options,
@@ -934,10 +970,21 @@ export class DirectModelView extends FileView {
       );
       this.applyRenderBudget(fallback.preview, initialRenderBudget);
       try {
-        const summary = await fallback.preview.loadModel(data, source.ext, (path) => readBinaryPath(this.app, path), source.path);
+        throwIfPreviewLoadInterrupted(loadOptions);
+        const summary = await fallback.preview.loadModel(
+          data,
+          source.ext,
+          (path) => readBinaryPath(this.app, path, { signal: loadOptions.signal }),
+          source.path,
+          loadOptions,
+        );
+        throwIfPreviewLoadInterrupted(loadOptions);
         return { preview: fallback.preview, summary, route: fallback.route };
       } catch (fallbackError) {
         fallback.preview.destroy();
+        if (isPreviewLoadInterruptedError(fallbackError)) {
+          throw fallbackError;
+        }
         if (isMissingExternalModelResourceError(error)) {
           throw error;
         }

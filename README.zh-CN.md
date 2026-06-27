@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）现在默认走 Three.js 渲染路径，可通过“预览兼容模式”回退到 Babylon.js；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
+> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）默认走 Babylon.js 兼容模式，Three.js 作为显式启用的可选预览路线保留；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
@@ -32,9 +32,9 @@
 
 ## 功能特性
 
-- **直接预览** GLB/GLTF、STL、OBJ、PLY（默认全部走 Three.js 渲染路径）
+- **直接预览** GLB/GLTF、STL、OBJ、PLY（默认走 Babylon.js 兼容模式，Three.js 可显式启用）
 - **可选转换** CAD、FBX、3MF、DAE 等资产到 GLB
-- **混合预览路由**：单模型预览（GLB/GLTF/STL/PLY/OBJ）默认走 Three.js，可在设置中回退到 Babylon.js
+- **混合预览路由**：单模型预览（GLB/GLTF/STL/PLY/OBJ）默认走 Babylon.js 兼容模式，可在设置中显式启用 Three.js
 - **内联与文件视图**：实时预览、代码块、直接文件查看
 - **网格系统**：在单个视口中渲染多个模型，支持预设布局
 - **3D 标注**：点击模型表面添加带标签和颜色的书签，支持深度遮挡
@@ -287,7 +287,7 @@ model.glb
 | 标注预览模式 | plain-text | 控制已保存标注内容在只读预览中的渲染方式 |
 | AI 草稿模式 | 仅本地证据 | 默认保持本地生成；配置远程服务后才请求远程草稿 |
 | 草稿服务 URL | 空 | 接收 `POST /draft-note` 的服务基础地址 |
-| 预览兼容模式 | 阅读 + 文件视图 | 控制新的单模型 GLB 预览路径启用范围 |
+| 预览兼容模式 | 兼容优先 | 控制新的单模型 GLB 预览路径启用范围 |
 | 实验性 Three 工作台 | 关 | 仅对直读 GLB/GLTF 文件视图尝试 Three.js workbench，失败时自动回退 Babylon.js |
 | 画布高度 | 400 | 预览高度（像素） |
 | 自动旋转 | 关 | 启动时启用旋转动画 |

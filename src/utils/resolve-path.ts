@@ -39,6 +39,10 @@ export function joinPortablePath(basePath: string, relativePath: string): string
   return normalizePortableRelativePath(`${basePath}/${decoded}`);
 }
 
+export function joinVaultConfigPath(app: App, relativePath: string): string {
+  return joinPortablePath(app.vault.configDir, relativePath);
+}
+
 export function getPortableDirname(path: string): string {
   const normalized = normalizePortablePath(path).replace(/\/+$/, "");
   const sepIdx = normalized.lastIndexOf("/");
@@ -90,6 +94,22 @@ function toArrayBuffer(buf: Uint8Array): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
 
+export interface ReadBinaryPathOptions {
+  signal?: AbortSignal;
+}
+
+function createAbortError(): Error {
+  const error = new Error("File read aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfSignalAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : createAbortError();
+  }
+}
+
 function getVaultBasePath(app: App): string | null {
   const adapter = app.vault.adapter as {
     getBasePath?: () => string;
@@ -134,9 +154,11 @@ export function resolveVaultAbsolutePath(app: App, vaultPath: string): string | 
   return normalize(join(basePath, vaultPath));
 }
 
-export async function readBinaryPath(app: App, path: string): Promise<ArrayBuffer> {
+export async function readBinaryPath(app: App, path: string, options: ReadBinaryPathOptions = {}): Promise<ArrayBuffer> {
+  throwIfSignalAborted(options.signal);
   if (isAbsolute(path)) {
-    const buf = await readFile(path);
+    const buf = await readFile(path, options.signal ? { signal: options.signal } : undefined);
+    throwIfSignalAborted(options.signal);
     return toArrayBuffer(buf);
   }
 
@@ -147,11 +169,15 @@ export async function readBinaryPath(app: App, path: string): Promise<ArrayBuffe
     if (caseInsensitivePath) {
       const caseInsensitiveFile = app.vault.getAbstractFileByPath(caseInsensitivePath);
       if (caseInsensitiveFile instanceof TFile) {
-        return app.vault.readBinary(caseInsensitiveFile);
+        const data = await app.vault.readBinary(caseInsensitiveFile);
+        throwIfSignalAborted(options.signal);
+        return data;
       }
     }
     throw new Error(`File not found: ${normalizedPath}`);
   }
 
-  return app.vault.readBinary(file);
+  const data = await app.vault.readBinary(file);
+  throwIfSignalAborted(options.signal);
+  return data;
 }

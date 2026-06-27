@@ -135,16 +135,20 @@ describe("preview disassembly controller", () => {
     const cancelAnimationFrame = vi.fn((frame: number) => {
       callbacks.delete(frame);
     });
-    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
-    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+    vi.stubGlobal("activeWindow", {
+      requestAnimationFrame,
+      cancelAnimationFrame,
+      setTimeout,
+      clearTimeout,
+      performance,
+    });
 
     const parts = [{ id: 1, position: 0 }];
     const updateCalls: number[] = [];
     const { adapter, getSubscriptions } = createTestAdapter(parts);
-    const originalUpdateDrag = adapter.updateDrag;
     adapter.updateDrag = (drag, event) => {
       updateCalls.push(event.clientX);
-      originalUpdateDrag(drag, event);
+      drag.part.position = drag.startPosition + event.clientX;
     };
     const controller = createPreviewDisassemblyController(adapter);
 

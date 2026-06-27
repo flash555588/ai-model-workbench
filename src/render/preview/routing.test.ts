@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { resolveGridRoute, resolvePreviewRoute } from "./routing";
 
 describe("preview routing", () => {
-  it("keeps common single-model direct formats on Three by default", () => {
+  it("keeps common single-model direct formats on Babylon by default", () => {
+    const route = resolvePreviewRoute({
+      ext: "glb",
+      annotationMode: "edit",
+      allowEditModeOnThree: true,
+      requireWorkbenchFeatures: false,
+    });
+
+    expect(route.backend).toBe("babylon");
+    expect(route.reason).toContain("rendererRollout=babylon-safe");
+  });
+
+  it("routes common single-model direct formats on Three when explicitly enabled", () => {
     const route = resolvePreviewRoute({
       ext: "glb",
       annotationMode: "edit",

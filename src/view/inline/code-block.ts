@@ -6,7 +6,7 @@ import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsAnnotationPreview } from "../../render/preview/types";
-import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
 import type { ThreeDBlockConfig, ModelConfig, GridBlockConfig, ComposeSection } from "../../domain/models";
@@ -30,7 +30,7 @@ import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-code-block");
-const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
+const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
 
 async function createInlineConversionManager(settings: PluginSettings) {
   const { createConversionManager } = await import("../../io/conversion/factory");
@@ -69,7 +69,7 @@ async function prepareInlineModel(
   }
 
   const absolutePath = resolveVaultAbsolutePath(app, sourcePath) ?? undefined;
-  const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+  const conversionOutputRoot = resolveVaultAbsolutePath(app, joinVaultConfigPath(app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
   const prepared = await prepareModelInput({
     path: sourcePath,
     absolutePath,
@@ -313,7 +313,7 @@ export function registerCodeBlockProcessor(
           await scheduleInlinePreviewLoad(async () => {
             if (destroyed || !host.isConnected) { loading.hide(); return; }
             const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
-            const conversionOutputRoot = resolveVaultAbsolutePath(app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+            const conversionOutputRoot = resolveVaultAbsolutePath(app, joinVaultConfigPath(app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
             loading.setPhaseKey("loading.preparingModel");
             const prepared = await prepareModelInput({
               path: modelPath,
@@ -527,6 +527,8 @@ export function registerGridCodeBlockProcessor(
       let renderer: PreviewGridRenderer | null = null;
       let destroyed = false;
       let loaded = false;
+      let loading = false;
+      let loadGeneration = 0;
       let observer: MutationObserver | null = null;
       let gridIo: IntersectionObserver | null = null;
       attachGridPreviewCanvasShortcuts(canvas, () => destroyed ? null : renderer);
@@ -536,11 +538,19 @@ export function registerGridCodeBlockProcessor(
         destroyed = true;
         observer?.disconnect();
         gridIo?.disconnect();
-        renderer?.destroy();
-        renderer = null;
+        releaseGridRenderer();
         gridHost.remove();
       }, getSettings);
       appendMobileInlineHint(el);
+
+      function releaseGridRenderer(): void {
+        loadGeneration += 1;
+        loading = false;
+        loaded = false;
+        renderer?.destroy();
+        renderer = null;
+        gridToolbar.syncCapabilities();
+      }
 
       observer = new MutationObserver(() => {
         if (destroyed) return;
@@ -548,22 +558,22 @@ export function registerGridCodeBlockProcessor(
           destroyed = true;
           observer?.disconnect();
           gridIo?.disconnect();
-          renderer?.destroy();
-          renderer = null;
+          releaseGridRenderer();
         }
       });
       observer.observe(el, { childList: true });
 
       async function loadGrid() {
-        if (loaded || destroyed) return;
-        loaded = true;
+        if (loaded || loading || destroyed) return;
+        loading = true;
+        const generation = ++loadGeneration;
         const gridLoading = createLoadingOverlay(gridHost);
         gridLoading.setPhaseKey("codeBlock.renderingGrid");
         gridLoading.setProgress(-1);
 
         try {
           await scheduleInlinePreviewLoad(async () => {
-            if (destroyed || !gridHost.isConnected) { gridLoading.hide(); return; }
+            if (destroyed || generation !== loadGeneration || !gridHost.isConnected) { gridLoading.hide(); return; }
             const settings = getSettings();
             const preparedModels: PreparedInlineModel[] = [];
             for (const entry of config.models ?? []) {
@@ -581,6 +591,11 @@ export function registerGridCodeBlockProcessor(
               },
               canvas,
             );
+            if (destroyed || generation !== loadGeneration || !gridHost.isConnected) {
+              nextRenderer.destroy();
+              gridLoading.hide();
+              return;
+            }
             renderer = nextRenderer;
             gridToolbar.syncCapabilities();
             const activeRenderer = renderer;
@@ -668,10 +683,15 @@ export function registerGridCodeBlockProcessor(
               await activeRenderer.loadModels(resolved, config, readFile);
             }
 
-            if (destroyed) { gridLoading.hide(); return; }
+            if (destroyed || generation !== loadGeneration) { gridLoading.hide(); return; }
+            loaded = true;
             gridLoading.hide();
           });
         } catch (err) {
+          if (generation !== loadGeneration || destroyed) {
+            gridLoading.hide();
+            return;
+          }
           destroyed = true;
           observer?.disconnect();
           gridIo?.disconnect();
@@ -683,16 +703,20 @@ export function registerGridCodeBlockProcessor(
             cls: "ai3d-inline-empty",
             text: err instanceof Error ? err.message : formatT("codeBlock.gridFailed", { reason: String(err) }),
           });
+        } finally {
+          if (generation === loadGeneration) {
+            loading = false;
+          }
         }
       }
 
-      // Lazy-load: only create Engine when scrolled into view
+      // Lazy-load on entry and release the Babylon engine after scrolling away.
       gridIo = new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            gridIo?.disconnect();
-            void loadGrid();
-          }
+        const visible = entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0);
+        if (visible) {
+          void loadGrid();
+        } else if (loaded || loading) {
+          releaseGridRenderer();
         }
       }, { rootMargin: "200px" });
       gridIo.observe(gridHost);

@@ -13,11 +13,12 @@ type NodeChildProcess = typeof import("node:child_process");
 type NodeOs = typeof import("node:os");
 type RuntimeRequire = <T = unknown>(id: string) => T;
 type RuntimeWindow = Window & { require?: RuntimeRequire; process?: RuntimeProcess };
+type ReadFileOptions = { signal?: AbortSignal };
 type WriteFileOptions = Parameters<FsPromises["writeFile"]>[2];
 type WriteFileEncoding = Extract<NonNullable<WriteFileOptions>, { encoding?: unknown }>["encoding"];
 
 function getActiveRuntimeWindow(): RuntimeWindow | undefined {
-  return typeof activeWindow === "undefined" ? undefined : activeWindow as RuntimeWindow;
+  return typeof activeWindow === "undefined" ? undefined : activeWindow;
 }
 
 export interface RuntimeProcess {
@@ -100,8 +101,8 @@ export function access(path: string, mode?: number): Promise<void> {
   return throwIfNull(getFsPromises(), "node:fs/promises").access(path, mode);
 }
 
-export function readFile(path: string): Promise<Uint8Array> {
-  return throwIfNull(getFsPromises(), "node:fs/promises").readFile(path);
+export function readFile(path: string, opts?: ReadFileOptions): Promise<Uint8Array> {
+  return throwIfNull(getFsPromises(), "node:fs/promises").readFile(path, opts);
 }
 
 export function writeFile(path: string, data: string, encoding: WriteFileEncoding): Promise<void> {

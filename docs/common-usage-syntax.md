@@ -15,8 +15,8 @@ Use Obsidian embeds for quick inline previews.
 
 Use direct formats on mobile. Conversion-backed formats need desktop converter
 tools unless an already converted `.ai3d-converted.glb` asset exists. New
-converted outputs are stored under `.obsidian/ai-model-workbench/converted-assets`
-so model folders stay clean.
+converted outputs are stored under the vault's Obsidian config folder, typically
+`.obsidian/ai-model-workbench/converted-assets`, so model folders stay clean.
 
 ## Minimal `3d` Block
 

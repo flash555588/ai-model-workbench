@@ -23,7 +23,7 @@ Important runtime files:
 
 ### Renderer Split
 
-Three.js is the main single-model mesh preview path:
+Babylon.js compatibility mode is the default single-model mesh preview path:
 
 - inline `3d`
 - Live Preview embeds
@@ -31,8 +31,17 @@ Three.js is the main single-model mesh preview path:
 - GLB/GLTF/STL/PLY/OBJ direct formats
 - readonly and edit annotation overlays on supported single-model routes
 
-Babylon.js remains the capability and fallback path:
+Three.js remains available as an explicit opt-in rollout for supported
+single-model routes:
 
+- reading-surface `3d` embeds
+- Live Preview embeds
+- direct file view
+- Experimental Three workbench probes for direct GLB/GLTF resources
+
+Babylon.js remains the default capability and fallback path:
+
+- default GLB/GLTF/STL/PLY/OBJ single-model previews
 - `3dgrid`
 - conservative workbench/fallback routes
 - legacy fallback when Three is disabled or rollout requires Babylon

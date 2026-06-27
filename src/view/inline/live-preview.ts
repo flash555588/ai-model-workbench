@@ -10,7 +10,7 @@ import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
 import type { ModelPreview } from "../../render/preview/types";
-import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { createLoadingOverlay, type LoadingOverlay } from "./loading-overlay";
 import { createStagedDiv, createStagedEl } from "../../utils/dom";
@@ -21,6 +21,7 @@ import {
   attachModelPreviewCanvasShortcuts,
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
+import { createCameraZoomControl, type CameraZoomControl } from "./zoom-control";
 import {
   docMayContainModelEmbed,
   LIVE_PREVIEW_EMBED_MARKER,
@@ -30,7 +31,7 @@ import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
 
 const log = createLogger("inline-live-preview");
-const CONVERSION_OUTPUT_ROOT = ".obsidian/ai-model-workbench/converted-assets";
+const CONVERSION_OUTPUT_CONFIG_PATH = "ai-model-workbench/converted-assets";
 
 // ── Widget ────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export class ModelEmbedWidget extends WidgetType {
   private destroyed = false;
   private initGeneration = 0;
   private viewportReady = false;
+  private zoomControl: CameraZoomControl | null = null;
 
   constructor(
     private app: App,
@@ -107,6 +109,7 @@ export class ModelEmbedWidget extends WidgetType {
     configureModelPreviewCanvas(canvas, "live-preview", this.modelPath);
     attachModelPreviewCanvasShortcuts(canvas, () => this.destroyed ? null : this.preview);
     host.appendChild(canvas);
+    this.zoomControl = createCameraZoomControl(host, () => this.preview);
 
     const loading = createLoadingOverlay(host);
 
@@ -229,7 +232,7 @@ export class ModelEmbedWidget extends WidgetType {
         ]);
         const absolutePath = resolveVaultAbsolutePath(this.app, this.modelPath) ?? undefined;
         loading.setPhaseKey("loading.preparingModel");
-        const conversionOutputRoot = resolveVaultAbsolutePath(this.app, CONVERSION_OUTPUT_ROOT) ?? undefined;
+        const conversionOutputRoot = resolveVaultAbsolutePath(this.app, joinVaultConfigPath(this.app, CONVERSION_OUTPUT_CONFIG_PATH)) ?? undefined;
         const prepared = await prepareModelInput({
           path: this.modelPath,
           absolutePath,
@@ -275,6 +278,7 @@ export class ModelEmbedWidget extends WidgetType {
           return;
         }
         this.preview = preview;
+        this.zoomControl?.sync();
         const initialRenderBudget = await initialRenderBudgetPromise;
         this.preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
         loading.setPhaseKey("loading.loadingModel");
@@ -293,9 +297,11 @@ export class ModelEmbedWidget extends WidgetType {
         if (this.destroyed || generation !== this.initGeneration) {
           this.preview?.destroy();
           this.preview = null;
+          this.zoomControl?.sync();
           return;
         }
         renderModelPerformanceFeedback(host, summary);
+        this.zoomControl?.sync();
 
         if (this.autoRotate) {
           this.preview.applyConfig({
@@ -363,6 +369,8 @@ export class ModelEmbedWidget extends WidgetType {
     this.stopViewportWatch();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
+    this.zoomControl?.destroy();
+    this.zoomControl = null;
     if (this.preview) {
       this.preview.destroy();
       this.preview = null;

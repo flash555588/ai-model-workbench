@@ -3,9 +3,14 @@ import type { ModelPreview } from "../src/render/preview/types";
 import { AnnotationManager } from "../src/render/preview/annotations";
 import { createModelPreview } from "../src/render/preview/factory";
 import { resolvePreviewRoute } from "../src/render/preview/routing";
+import { createLoggedGridRenderer } from "../src/render/preview/selection";
 import type { AnnotationPreview } from "../src/render/preview/types";
 import { createHelperButtons } from "../src/view/inline/helper-buttons";
-import { configureModelPreviewCanvas } from "../src/view/inline/preview-canvas-accessibility";
+import {
+  attachGridPreviewCanvasShortcuts,
+  configureGridPreviewCanvas,
+  configureModelPreviewCanvas,
+} from "../src/view/inline/preview-canvas-accessibility";
 import { renderRegisteredPartMatchRow } from "../src/view/direct-workbench-registered-match";
 
 interface DomCreateOptions {
@@ -35,7 +40,7 @@ declare global {
     __ai3dPreview?: ModelPreview;
     __ai3dPreviewVerify?: {
       status: "loading" | "ready" | "error";
-      mode?: "basic" | "direct-edit" | "readonly-pin" | "workbench";
+      mode?: "basic" | "direct-edit" | "readonly-pin" | "workbench" | "grid";
       rendererRollout?: "babylon-safe" | "three-readonly-glb" | "three-direct-glb";
       summary?: unknown;
       route?: unknown;
@@ -52,12 +57,14 @@ declare global {
         targetPath: string;
         disabled: boolean;
       }>;
+      gridBlockCount?: number;
+      gridContextLostCount?: number;
       error?: string;
     };
   }
 }
 
-type VerifyMode = "basic" | "direct-edit" | "readonly-pin" | "workbench";
+type VerifyMode = "basic" | "direct-edit" | "readonly-pin" | "workbench" | "grid";
 
 function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateInput): T {
   if (!options) return el;
@@ -178,6 +185,36 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
   }
   configureModelPreviewCanvas(canvas, "inline", getModelPathForPreview());
   return { host, canvas };
+}
+
+function createGridPreviewShell(blockCount: number): HTMLDivElement[] {
+  const shell = document.createElement("main");
+  shell.id = "preview-shell";
+  shell.appendChild(createGridSentinel("scroll sentinel before grids"));
+  const blocks: HTMLDivElement[] = [];
+  for (let index = 0; index < blockCount; index++) {
+    const section = document.createElement("section");
+    section.className = "preview-card grid-preview-card";
+    section.dataset.gridIndex = String(index);
+    const block = document.createElement("div");
+    block.className = "grid-code-block-host";
+    section.appendChild(block);
+    shell.appendChild(section);
+    if (index < blockCount - 1) {
+      shell.appendChild(createGridSentinel(`scroll sentinel between grids ${index + 1}`));
+    }
+    blocks.push(block);
+  }
+  shell.appendChild(createGridSentinel("scroll sentinel after grids"));
+  document.body.appendChild(shell);
+  return blocks;
+}
+
+function createGridSentinel(text: string): HTMLDivElement {
+  const sentinel = document.createElement("div");
+  sentinel.className = "scroll-sentinel grid-scroll-sentinel";
+  sentinel.textContent = text;
+  return sentinel;
 }
 
 function renderRegisteredPartMatchHarness(): Array<{
@@ -396,7 +433,7 @@ function getRendererRollout(): "babylon-safe" | "three-readonly-glb" | "three-di
   if (value === "babylon-safe" || value === "three-readonly-glb" || value === "three-direct-glb") {
     return value;
   }
-  return "three-direct-glb";
+  return "babylon-safe";
 }
 
 function allowsWorkbenchFeaturesOnThree(): boolean {
@@ -604,12 +641,94 @@ async function runWorkbenchPreview(
   });
 }
 
+function trackGridContextLoss(canvas: HTMLCanvasElement): void {
+  canvas.addEventListener("webglcontextlost", () => {
+    setVerifyState({
+      gridContextLostCount: (window.__ai3dPreviewVerify?.gridContextLostCount ?? 0) + 1,
+    });
+  });
+}
+
+async function runGridPreview(): Promise<void> {
+  const gridBlockCount = 3;
+  const modelPaths = [
+    "models/rubiks-cube-3x3.glb",
+    "models/test-model.glb",
+    "models/xbox-controller-cubies.glb",
+  ];
+  const blocks = createGridPreviewShell(gridBlockCount);
+  const models = [
+    { path: modelPaths[0], label: "Rubiks cube" },
+    { path: modelPaths[1], label: "Test model" },
+    { path: modelPaths[2], label: "Controller" },
+  ];
+  const config = {
+    models,
+    columns: 3,
+    rowHeight: 260,
+  };
+  const logger = {
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  };
+  const renderers: Array<{ destroy(): void }> = [];
+  const routes: unknown[] = [];
+  const snapshots: string[] = [];
+
+  for (const [index, block] of blocks.entries()) {
+    const gridHost = document.createElement("div");
+    gridHost.className = "ai3d-grid-host";
+    const canvas = document.createElement("canvas");
+    configureGridPreviewCanvas(canvas);
+    gridHost.appendChild(canvas);
+    block.appendChild(gridHost);
+    trackGridContextLoss(canvas);
+    const { renderer, route } = await createLoggedGridRenderer(
+      logger,
+      { surface: "3dgrid", preset: "compare", modelCount: models.length },
+      canvas,
+    );
+    renderers.push(renderer);
+    routes.push(route);
+    attachGridPreviewCanvasShortcuts(canvas, () => renderer);
+    renderer.setRenderScale(1);
+    await renderer.loadModels(models, config, readHarnessModelResource);
+    snapshots.push(renderer.captureSnapshot() ?? "");
+    block.dataset.gridLoaded = String(index + 1);
+  }
+  window.addEventListener("beforeunload", () => {
+    for (const renderer of renderers) {
+      renderer.destroy();
+    }
+  }, { once: true });
+
+  setVerifyState({
+    status: "ready",
+    mode: "grid",
+    rendererRollout: getRendererRollout(),
+    gridBlockCount,
+    gridContextLostCount: 0,
+    route: routes[0],
+    evidence: {
+      routes,
+      snapshotCount: snapshots.filter((snapshot) => snapshot.startsWith("data:image/png;base64,")).length,
+    },
+  });
+}
+
 async function main() {
   installObsidianDomShims();
   window.__ai3dPreviewVerify = { status: "loading" };
 
   const mode = (new URLSearchParams(window.location.search).get("mode") ?? "basic") as VerifyMode;
   const rendererRollout = getRendererRollout();
+  if (mode === "grid") {
+    await runGridPreview();
+    return;
+  }
+
   const { host, canvas } = createPreviewShell();
   if (mode === "direct-edit") {
     await runDirectEditPreview(host, canvas, rendererRollout);
