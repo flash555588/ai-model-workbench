@@ -1,6 +1,24 @@
-import { describe, expect, it } from "vitest";
-import { getFileSizeRenderBudget, getSummaryRenderBudget } from "./model-render-budget";
+import { describe, expect, it, vi } from "vitest";
+import type { App } from "obsidian";
+import {
+  getFileSizeRenderBudget,
+  getModelPathByteSize,
+  getSummaryRenderBudget,
+  looksLikeAbsoluteFilesystemPath,
+} from "./model-render-budget";
 import type { ModelPreviewSummary, PluginSettings } from "../domain/models";
+
+const nodeShimMocks = vi.hoisted(() => ({
+  moduleLoadCount: { value: 0 },
+  stat: vi.fn(),
+}));
+
+vi.mock("../utils/node-shim", () => {
+  nodeShimMocks.moduleLoadCount.value++;
+  return {
+    stat: nodeShimMocks.stat,
+  };
+});
 
 const baseSettings: Pick<PluginSettings, "renderQuality" | "renderScale"> = {
   renderQuality: "high",
@@ -19,6 +37,14 @@ function summary(tier: ModelPreviewSummary["performanceTier"]): ModelPreviewSumm
     boundingSize: { x: 1, y: 1, z: 1 },
     rootName: "fixture",
   };
+}
+
+function createAppWithVaultFileSize(path: string, size: number): App {
+  return {
+    vault: {
+      getAbstractFileByPath: (candidate: string) => candidate === path ? { stat: { size } } : null,
+    },
+  } as unknown as App;
 }
 
 describe("model render budget", () => {
@@ -50,5 +76,35 @@ describe("model render budget", () => {
       renderQuality: "low",
       renderScale: 0.65,
     });
+  });
+
+  it("detects cross-platform absolute filesystem paths without Node setup", () => {
+    expect(looksLikeAbsoluteFilesystemPath("C:\\models\\part.glb")).toBe(true);
+    expect(looksLikeAbsoluteFilesystemPath("C:/models/part.glb")).toBe(true);
+    expect(looksLikeAbsoluteFilesystemPath("\\\\server\\share\\part.glb")).toBe(true);
+    expect(looksLikeAbsoluteFilesystemPath("/Users/flash/models/part.glb")).toBe(true);
+    expect(looksLikeAbsoluteFilesystemPath("models/part.glb")).toBe(false);
+  });
+
+  it("uses vault metadata for relative model paths without loading Node shims", async () => {
+    nodeShimMocks.moduleLoadCount.value = 0;
+    nodeShimMocks.stat.mockReset();
+
+    await expect(getModelPathByteSize(createAppWithVaultFileSize("models/part.glb", 123456), "models/part.glb"))
+      .resolves.toBe(123456);
+
+    expect(nodeShimMocks.moduleLoadCount.value).toBe(0);
+    expect(nodeShimMocks.stat).not.toHaveBeenCalled();
+  });
+
+  it("uses Node stat only for absolute filesystem paths", async () => {
+    nodeShimMocks.moduleLoadCount.value = 0;
+    nodeShimMocks.stat.mockResolvedValueOnce({ size: 654321 });
+
+    await expect(getModelPathByteSize(createAppWithVaultFileSize("models/part.glb", 123456), "C:\\models\\part.glb"))
+      .resolves.toBe(654321);
+
+    expect(nodeShimMocks.moduleLoadCount.value).toBe(1);
+    expect(nodeShimMocks.stat).toHaveBeenCalledWith("C:\\models\\part.glb");
   });
 });

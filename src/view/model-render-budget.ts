@@ -63,15 +63,19 @@ export function getSummaryRenderBudget(
   return settingsBudget(settings);
 }
 
+export function looksLikeAbsoluteFilesystemPath(path: string): boolean {
+  return path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
 export async function getModelPathByteSize(app: App, path: string): Promise<number | null> {
-  try {
-    const { pathIsAbsolute, stat } = await import("../utils/node-shim");
-    if (pathIsAbsolute(path)) {
+  if (looksLikeAbsoluteFilesystemPath(path)) {
+    try {
+      const { stat } = await import("../utils/node-shim");
       const stats = await stat(path);
       return stats.size;
+    } catch {
+      return null;
     }
-  } catch {
-    return null;
   }
 
   const file = app.vault.getAbstractFileByPath(path);

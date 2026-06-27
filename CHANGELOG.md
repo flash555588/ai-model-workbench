@@ -41,6 +41,7 @@
 - Performance: coalesce disassembly drag updates to animation frames and flush the final pointer position on release, reducing high-frequency transform work while moving parts in large assemblies.
 - Performance: apply inline and Live Preview render quality before model loading so visible large embeds do not start their first frames at default high resolution.
 - Performance: pre-budget direct, inline, and Live Preview render quality from model file size before parsing so very large GLB outputs avoid expensive first-frame resolution settings.
+- Performance: avoid loading desktop Node path/file shims when render-budgeting normal vault-relative model paths, keeping direct preview preparation lighter across Windows, macOS, and Linux.
 - Performance: defer Three.js geometry quality snapshots and direct-view registered-part match previews so large models become interactive before diagnostic and cross-model matching work runs.
 - Performance: capture disassembly original transforms only for dragged parts and cache repeated Live Preview embed path resolution, reducing large-assembly interaction and workspace editor setup work.
 - Performance: update Three.js focus selection incrementally so switching selected parts in large assemblies no longer restores and re-dims every mesh.
