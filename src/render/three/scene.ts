@@ -112,6 +112,7 @@ import {
   setMeasurementCanvasActive,
   snapMeasurementPointToGeometry,
   unscaleMeasurementPointToBase,
+  type MeasurementGeometrySnapInput,
   type MeasurementSnapEdgeCandidate,
   type MeasurementSnapVertexCandidate,
   type MeasurementReading,
@@ -299,6 +300,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private measurementMarkerPoints: Vector3[] = [];
   private measurementTargetObject: Object3D | null = null;
   private measurementTargetHelper: BoxHelper | null = null;
+  private measurementSnapInputCache: MeasurementGeometrySnapInput | null = null;
+  private measurementSnapInputCacheTarget: Object3D | null = null;
   private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
@@ -938,6 +941,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
+    this.invalidateMeasurementSnapInputCache();
     this.applyMeasurementModelScale();
     this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
@@ -1026,6 +1030,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.measurementBaseRootScale.set(1, 1, 1);
     this.measurementBaseBounds = null;
     this.measurementMarkerPoints = [];
+    this.invalidateMeasurementSnapInputCache();
   }
 
   private applyMeasurementModelScale(): void {
@@ -2607,6 +2612,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private setMeasurementTargetObject(object: Object3D | null, notify = true): void {
     this.clearMeasurementTargetHelper(false);
+    this.invalidateMeasurementSnapInputCache();
     const target = object && this.isObjectInLoadedRoot(object) ? object : null;
     this.measurementTargetObject = target;
     this.setMeasurementSnapKind(null, false);
@@ -2631,6 +2637,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private updateMeasurementTargetHelper(): void {
     if (!this.measurementTargetHelper || !this.measurementTargetObject) return;
     this.measurementTargetHelper.update();
+  }
+
+  private invalidateMeasurementSnapInputCache(): void {
+    this.measurementSnapInputCache = null;
+    this.measurementSnapInputCacheTarget = null;
   }
 
   private setMeasurementSnapKind(kind: MeasurementSnapKind | null, notify = true): void {
@@ -2692,14 +2703,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return new Vector3(snapped.point.x, snapped.point.y, snapped.point.z);
   }
 
-  private createMeasurementGeometrySnapInput(): {
-    vertices: MeasurementSnapVertexCandidate[];
-    edges: MeasurementSnapEdgeCandidate[];
-    targetId?: string;
-    vertexRadius: number;
-  } | null {
+  private createMeasurementGeometrySnapInput(): MeasurementGeometrySnapInput | null {
     const target = this.measurementTargetObject;
     if (!target || !this.isObjectInLoadedRoot(target)) return null;
+    if (this.measurementSnapInputCache && this.measurementSnapInputCacheTarget === target) {
+      return this.measurementSnapInputCache;
+    }
     const renderables = this.getMeasurementTargetRenderables();
     if (renderables.length === 0) return null;
     const vertices: MeasurementSnapVertexCandidate[] = [];
@@ -2726,12 +2735,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (vertices.length === 0 && edges.length === 0) return null;
     const bounds = this.getMeasurementTargetBounds();
     const size = bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 };
-    return {
+    const input = {
       vertices,
       edges,
       targetId,
       vertexRadius: Math.max(size.x, size.y, size.z, 0.001) * 0.045,
     };
+    this.measurementSnapInputCache = input;
+    this.measurementSnapInputCacheTarget = target;
+    return input;
   }
 
   private getMeasurementTargetRenderables(): ThreeRenderableObject[] {

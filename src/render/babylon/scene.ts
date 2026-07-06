@@ -116,6 +116,7 @@ import {
   setMeasurementCanvasActive,
   snapMeasurementPointToGeometry,
   unscaleMeasurementPointToBase,
+  type MeasurementGeometrySnapInput,
   type MeasurementSnapEdgeCandidate,
   type MeasurementSnapVertexCandidate,
   type MeasurementReading,
@@ -312,6 +313,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private measurementMarkerPoints: Vector3[] = [];
   private measurementTargetNode: BabylonSelectablePartNode | null = null;
   private measurementTargetMeshes: AbstractMesh[] = [];
+  private measurementSnapInputCache: MeasurementGeometrySnapInput | null = null;
+  private measurementSnapInputCacheTargetId: number | null = null;
   private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
@@ -1079,6 +1082,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
+    this.invalidateMeasurementSnapInputCache();
     this.applyMeasurementModelScale();
     this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
@@ -1167,6 +1171,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.measurementBaseRootScaling = new Vector3(1, 1, 1);
     this.measurementBaseBounds = null;
     this.measurementMarkerPoints = [];
+    this.invalidateMeasurementSnapInputCache();
   }
 
   private applyMeasurementModelScale(): void {
@@ -1878,6 +1883,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private setMeasurementTargetNode(node: BabylonSelectablePartNode | null, notify = true): void {
     this.clearMeasurementTargetVisual(false);
+    this.invalidateMeasurementSnapInputCache();
     const target = node && !isBabylonNodeDisposed(node) ? this.findSelectableNode(node) : null;
     if (!target || isBabylonNodeDisposed(target)) {
       this.measurementTargetNode = null;
@@ -1940,6 +1946,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
   }
 
+  private invalidateMeasurementSnapInputCache(): void {
+    this.measurementSnapInputCache = null;
+    this.measurementSnapInputCacheTargetId = null;
+  }
+
   private getMeasurementTargetName(): string | null {
     const target = this.measurementTargetNode;
     if (!target || isBabylonNodeDisposed(target)) return null;
@@ -1977,14 +1988,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return toBabylonVector3(snapped.point);
   }
 
-  private createMeasurementGeometrySnapInput(): {
-    vertices: MeasurementSnapVertexCandidate[];
-    edges: MeasurementSnapEdgeCandidate[];
-    targetId?: string;
-    vertexRadius: number;
-  } | null {
+  private createMeasurementGeometrySnapInput(): MeasurementGeometrySnapInput | null {
     const target = this.measurementTargetNode;
     if (!this.rootMesh || !target || isBabylonNodeDisposed(target)) return null;
+    if (this.measurementSnapInputCache && this.measurementSnapInputCacheTargetId === target.uniqueId) {
+      return this.measurementSnapInputCache;
+    }
     const meshes = this.getMeasurementTargetMeshes(target);
     if (meshes.length === 0) return null;
 
@@ -2013,12 +2022,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (vertices.length === 0 && edges.length === 0) return null;
     const bounds = this.getMeasurementTargetBounds();
     const size = bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 };
-    return {
+    const input = {
       vertices,
       edges,
       targetId,
       vertexRadius: Math.max(size.x, size.y, size.z, 0.001) * 0.045,
     };
+    this.measurementSnapInputCache = input;
+    this.measurementSnapInputCacheTargetId = target.uniqueId;
+    return input;
   }
 
   private getMeasurementTargetMeshes(target = this.measurementTargetNode): AbstractMesh[] {
