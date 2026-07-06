@@ -34,6 +34,8 @@ const UNIT_FACTORS_TO_METERS: Record<MeasurementUnit, number> = {
 const MIN_MEASUREMENT_SIZE = 1e-9;
 const MEASUREMENT_EDGE_KEY_SCALE = 1_000_000;
 const MEASUREMENT_COPLANAR_EDGE_DOT = 0.9995;
+const MEASUREMENT_VERTEX_RADIUS_SPAN_FACTOR = 0.045;
+const MEASUREMENT_VERTEX_RADIUS_EDGE_FACTOR = 0.1;
 
 export interface MeasurementSnapVertexCandidate {
   point: PreviewWorldPoint;
@@ -209,6 +211,27 @@ export function snapMeasurementPointToGeometry(
     distance: candidate.distance,
     targetId: candidate.targetId,
   };
+}
+
+export function createMeasurementVertexSnapRadius(
+  boundsSize: PreviewWorldPoint,
+  edges: readonly MeasurementSnapEdgeCandidate[],
+): number {
+  const span = Math.max(boundsSize.x, boundsSize.y, boundsSize.z, 0.001);
+  const spanRadius = span * MEASUREMENT_VERTEX_RADIUS_SPAN_FACTOR;
+  const edgeLengths = edges
+    .map((edge) => distanceMeasurementPoints(edge.start, edge.end))
+    .filter((length) => Number.isFinite(length) && length > MIN_MEASUREMENT_SIZE)
+    .sort((left, right) => left - right);
+  if (edgeLengths.length === 0) {
+    return spanRadius;
+  }
+
+  const referenceEdgeLength = edgeLengths[Math.floor(edgeLengths.length / 2)];
+  return Math.max(
+    Math.min(spanRadius, referenceEdgeLength * MEASUREMENT_VERTEX_RADIUS_EDGE_FACTOR),
+    MIN_MEASUREMENT_SIZE,
+  );
 }
 
 export function createMeasurementGeometryEdgesFromTriangles(

@@ -9,6 +9,7 @@ import {
   createMeasurementReading,
   createMeasurementState,
   createMeasurementTrianglesFromIndices,
+  createMeasurementVertexSnapRadius,
   createReferenceMeasurementScale,
   drawMeasurementLabelCanvas,
   formatMeasurementNumber,
@@ -174,6 +175,18 @@ describe("measurement helpers", () => {
     );
 
     expect(snapped).toBeNull();
+  });
+
+  it("caps the vertex snap radius by selected-target edge scale", () => {
+    expect(createMeasurementVertexSnapRadius(
+      { x: 10, y: 1, z: 1 },
+      [{ start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 } }],
+    )).toBeCloseTo(0.1);
+    expect(createMeasurementVertexSnapRadius(
+      { x: 1, y: 1, z: 1 },
+      [{ start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 } }],
+    )).toBeCloseTo(0.045);
+    expect(createMeasurementVertexSnapRadius({ x: 10, y: 1, z: 1 }, [])).toBeCloseTo(0.45);
   });
 
   it("creates geometry snap edges from indexed and non-indexed triangles without face diagonals", () => {

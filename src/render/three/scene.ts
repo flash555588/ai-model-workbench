@@ -104,6 +104,7 @@ import {
   createMeasurementReading as buildMeasurementReading,
   createMeasurementState,
   createMeasurementTrianglesFromIndices,
+  createMeasurementVertexSnapRadius,
   drawMeasurementLabelCanvas,
   MEASUREMENT_LABEL_CANVAS,
   normalizeMeasurementUnit,
@@ -2752,7 +2753,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       vertices,
       edges,
       targetId,
-      vertexRadius: Math.max(size.x, size.y, size.z, 0.001) * 0.045,
+      vertexRadius: createMeasurementVertexSnapRadius(size, edges),
     };
     this.measurementSnapInputCache = input;
     this.measurementSnapInputCacheTarget = target;
