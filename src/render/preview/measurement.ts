@@ -32,6 +32,8 @@ const UNIT_FACTORS_TO_METERS: Record<MeasurementUnit, number> = {
 };
 
 const MIN_MEASUREMENT_SIZE = 1e-9;
+const MEASUREMENT_EDGE_KEY_SCALE = 1_000_000;
+const MEASUREMENT_COPLANAR_EDGE_DOT = 0.9995;
 
 export interface MeasurementSnapVertexCandidate {
   point: PreviewWorldPoint;
@@ -214,22 +216,38 @@ export function createMeasurementGeometryEdgesFromTriangles(
   triangles: readonly [number, number, number][],
   targetId?: string,
 ): MeasurementSnapEdgeCandidate[] {
-  const edges: MeasurementSnapEdgeCandidate[] = [];
-  const seen = new Set<string>();
+  const edgeEntries = new Map<string, {
+    start: PreviewWorldPoint;
+    end: PreviewWorldPoint;
+    normals: PreviewWorldPoint[];
+    targetId?: string;
+  }>();
   for (const [a, b, c] of triangles) {
+    const triangleVertices = [vertices[a], vertices[b], vertices[c]] as const;
+    if (triangleVertices.some((point) => !point || !isFiniteMeasurementPoint(point))) continue;
+    const normal = createMeasurementTriangleNormal(triangleVertices[0], triangleVertices[1], triangleVertices[2]);
     for (const [left, right] of [[a, b], [b, c], [c, a]] as const) {
       const start = vertices[left];
       const end = vertices[right];
-      if (!start || !end) continue;
-      const min = Math.min(left, right);
-      const max = Math.max(left, right);
-      const key = `${min}:${max}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ start, end, targetId });
+      if (!start || !end || !isFiniteMeasurementPoint(start) || !isFiniteMeasurementPoint(end)) continue;
+      if (distanceMeasurementPoints(start, end) <= MIN_MEASUREMENT_SIZE) continue;
+      const key = createMeasurementEdgeKey(start, end);
+      const entry = edgeEntries.get(key);
+      if (entry) {
+        if (normal) entry.normals.push(normal);
+      } else {
+        edgeEntries.set(key, {
+          start,
+          end,
+          normals: normal ? [normal] : [],
+          targetId,
+        });
+      }
     }
   }
-  return edges;
+  return Array.from(edgeEntries.values())
+    .filter((edge) => !isCoplanarSharedMeasurementEdge(edge.normals))
+    .map((edge) => ({ start: edge.start, end: edge.end, targetId: edge.targetId }));
 }
 
 export function createMeasurementTrianglesFromIndices(
@@ -452,6 +470,43 @@ function formatNumber(value: number, decimals: number): string {
 
 function isFiniteMeasurementPoint(point: PreviewWorldPoint): boolean {
   return Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z);
+}
+
+function createMeasurementPointKey(point: PreviewWorldPoint): string {
+  return [
+    Math.round(point.x * MEASUREMENT_EDGE_KEY_SCALE),
+    Math.round(point.y * MEASUREMENT_EDGE_KEY_SCALE),
+    Math.round(point.z * MEASUREMENT_EDGE_KEY_SCALE),
+  ].join(",");
+}
+
+function createMeasurementEdgeKey(start: PreviewWorldPoint, end: PreviewWorldPoint): string {
+  const left = createMeasurementPointKey(start);
+  const right = createMeasurementPointKey(end);
+  return left < right ? `${left}|${right}` : `${right}|${left}`;
+}
+
+function createMeasurementTriangleNormal(
+  a: PreviewWorldPoint,
+  b: PreviewWorldPoint,
+  c: PreviewWorldPoint,
+): PreviewWorldPoint | null {
+  return normalizeMeasurementVector(crossMeasurementVectors(
+    subtractMeasurementPoints(b, a),
+    subtractMeasurementPoints(c, a),
+  ));
+}
+
+function isCoplanarSharedMeasurementEdge(normals: readonly PreviewWorldPoint[]): boolean {
+  if (normals.length < 2) return false;
+  for (let i = 0; i < normals.length; i++) {
+    for (let j = i + 1; j < normals.length; j++) {
+      if (Math.abs(dotMeasurementVectors(normals[i], normals[j])) < MEASUREMENT_COPLANAR_EDGE_DOT) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function distanceMeasurementPoints(left: PreviewWorldPoint, right: PreviewWorldPoint): number {

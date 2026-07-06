@@ -139,7 +139,7 @@ describe("measurement helpers", () => {
     expect(snapped?.point).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it("creates geometry snap edges from indexed and non-indexed triangles", () => {
+  it("creates geometry snap edges from indexed and non-indexed triangles without face diagonals", () => {
     const squareVertices = [
       { x: 0, y: 0, z: 0 },
       { x: 1, y: 0, z: 0 },
@@ -147,13 +147,52 @@ describe("measurement helpers", () => {
       { x: 0, y: 1, z: 0 },
     ];
     const indexedTriangles = createMeasurementTrianglesFromIndices(4, [0, 1, 2, 0, 2, 3]);
-    const nonIndexedTriangles = createMeasurementTrianglesFromIndices(6, null);
     const indexedEdges = createMeasurementGeometryEdgesFromTriangles(squareVertices, indexedTriangles, "square");
+    const nonIndexedVertices = [
+      squareVertices[0],
+      squareVertices[1],
+      squareVertices[2],
+      squareVertices[0],
+      squareVertices[2],
+      squareVertices[3],
+    ];
+    const nonIndexedTriangles = createMeasurementTrianglesFromIndices(6, null);
+    const nonIndexedEdges = createMeasurementGeometryEdgesFromTriangles(nonIndexedVertices, nonIndexedTriangles, "square");
 
     expect(indexedTriangles).toEqual([[0, 1, 2], [0, 2, 3]]);
     expect(nonIndexedTriangles).toEqual([[0, 1, 2], [3, 4, 5]]);
-    expect(indexedEdges).toHaveLength(5);
+    expect(indexedEdges).toHaveLength(4);
+    expect(nonIndexedEdges).toHaveLength(4);
     expect(indexedEdges.every((edge) => edge.targetId === "square")).toBe(true);
+    expect(nonIndexedEdges.every((edge) => edge.targetId === "square")).toBe(true);
+    expect(indexedEdges).not.toContainEqual({
+      start: { x: 1, y: 1, z: 0 },
+      end: { x: 0, y: 0, z: 0 },
+      targetId: "square",
+    });
+  });
+
+  it("keeps spatially shared crease edges when triangle normals differ", () => {
+    const creaseVertices = [
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      { x: 0, y: 1, z: 0 },
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      { x: 0, y: 0, z: 1 },
+    ];
+    const edges = createMeasurementGeometryEdgesFromTriangles(
+      creaseVertices,
+      createMeasurementTrianglesFromIndices(6, null),
+      "crease",
+    );
+
+    expect(edges).toHaveLength(5);
+    expect(edges).toContainEqual({
+      start: { x: 0, y: 0, z: 0 },
+      end: { x: 1, y: 0, z: 0 },
+      targetId: "crease",
+    });
   });
 
   it("creates drafting dimension lines with extensions and arrowheads", () => {
