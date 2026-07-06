@@ -2810,6 +2810,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.pendingPoint = null;
     this.pendingMarker = null;
     this.hoveredMarkerIndex = -1;
+    if (pendingPoint) {
+      this.setMeasurementSnapKind(null, false);
+    }
     this.removePreviewLine();
 
     if (pendingMarker && pendingPoint && !this.isMeasurementPointUsed(pendingPoint)) {

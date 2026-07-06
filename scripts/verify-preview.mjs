@@ -908,6 +908,35 @@ async function verifyMeasurementTool(page, box, firstPick) {
 
   await measureBtn.click();
   await page.waitForTimeout(100);
+  await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY, { altKey: true });
+  await page.waitForTimeout(100);
+  const freePickPending = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? false,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+    state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
+  }));
+  assert(
+    freePickPending.active === true &&
+      freePickPending.records.length === 0 &&
+      freePickPending.state?.phase === "picking-end" &&
+      freePickPending.state?.snapKind === "free",
+    `Alt/Option-click did not create a free pending measurement point: ${JSON.stringify(freePickPending)}`,
+  );
+  await page.locator("#preview-canvas").press("Escape");
+  await page.waitForTimeout(100);
+  const freePickCancelled = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? false,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+    state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
+  }));
+  assert(
+    freePickCancelled.active === true &&
+      freePickCancelled.records.length === 0 &&
+      freePickCancelled.state?.phase === "ready" &&
+      freePickCancelled.state?.snapKind == null,
+    `Cancelling an Alt/Option free pick did not return measurement mode to ready state: ${JSON.stringify(freePickCancelled)}`,
+  );
+
   let pendingBeforeEsc = null;
   for (const candidate of [clickPair.first, clickPair.second]) {
     await dispatchCanvasClick(page, candidate.clientX, candidate.clientY);
@@ -935,6 +964,7 @@ async function verifyMeasurementTool(page, box, firstPick) {
   assert(pendingCancelled.active === true, `Esc should cancel the pending endpoint without leaving measurement mode: ${JSON.stringify(pendingCancelled)}`);
   assert(pendingCancelled.records.length === 0, "Cancelling a pending measurement created a record");
   assert(pendingCancelled.state?.phase === "ready", `Pending measurement did not return to ready state: ${JSON.stringify(pendingCancelled)}`);
+  assert(pendingCancelled.state?.snapKind == null, `Cancelling a pending measurement left a stale snap label: ${JSON.stringify(pendingCancelled)}`);
   await page.locator("#preview-canvas").press("Escape");
   await page.waitForTimeout(100);
   const escapedOff = await page.evaluate(() => ({
