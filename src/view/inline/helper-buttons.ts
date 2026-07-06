@@ -25,13 +25,20 @@ import type {
   OrientationGizmoPreview,
   RenderScalePreview,
   MeasurementPreview,
-  MeasurementScale,
+  MeasurementSnapKind,
+  MeasurementState,
   MeasurementUnit,
   WireframePreview,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
 import { getPortableStem } from "../../utils/resolve-path";
-import { formatMeasurementValue } from "../../render/preview/measurement";
+import {
+  cancelOrDeactivateMeasurement,
+  createBoundsMeasurementScale,
+  createReferenceMeasurementScale,
+  formatMeasurementNumber,
+  formatMeasurementValue,
+} from "../../render/preview/measurement";
 import { createCameraZoomControl } from "./zoom-control";
 
 /** Create an SVG icon that follows its button color via currentColor. */
@@ -58,6 +65,33 @@ function dataUrlToBlob(dataUrl: string): Blob {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: mime });
+}
+
+const RENDER_SCALE_PRESETS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as const;
+const DEFAULT_RENDER_SCALE_INDEX = 2;
+
+function normalizeRenderScale(scale: number | undefined): number {
+  if (typeof scale !== "number" || !Number.isFinite(scale)) return 1.0;
+  return Math.max(0.25, Math.min(scale, 2.0));
+}
+
+function findNearestRenderScaleIndex(scale: number): number {
+  const normalized = normalizeRenderScale(scale);
+  let bestIndex = DEFAULT_RENDER_SCALE_INDEX;
+  RENDER_SCALE_PRESETS.forEach((value, index) => {
+    const currentDelta = Math.abs(value - normalized);
+    const bestDelta = Math.abs(RENDER_SCALE_PRESETS[bestIndex] - normalized);
+    if (currentDelta < bestDelta) bestIndex = index;
+  });
+  return bestIndex;
+}
+
+function formatRenderScale(scale: number): string {
+  return `${Math.round(normalizeRenderScale(scale) * 100)}%`;
+}
+
+function readRenderScale(preview: RenderScalePreview | null, fallback: number): number {
+  return normalizeRenderScale(preview?.getRenderScale?.() ?? fallback);
 }
 
 /** Any preview that supports snapshot capture. */
@@ -132,6 +166,18 @@ export function createHelperButtons(
   toolbar.addEventListener("pointerdown", stopToolbarEvent);
   toolbar.addEventListener("mousedown", stopToolbarEvent);
   toolbar.addEventListener("click", stopToolbarEvent);
+  const handleMeasurementEscape = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const target = event.target;
+    if (target instanceof Node && !toolbar.contains(target) && !previewHost.contains(target)) return;
+    const preview = getMeasurementPreview();
+    if (!preview || !cancelOrDeactivateMeasurement(preview)) return;
+    syncMeasurementDetails();
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  toolbar.addEventListener("keydown", handleMeasurementEscape);
+  previewHost.addEventListener("keydown", handleMeasurementEscape);
   if (mobile) {
     toolbar.classList.add("is-mobile");
     setMobileInteractionMode(previewHost, false);
@@ -222,6 +268,7 @@ export function createHelperButtons(
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
     const animationPreview = preview && supportsAnimationPreview(preview) ? preview : null;
+    const renderScalePreview = preview && supportsRenderScalePreview(preview) ? preview : null;
     if (preview !== lastSyncedPreview) {
       lastSyncedPreview = preview;
       setTogglePressed(wireBtn, false);
@@ -236,9 +283,10 @@ export function createHelperButtons(
       toggleCapabilityButton(bboxBtn, !!preview && supportsBoundingBoxPreview(preview));
       toggleCapabilityButton(focusBtn, !!focusPreview);
       toggleCapabilityButton(disassembleBtn, !!disassemblyPreview);
-      toggleCapabilityButton(resBtn, !!preview && supportsRenderScalePreview(preview));
+      toggleCapabilityButton(resBtn, !!renderScalePreview);
       toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
+    syncRenderScaleButton(renderScalePreview);
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
     syncMeasurementDetails();
@@ -379,24 +427,28 @@ export function createHelperButtons(
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
   });
 
-  // Resolution scale cycle button (percentage display)
-  const RES_PRESETS = [0.5, 0.75, 1.0, 1.5, 2.0];
-  const configuredScale = getSettings?.().renderScale ?? 1.0;
-  let resIndex = RES_PRESETS.reduce((bestIndex, value, index) => {
-    const currentDelta = Math.abs(value - configuredScale);
-    const bestDelta = Math.abs(RES_PRESETS[bestIndex] - configuredScale);
-    return currentDelta < bestDelta ? index : bestIndex;
-  }, 2);
+  // Render scale cycle button (canvas resolution percentage, not model size)
+  const configuredScale = normalizeRenderScale(getSettings?.().renderScale ?? 1.0);
+  let resIndex = findNearestRenderScaleIndex(configuredScale);
   const resBtn = markSecondary(viewGroup.createEl("button", { cls: "ai3d-inline-btn ai3d-res-btn", attr: { "aria-label": t("helper.changeResolutionLabel") } }));
   setAction(resBtn, "change-resolution");
-  resBtn.textContent = `${RES_PRESETS[resIndex].toFixed(1)}x`;
+  function syncRenderScaleButton(preview: RenderScalePreview | null = null): void {
+    const scale = readRenderScale(preview, getSettings?.().renderScale ?? RENDER_SCALE_PRESETS[resIndex] ?? 1.0);
+    resIndex = findNearestRenderScaleIndex(scale);
+    const displayValue = formatRenderScale(scale);
+    resBtn.textContent = displayValue;
+    resBtn.setAttribute("title", formatT("helper.resolutionValue", { value: displayValue }));
+  }
+  syncRenderScaleButton();
   resBtn.addEventListener("click", () => {
     const preview = getPreview();
-    if (!preview?.setRenderScale) return;
-    resIndex = (resIndex + 1) % RES_PRESETS.length;
-    const applied = preview.setRenderScale(RES_PRESETS[resIndex]);
-    resBtn.textContent = `${applied.toFixed(1)}x`;
-    showTooltip(resBtn, formatT("helper.resolutionValue", { value: `${applied}x` }));
+    if (!preview || !supportsRenderScalePreview(preview)) return;
+    const currentIndex = findNearestRenderScaleIndex(readRenderScale(preview, RENDER_SCALE_PRESETS[resIndex]));
+    resIndex = (currentIndex + 1) % RENDER_SCALE_PRESETS.length;
+    const applied = preview.setRenderScale(RENDER_SCALE_PRESETS[resIndex]);
+    const displayScale = readRenderScale(preview, applied);
+    syncRenderScaleButton(preview);
+    showTooltip(resBtn, formatT("helper.resolutionValue", { value: formatRenderScale(displayScale) }));
   });
 
   // Animation play/pause button (play triangle — hidden until animations detected)
@@ -429,12 +481,11 @@ export function createHelperButtons(
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     const active = preview.toggleMeasurement();
-    setTogglePressed(measureBtn, active);
+    syncCapabilities();
     showTooltip(measureBtn, active ? t("helper.measurementOn") : t("helper.measurementOff"));
     if (!active) {
       setTogglePressed(clearMeasureBtn, false);
     }
-    syncMeasurementDetails();
   });
 
   function clearMeasurementRecords(trigger: HTMLElement): void {
@@ -484,8 +535,61 @@ export function createHelperButtons(
     releaseMeasurementObserver = null;
     boundMeasurementPreview = preview;
     if (preview?.observeMeasurements) {
-      releaseMeasurementObserver = preview.observeMeasurements(syncMeasurementDetails);
+      releaseMeasurementObserver = preview.observeMeasurements(() => {
+        syncToggleStates();
+        syncMeasurementDetails();
+      });
     }
+  }
+
+  function getMeasurementStatusValue(state: MeasurementState): string {
+    if (state.phase === "select-target") {
+      return t("helper.measurementSelectTarget");
+    }
+    if (state.phase === "picking-end" && state.snapKind) {
+      return getMeasurementSnapLabel(state.snapKind);
+    }
+    if (state.phase === "picking-end") {
+      return t("helper.measurementPickEnd");
+    }
+    const latest = state.records[state.records.length - 1] ?? null;
+    if (latest) {
+      return formatMeasurementValue(latest.reading.distance, latest.reading.unit);
+    }
+    if (state.snapKind) {
+      return getMeasurementSnapLabel(state.snapKind);
+    }
+    if (state.phase === "ready") {
+      return t("helper.measurementPickStart");
+    }
+    if (state.phase === "reviewing") {
+      return t("helper.measurementReviewing");
+    }
+    return t("helper.measurementStripEmpty");
+  }
+
+  function getMeasurementSnapLabel(kind: MeasurementSnapKind): string {
+    switch (kind) {
+      case "vertex":
+        return t("helper.measurementSnapVertex");
+      case "edge":
+        return t("helper.measurementSnapEdge");
+      case "free":
+        return t("helper.measurementSnapFree");
+    }
+  }
+
+  function getMeasurementStatusMeta(state: MeasurementState): string {
+    if (state.records.length > 0) {
+      return formatT("helper.measurementStripSaved", { count: String(state.records.length) });
+    }
+    if (state.phase === "select-target") {
+      return t("helper.measurementTargetMissing");
+    }
+    if (state.targetName) {
+      return formatT("helper.measurementTargetLabel", { target: state.targetName });
+    }
+    return state.unit;
   }
 
   function syncMeasurementDetails(): void {
@@ -501,32 +605,34 @@ export function createHelperButtons(
       return;
     }
 
-    const active = preview.isMeasurementActive();
-    const records = preview.getMeasurementRecords();
-    const latest = records[records.length - 1] ?? null;
+    const state = preview.getMeasurementState();
+    const active = state.active;
+    const records = state.records;
     const hasRecords = records.length > 0;
-    const unit = preview.getMeasurementUnit();
 
-    measurementStrip.classList.toggle("is-hidden", !active && !hasRecords);
+    measurementStrip.classList.toggle("is-hidden", state.phase === "inactive");
     if (!active && !hasRecords) {
       measurementDetails.classList.add("is-hidden");
       measurementStrip.classList.remove("is-expanded");
       measurementStrip.setAttribute("aria-expanded", "false");
     }
     measurementStrip.classList.toggle("is-active", active);
+    measurementStrip.classList.toggle("is-pending", state.phase === "picking-end");
+    measurementStrip.classList.toggle("is-targeting", state.phase === "select-target");
+    measurementStrip.classList.toggle("is-reviewing", state.phase === "reviewing");
     measurementStrip.classList.toggle("has-records", hasRecords);
-    measurementStripValue.textContent = latest
-      ? formatMeasurementValue(latest.reading.distance, latest.reading.unit)
-      : active ? t("helper.measurementStripActive") : t("helper.measurementStripEmpty");
-    measurementStripMeta.textContent = hasRecords
-      ? formatT("helper.measurementStripSaved", { count: String(records.length) })
-      : unit;
+    measurementStrip.dataset.ai3dMeasurementPhase = state.phase;
+    measurementStripValue.textContent = getMeasurementStatusValue(state);
+    measurementStripMeta.textContent = getMeasurementStatusMeta(state);
     measurementStrip.setAttribute("aria-label", [
       t("helper.measurementStripTitle"),
       measurementStripValue.textContent,
       measurementStripMeta.textContent,
       t("helper.calibrateLabel"),
     ].filter(Boolean).join(" "));
+    recordsSummary.textContent = hasRecords
+      ? formatT("helper.measurementStripSaved", { count: String(records.length) })
+      : t("helper.measurementNoRecords");
     const canExport = hasRecords;
     copyMeasureBtn.disabled = !canExport;
     clearMeasureBtn.disabled = !canExport;
@@ -684,7 +790,10 @@ export function createHelperButtons(
   measurementDetails.addEventListener("mousedown", stopToolbarEvent);
   measurementDetails.addEventListener("click", stopToolbarEvent);
   measurementDetails.createDiv({ cls: "ai3d-measurement-details-title", text: t("helper.calibrateTitle") });
-  const measurementActionsRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-actions" });
+  const recordsSection = measurementDetails.createDiv({ cls: "ai3d-measurement-section ai3d-measurement-records-section" });
+  recordsSection.createDiv({ cls: "ai3d-measurement-section-title", text: t("helper.measurementRecordsTitle") });
+  const measurementActionsRow = recordsSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-actions" });
+  const recordsSummary = measurementActionsRow.createSpan({ cls: "ai3d-measurement-record-summary" });
   const copyMeasureBtn = measurementActionsRow.createEl("button", {
     cls: "ai3d-inline-btn ai3d-measurement-detail-action",
     attr: { "aria-label": t("helper.copyMeasurementsLabel") },
@@ -703,19 +812,10 @@ export function createHelperButtons(
   clearMeasureBtn.addEventListener("click", () => {
     clearMeasurementRecords(clearMeasureBtn);
   });
-  const boundsRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
-  boundsRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateCurrent") });
-  const boundsX = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
-  const boundsY = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
-  const boundsZ = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
-
-  const realRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
-  realRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateReal") });
-  const inputX = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "X" } });
-  const inputY = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Y" } });
-  const inputZ = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Z" } });
-
-  const unitRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row" });
+  const calibrationSection = measurementDetails.createDiv({ cls: "ai3d-measurement-section ai3d-measurement-calibration-section" });
+  calibrationSection.createDiv({ cls: "ai3d-measurement-section-title", text: t("helper.measurementCalibrationTitle") });
+  const unitRow = calibrationSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-unit-row" });
+  unitRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.measurementUnitLabel") });
   const unitSelect = unitRow.createEl("select", { cls: "ai3d-measurement-detail-select" });
   for (const unit of ["um", "mm", "cm", "m"] as const) {
     const option = unitSelect.createEl("option");
@@ -723,33 +823,79 @@ export function createHelperButtons(
     option.textContent = unit;
   }
   unitSelect.value = "mm";
+  const referenceRow = calibrationSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-reference-row" });
+  referenceRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateReference") });
+  const referenceValue = referenceRow.createSpan({ cls: "ai3d-measurement-detail-readonly ai3d-measurement-reference-value" });
+  const referenceInput = referenceRow.createEl("input", {
+    cls: "ai3d-measurement-detail-input ai3d-measurement-reference-input",
+    attr: { type: "number", step: "any", min: "0", placeholder: t("helper.calibrateReferencePlaceholder") },
+  });
+  const referenceApplyBtn = referenceRow.createEl("button", {
+    cls: "ai3d-inline-btn ai3d-measurement-reference-apply",
+    text: t("helper.calibrateReferenceApply"),
+    attr: { type: "button" },
+  });
+  setAction(referenceApplyBtn, "calibrate-reference");
 
-  const lockLabel = unitRow.createEl("label", { cls: "ai3d-measurement-detail-lock" });
+  const sizeSection = measurementDetails.createDiv({ cls: "ai3d-measurement-section ai3d-measurement-size-section" });
+  sizeSection.createDiv({ cls: "ai3d-measurement-section-title", text: t("helper.measurementModelSizeTitle") });
+  const boundsRow = sizeSection.createDiv({ cls: "ai3d-measurement-detail-row" });
+  boundsRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateCurrent") });
+  const boundsX = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
+  const boundsY = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
+  const boundsZ = boundsRow.createSpan({ cls: "ai3d-measurement-detail-readonly" });
+
+  const realRow = sizeSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-size-row" });
+  realRow.createSpan({ cls: "ai3d-measurement-detail-label", text: t("helper.calibrateReal") });
+  const inputX = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "X" } });
+  const inputY = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Y" } });
+  const inputZ = realRow.createEl("input", { cls: "ai3d-measurement-detail-input", attr: { type: "number", step: "any", placeholder: "Z" } });
+
+  const sizeOptionsRow = sizeSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-size-options" });
+  const lockLabel = sizeOptionsRow.createEl("label", { cls: "ai3d-measurement-detail-lock" });
   const lockCheck = lockLabel.createEl("input", { attr: { type: "checkbox", checked: "true" } });
   lockLabel.appendChild(activeDocument.createTextNode(" " + t("helper.calibrateLock")));
 
-  const btnRow = measurementDetails.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-scale-actions" });
+  const btnRow = sizeSection.createDiv({ cls: "ai3d-measurement-detail-row ai3d-measurement-detail-scale-actions" });
   const applyBtn = btnRow.createEl("button", { cls: "ai3d-inline-btn", text: t("helper.calibrateApply") });
-  const resetBtn2 = btnRow.createEl("button", { cls: "ai3d-inline-btn is-secondary", text: t("helper.calibrateReset") });
+  const resetBtn2 = btnRow.createEl("button", { cls: "ai3d-inline-btn", text: t("helper.calibrateReset") });
 
   let originalBounds: { x: number; y: number; z: number } | null = null;
+
+  function getLatestMeasurementRecord(): ReturnType<MeasurementPreview["getMeasurementRecords"]>[number] | null {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return null;
+    const records = preview.getMeasurementState().records;
+    return records[records.length - 1] ?? null;
+  }
 
   function updateBoundsDisplay(): void {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
-    const bounds = preview.getMeasurementBounds?.() ?? null;
-    const scale = preview.getMeasurementScale();
-    unitSelect.value = preview.getMeasurementUnit();
+    const state = preview.getMeasurementState();
+    const bounds = state.bounds;
+    const scale = state.scale;
+    unitSelect.value = state.unit;
     originalBounds = bounds;
     if (bounds) {
-      boundsX.textContent = `X: ${(bounds.x * scale.x).toFixed(3)}`;
-      boundsY.textContent = `Y: ${(bounds.y * scale.y).toFixed(3)}`;
-      boundsZ.textContent = `Z: ${(bounds.z * scale.z).toFixed(3)}`;
+      const unit = state.unit;
+      boundsX.textContent = `X: ${formatMeasurementNumber(bounds.x * scale.x)} ${unit}`;
+      boundsY.textContent = `Y: ${formatMeasurementNumber(bounds.y * scale.y)} ${unit}`;
+      boundsZ.textContent = `Z: ${formatMeasurementNumber(bounds.z * scale.z)} ${unit}`;
     } else {
       boundsX.textContent = "X: -";
       boundsY.textContent = "Y: -";
       boundsZ.textContent = "Z: -";
     }
+    const latest = getLatestMeasurementRecord();
+    referenceValue.textContent = latest
+      ? formatMeasurementValue(latest.reading.distance, latest.reading.unit, false)
+      : t("helper.calibrateReferenceEmpty");
+    referenceInput.disabled = !latest;
+    referenceApplyBtn.disabled = !latest;
+    referenceInput.placeholder = latest
+      ? formatMeasurementNumber(latest.reading.distance)
+      : t("helper.calibrateReferencePlaceholder");
   }
 
   function applyScaleFromInputs(): void {
@@ -758,16 +904,51 @@ export function createHelperButtons(
     const vx = parseFloat(inputX.value);
     const vy = parseFloat(inputY.value);
     const vz = parseFloat(inputZ.value);
-    if (!isFinite(vx) || !isFinite(vy) || !isFinite(vz)) return;
-    const scale: MeasurementScale = {
-      x: originalBounds.x > 0.0001 ? vx / originalBounds.x : 1,
-      y: originalBounds.y > 0.0001 ? vy / originalBounds.y : 1,
-      z: originalBounds.z > 0.0001 ? vz / originalBounds.z : 1,
-    };
+    const scale = createBoundsMeasurementScale(
+      originalBounds,
+      {
+        x: Number.isFinite(vx) ? vx : undefined,
+        y: Number.isFinite(vy) ? vy : undefined,
+        z: Number.isFinite(vz) ? vz : undefined,
+      },
+      preview.getMeasurementScale(),
+      lockCheck.checked,
+    );
+    if (!scale) {
+      showTooltip(applyBtn, t("helper.calibrateNeedsValue"));
+      return;
+    }
     preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
     preview.setMeasurementScale?.(scale);
+    prepareMeasurementDetails();
     syncMeasurementDetails();
     showTooltip(applyBtn, t("helper.calibrated"));
+  }
+
+  function applyScaleFromLatestMeasurement(): void {
+    const preview = getPreview();
+    if (!preview || !supportsMeasurementPreview(preview)) return;
+    const realDistance = parseFloat(referenceInput.value);
+    preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
+    const latest = getLatestMeasurementRecord();
+    if (!latest || !Number.isFinite(realDistance) || realDistance <= 0) {
+      showTooltip(referenceApplyBtn, t("helper.calibrateNeedsValue"));
+      return;
+    }
+    const nextScale = createReferenceMeasurementScale(
+      preview.getMeasurementScale(),
+      latest.reading.distance,
+      realDistance,
+    );
+    if (!nextScale) {
+      showTooltip(referenceApplyBtn, t("helper.calibrateNeedsValue"));
+      return;
+    }
+    preview.setMeasurementScale?.(nextScale);
+    referenceInput.value = "";
+    prepareMeasurementDetails();
+    syncMeasurementDetails();
+    showTooltip(referenceApplyBtn, t("helper.calibrated"));
   }
 
   function resetScale(): void {
@@ -775,16 +956,8 @@ export function createHelperButtons(
     if (!preview || !supportsMeasurementPreview(preview)) return;
     preview.setMeasurementUnit?.(unitSelect.value as MeasurementUnit);
     preview.setMeasurementScale?.({ x: 1, y: 1, z: 1 });
-    updateBoundsDisplay();
-    if (originalBounds) {
-      inputX.value = originalBounds.x.toFixed(3);
-      inputY.value = originalBounds.y.toFixed(3);
-      inputZ.value = originalBounds.z.toFixed(3);
-    } else {
-      inputX.value = "";
-      inputY.value = "";
-      inputZ.value = "";
-    }
+    referenceInput.value = "";
+    prepareMeasurementDetails();
     syncMeasurementDetails();
     showTooltip(resetBtn2, t("helper.calibrateResetDone"));
   }
@@ -797,9 +970,9 @@ export function createHelperButtons(
     const orig = originalBounds[changedAxis];
     if (orig <= 0.0001) return;
     const ratio = val / orig;
-    if (changedAxis !== "x") inputX.value = (originalBounds.x * ratio).toFixed(3);
-    if (changedAxis !== "y") inputY.value = (originalBounds.y * ratio).toFixed(3);
-    if (changedAxis !== "z") inputZ.value = (originalBounds.z * ratio).toFixed(3);
+    if (changedAxis !== "x") inputX.value = formatMeasurementNumber(originalBounds.x * ratio);
+    if (changedAxis !== "y") inputY.value = formatMeasurementNumber(originalBounds.y * ratio);
+    if (changedAxis !== "z") inputZ.value = formatMeasurementNumber(originalBounds.z * ratio);
   }
 
   inputX.addEventListener("input", () => onRealInputChanged("x"));
@@ -809,8 +982,10 @@ export function createHelperButtons(
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
     preview.setMeasurementUnit(unitSelect.value as MeasurementUnit);
+    prepareMeasurementDetails();
     syncMeasurementDetails();
   });
+  referenceApplyBtn.addEventListener("click", applyScaleFromLatestMeasurement);
   applyBtn.addEventListener("click", applyScaleFromInputs);
   resetBtn2.addEventListener("click", resetScale);
 
@@ -821,9 +996,9 @@ export function createHelperButtons(
       const scale = preview && supportsMeasurementPreview(preview)
         ? preview.getMeasurementScale()
         : { x: 1, y: 1, z: 1 };
-      inputX.value = (originalBounds.x * scale.x).toFixed(3);
-      inputY.value = (originalBounds.y * scale.y).toFixed(3);
-      inputZ.value = (originalBounds.z * scale.z).toFixed(3);
+      inputX.value = formatMeasurementNumber(originalBounds.x * scale.x);
+      inputY.value = formatMeasurementNumber(originalBounds.y * scale.y);
+      inputZ.value = formatMeasurementNumber(originalBounds.z * scale.z);
     } else {
       inputX.value = "";
       inputY.value = "";

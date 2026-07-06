@@ -69,6 +69,7 @@ describe("preview capability guards", () => {
     const preview = {
       toggleMeasurement: () => true,
       isMeasurementActive: () => false,
+      cancelMeasurement: () => undefined,
       clearMeasurements: () => undefined,
       setMeasurementScale: () => undefined,
       getMeasurementScale: () => ({ x: 1, y: 1, z: 1 }),
@@ -76,6 +77,14 @@ describe("preview capability guards", () => {
       getMeasurementUnit: () => "mm",
       getMeasurementBounds: () => null,
       getMeasurementRecords: () => [],
+      getMeasurementState: () => ({
+        active: false,
+        phase: "inactive",
+        records: [],
+        unit: "mm",
+        scale: { x: 1, y: 1, z: 1 },
+        bounds: null,
+      }),
       updateMeasurementLabels: () => undefined,
       exportMeasurements: () => "",
     };

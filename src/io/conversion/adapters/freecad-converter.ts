@@ -84,7 +84,8 @@ export class FreecadConverter implements ModelConverter {
     } catch (error) {
       throw new Error(
         `CAD conversion failed for '${req.sourcePath}'. ` +
-        `Ensure Python with cadquery is installed: pip install cadquery trimesh. ` +
+        `Ensure Python can import CadQuery/OCP and trimesh. ` +
+        `A dedicated conda/mamba environment from conda-forge is recommended; pip install cadquery trimesh can work when compatible wheels are available. ` +
         `Set Python command path in plugin settings or AI3D_FREECAD_CMD if Python is not discoverable. ` +
         `${error instanceof Error ? error.message : String(error)}`,
       );

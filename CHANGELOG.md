@@ -3,6 +3,18 @@
 ## Unreleased
 
 - Stability: gate conversion-backed direct file views behind an explicit Load model action even when Obsidian restores them through `onLoadFile`, preventing STEP/STP workspace restore loops from freezing the vault.
+- Stability: make the direct-view load gate settings-aware for preferred OBJ conversion and keep mobile direct-format reads on Obsidian vault APIs instead of desktop Node path helpers.
+- UI: upgrade measurement calibration so users can scale the loaded model uniformly from the latest ruler distance, keep overlays anchored in model space, apply locked model-size scaling from one known axis, and verify the workflow through preview automation.
+- UI: make distance measurement lock the selected object by default and snap endpoints to its mesh vertices or triangle edges, with first-click target selection when needed and Alt/Option-click preserving the older free surface pick as a backup.
+- UI: restyle distance measurements as orthographic drawing-style dimension callouts with extension lines, arrowheads, and compact drafting labels instead of thick freehand ruler lines.
+- UI: remove the preview canvas native hover tooltip while preserving keyboard shortcut metadata for accessibility.
+- UI: clarify render scale versus measurement scale by showing render resolution as percentages, syncing the toolbar to the active renderer budget, and applying the configured scale to `3dgrid`.
+- UI: redesign the measurement tool around explicit ready, pick-end, and review states with a grouped inspector and Esc cancellation for pending endpoints.
+- UI: keep measurement, focus selection, and disassembly pick modes mutually exclusive across Three.js and Babylon.js previews so toolbar state does not imply competing click actions.
+- UI: improve in-scene ruler readability with larger contrast-backed measurement labels, brighter overlay geometry, and suppressed Babylon pick highlights while measuring.
+- UI: trigger a blue focus aggregation pulse on the preview canvas when the measurement tool is activated.
+- Settings: keep language selection as a native Obsidian dropdown while preserving immediate vault-local switching.
+- Diagnostics: split the STEP/STP CAD converter self-check into granular CadQuery, trimesh, OCP STEP reader, and OCCT GLB writer probes, and document the recommended dedicated CadQuery environment setup.
 
 ## 0.7.1 - 2026-06-28
 

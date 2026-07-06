@@ -66,6 +66,7 @@ class BabylonGridRenderer implements PreviewGridRenderer {
   private dirty = true;
   private contextLost = false;
   private warmupFrame: number | null = null;
+  private renderScale = 1;
   private resizeObs: ResizeObserver;
   private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
@@ -536,9 +537,14 @@ class BabylonGridRenderer implements PreviewGridRenderer {
 
   setRenderScale(scale: number): number {
     const clamped = Math.max(0.25, Math.min(scale, 2.0));
+    this.renderScale = clamped;
     const mobileBoost = isMobile() ? 1.5 : 1;
     this.engine.setHardwareScalingLevel(mobileBoost / clamped);
-    return clamped;
+    return this.getRenderScale();
+  }
+
+  getRenderScale(): number {
+    return Number(this.renderScale.toFixed(2));
   }
 
   getCameraZoomState(): CameraZoomState | null {

@@ -1,5 +1,6 @@
 import { formatT, t, type TranslationKey } from "../../i18n";
 import type { PreviewGridRenderer } from "../../render/preview/grid";
+import { cancelOrDeactivateMeasurement } from "../../render/preview/measurement";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsMeasurementPreview } from "../../render/preview/types";
 import { getPortableBasename } from "../../utils/resolve-path";
@@ -9,6 +10,7 @@ type PreviewCanvasSurface = "inline" | "grid" | "live-preview" | "direct-view";
 const MODEL_SHORTCUTS = ["R", "W", "G", "B", "M", "Space"] as const;
 const GRID_SHORTCUTS = ["R", "W"] as const;
 const tabOrderObservers = new WeakSet<HTMLCanvasElement>();
+let labelSequence = 0;
 
 const labelKeys: Record<PreviewCanvasSurface, TranslationKey> = {
   inline: "previewCanvas.inlineLabel",
@@ -22,23 +24,18 @@ export function configureModelPreviewCanvas(
   surface: Exclude<PreviewCanvasSurface, "grid">,
   modelPath: string,
 ): void {
-  const shortcutHint = t("previewCanvas.modelShortcuts");
   configurePreviewCanvas(canvas, {
     label: formatT(labelKeys[surface], {
       model: getPortableBasename(modelPath) || t("workbench.modelTitle"),
-      shortcuts: shortcutHint,
     }),
     shortcutKeys: MODEL_SHORTCUTS,
-    shortcutHint,
   });
 }
 
 export function configureGridPreviewCanvas(canvas: HTMLCanvasElement): void {
-  const shortcutHint = t("previewCanvas.gridShortcuts");
   configurePreviewCanvas(canvas, {
-    label: formatT(labelKeys.grid, { shortcuts: shortcutHint }),
+    label: t(labelKeys.grid),
     shortcutKeys: GRID_SHORTCUTS,
-    shortcutHint,
   });
 }
 
@@ -71,6 +68,10 @@ export function attachModelPreviewCanvasShortcuts(
         preview.toggleMeasurement();
       }
       event.preventDefault();
+    } else if (key === "escape") {
+      if (supportsMeasurementPreview(preview) && cancelOrDeactivateMeasurement(preview)) {
+        event.preventDefault();
+      }
     }
   });
 }
@@ -99,15 +100,46 @@ function configurePreviewCanvas(
   options: {
     label: string;
     shortcutKeys: readonly string[];
-    shortcutHint: string;
   },
 ): void {
   keepNaturalTabOrder(canvas);
   canvas.setAttribute("role", "application");
-  canvas.setAttribute("aria-label", options.label);
+  setCanvasAccessibleLabel(canvas, options.label);
   canvas.setAttribute("aria-keyshortcuts", options.shortcutKeys.join(" "));
-  canvas.setAttribute("title", options.shortcutHint);
+  clearNativeTooltipAttributes(canvas);
   canvas.dataset.testid = "ai3d-preview-canvas";
+}
+
+function setCanvasAccessibleLabel(canvas: HTMLCanvasElement, label: string): void {
+  const existingId = canvas.dataset.ai3dLabelId;
+  const existing = existingId ? canvas.ownerDocument.getElementById(existingId) : null;
+  const labelEl = existing instanceof HTMLElement ? existing : createCanvasLabelElement(canvas);
+  if (!labelEl) {
+    canvas.removeAttribute("aria-label");
+    canvas.removeAttribute("aria-labelledby");
+    delete canvas.dataset.ai3dLabelId;
+    return;
+  }
+
+  labelEl.setText(label);
+  canvas.dataset.ai3dLabelId = labelEl.id;
+  canvas.setAttribute("aria-labelledby", labelEl.id);
+  canvas.removeAttribute("aria-label");
+}
+
+function createCanvasLabelElement(canvas: HTMLCanvasElement): HTMLElement | null {
+  const parent = canvas.parentElement;
+  if (!parent) return null;
+
+  const label = parent.createSpan({ cls: "ai3d-visually-hidden" });
+  label.id = `ai3d-preview-canvas-label-${++labelSequence}`;
+  return label;
+}
+
+function clearNativeTooltipAttributes(canvas: HTMLCanvasElement): void {
+  canvas.removeAttribute("title");
+  canvas.removeAttribute("data-tooltip");
+  canvas.removeAttribute("aria-description");
 }
 
 function keepNaturalTabOrder(canvas: HTMLCanvasElement): void {

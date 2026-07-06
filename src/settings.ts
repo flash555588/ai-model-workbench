@@ -97,18 +97,18 @@ export class AI3DSettingTab extends PluginSettingTab {
   }
 
   private buildLanguageSection(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName(t("settings.language")).setHeading();
-
     new Setting(containerEl)
       .setName(t("settings.language"))
       .setDesc(t("settings.language.desc"))
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("en", "English")
-          .addOption("zh-CN", "简体中文")
+          .addOption("en", t("settings.language.englishName"))
+          .addOption("zh-CN", t("settings.language.chineseName"))
           .setValue(this.plugin.getSettings().locale)
-          .onChange((val: string) => {
-            this.plugin.updateSettings({ locale: val as Locale });
+          .onChange((value) => {
+            const locale = value as Locale;
+            this.plugin.updateSettings({ locale });
+            setLocale(locale);
             this.display();
           }),
       );
@@ -677,7 +677,7 @@ export class AI3DSettingTab extends PluginSettingTab {
   }
 
   private renderDependencyCheck(containerEl: HTMLElement, check: ConverterDependencyCheck): void {
-    const label = (() => {
+    const label = check.label ?? (() => {
       switch (check.kind) {
         case "cad-python":
           return t("settings.diagnostics.cadPythonCheck");

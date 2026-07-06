@@ -1,4 +1,5 @@
 import type { App } from "obsidian";
+import { TFile } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fsMocks = vi.hoisted(() => ({
@@ -12,12 +13,9 @@ vi.mock("obsidian", () => ({
 
 vi.mock("./node-shim", () => ({
   readFile: fsMocks.readFile,
-  pathIsAbsolute: (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path),
-  pathJoin: (...segments: string[]) => segments.join("/"),
-  pathNormalize: (path: string) => path.replace(/\\/g, "/"),
 }));
 
-import { joinPortablePath, joinVaultConfigPath, readBinaryPath } from "./resolve-path";
+import { joinPortablePath, joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath } from "./resolve-path";
 
 describe("portable path helpers", () => {
   it("resolves encoded parent-directory resource URIs from the model folder", () => {
@@ -39,6 +37,26 @@ describe("portable path helpers", () => {
 
     expect(joinVaultConfigPath(app, "ai-model-workbench/converted-assets"))
       .toBe(".custom-obsidian/ai-model-workbench/converted-assets");
+  });
+
+  it("resolves desktop absolute paths when a vault base path exists", () => {
+    const app = {
+      vault: {
+        adapter: {
+          getBasePath: () => "/vault",
+        },
+      },
+    } as unknown as App;
+
+    expect(resolveVaultAbsolutePath(app, "models/test.glb")).toBe("/vault/models/test.glb");
+  });
+
+  it("leaves direct mobile-style vault paths unresolved when no base path exists", () => {
+    const app = {
+      vault: {},
+    } as unknown as App;
+
+    expect(resolveVaultAbsolutePath(app, "models/test.glb")).toBeNull();
   });
 });
 
@@ -65,5 +83,23 @@ describe("readBinaryPath", () => {
 
     expect(result).not.toBe(backing.buffer);
     expect(Array.from(new Uint8Array(result))).toEqual([1, 2, 3]);
+  });
+
+  it("reads vault-relative paths through Obsidian without requiring Node fs", async () => {
+    const file = new TFile();
+    const data = new Uint8Array([7, 8, 9]).buffer;
+    const readBinary = vi.fn(async () => data);
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn(() => file),
+        readBinary,
+      },
+    } as unknown as App;
+
+    const result = await readBinaryPath(app, "models/test.glb");
+
+    expect(result).toBe(data);
+    expect(readBinary).toHaveBeenCalledWith(file);
+    expect(fsMocks.readFile).not.toHaveBeenCalled();
   });
 });

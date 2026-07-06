@@ -11,6 +11,7 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { LinesMesh } from "@babylonjs/core/Meshes/linesMesh.js";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
+import { VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
@@ -35,7 +36,7 @@ import { ensureLoadersRegistered } from "./loaders/register";
 import { loadSTLBuffer } from "./loaders/stl-loader";
 import { loadPLYBuffer } from "./loaders/ply-loader";
 import { setExplode, resetExplode } from "./explode";
-import { setupPicking } from "./picking";
+import { setupPicking, type PickingCleanup } from "./picking";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
@@ -49,16 +50,20 @@ import {
   createBabylonNodePartPreviewSummary,
   createBabylonPartPreviewSummary,
   findBabylonSelectablePartNode,
+  getBabylonMeshesPreviewBounds,
+  getBabylonNodeDisplayName,
   type BabylonSelectablePartNode,
   getBabylonRenderableMeshes,
   getBabylonRenderablePreviewBounds,
   getBabylonVertexCount,
 } from "./mesh-preview";
 import {
+  createPreviewBounds,
   getPreviewBoundsCenter,
   getPreviewBoundsMaxSpan,
   getPreviewBoundsRadius,
   getPreviewBoundsSize,
+  type PreviewBounds,
 } from "../preview/bounds";
 import { createPreviewOrbitCameraFit } from "../preview/camera-fit";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
@@ -84,7 +89,9 @@ import type {
   PreviewProjectionResult,
   PreviewWorldPoint,
   MeasurementScale,
+  MeasurementSnapKind,
   MeasurementUnit,
+  MeasurementState,
   CameraZoomState,
   WorkbenchPreview,
 } from "../preview/types";
@@ -95,11 +102,22 @@ import {
 } from "../preview/load-control";
 import {
   createMeasurementLabel,
+  createMeasurementDraftingLayout,
+  createMeasurementGeometryEdgesFromTriangles,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
+  createMeasurementState,
+  createMeasurementTrianglesFromIndices,
   drawMeasurementLabelCanvas,
+  MEASUREMENT_LABEL_CANVAS,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
+  scaleMeasurementPointFromBase,
+  setMeasurementCanvasActive,
+  snapMeasurementPointToGeometry,
+  unscaleMeasurementPointToBase,
+  type MeasurementSnapEdgeCandidate,
+  type MeasurementSnapVertexCandidate,
   type MeasurementReading,
   type MeasurementRecord,
 } from "../preview/measurement";
@@ -110,11 +128,13 @@ const OBJ_IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff
 const OBJ_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
 const FOCUS_DIM_VISIBILITY = 0.242;
 const FOCUS_WORLD_POINT_ANIMATION_MS = 320;
-const MEASUREMENT_LINE_COLOR = new Color3(0.54, 0.71, 0.97);
-const MEASUREMENT_MARKER_COLOR = new Color3(0.89, 0.91, 0.94);
+const MEASUREMENT_LINE_COLOR = new Color3(0.97, 0.98, 0.99);
+const MEASUREMENT_MARKER_COLOR = new Color3(0.97, 0.98, 0.99);
 const MEASUREMENT_PENDING_COLOR = new Color3(0.96, 0.62, 0.04);
-const MEASUREMENT_HOVER_COLOR = new Color3(0.97, 0.98, 0.99);
-const MEASUREMENT_PREVIEW_COLOR = new Color3(0.8, 0.84, 0.88);
+const MEASUREMENT_HOVER_COLOR = new Color3(1, 1, 1);
+const MEASUREMENT_PREVIEW_COLOR = new Color3(0.9, 0.91, 0.92);
+
+type BabylonMeasurementSegment = { start: Vector3; end: Vector3; line: LinesMesh; label: Mesh };
 
 function isShadowLight(light: Light): light is IShadowLight {
   const className = light.getClassName();
@@ -177,7 +197,7 @@ function createMeasurementMarkerMaterial(scene: Scene): StandardMaterial {
   mat.emissiveColor = MEASUREMENT_MARKER_COLOR.clone();
   mat.specularColor = new Color3(0, 0, 0);
   mat.disableLighting = true;
-  mat.alpha = 0.96;
+  mat.alpha = 0.48;
   return mat;
 }
 
@@ -256,7 +276,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private contextLost = false;
   private viewportVisible = true;
   private viewportObserver: IntersectionObserver | null = null;
-  private cleanupPicking: (() => void) | null = null;
+  private cleanupPicking: PickingCleanup | null = null;
   private resizeObs: ResizeObserver;
   private configLights: Light[] = [];
   private shadowGenerator: ShadowGenerator | null = null;
@@ -274,6 +294,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private bboxMesh: Mesh | null = null;
   private bboxEnabled = false;
   private currentQuality: "low" | "medium" | "high" = "high";
+  private renderScale = 1;
   private resourceWarnings: string[] = [];
   private gltfComponentMetadata = new Map<string, unknown>();
   private animPlaying = false;
@@ -283,18 +304,24 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
+  private measurementBaseRootScaling = new Vector3(1, 1, 1);
+  private measurementBaseBounds: PreviewBounds | null = null;
   private measurementUnit: MeasurementUnit = "mm";
-  private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Mesh; label: Mesh }> = [];
+  private measurementSegments: BabylonMeasurementSegment[] = [];
   private measurementMarkers: Mesh[] = [];
+  private measurementMarkerPoints: Vector3[] = [];
+  private measurementTargetNode: BabylonSelectablePartNode | null = null;
+  private measurementTargetMeshes: AbstractMesh[] = [];
+  private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
   private pendingMarker: Mesh | null = null;
   private hoveredMarkerIndex = -1;
-  private lastPointerClient = { x: 0, y: 0 };
-  private previewLine: Mesh | null = null;
+  private lastPointerClient = { x: 0, y: 0, altKey: false };
+  private previewLine: LinesMesh | null = null;
   private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
   private readonly handlePointerMove = (event: PointerEvent) => {
-    this.lastPointerClient = { x: event.clientX, y: event.clientY };
+    this.lastPointerClient = { x: event.clientX, y: event.clientY, altKey: event.altKey };
     if (!this.measurementActive) return;
     if (this.pendingPoint) {
       this.updatePreviewLine();
@@ -383,6 +410,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: true });
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.12, 0.12, 0.14, 1);
+    this.scene.setRenderingAutoClearDepthStencil(2, true, true, true);
 
     this.camera = new ArcRotateCamera(
       "cam",
@@ -395,7 +423,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.attachControl(canvas, true);
     this.camera.lowerRadiusLimit = 0.1;
     this.camera.wheelPrecision = 45;
-    this.camera.onViewMatrixChangedObservable.add(() => this.notifyCameraZoomChanged());
+    this.camera.onViewMatrixChangedObservable.add(() => {
+      if (this.measurementSegments.length > 0) {
+        this.updateMeasurementOverlayPositions();
+      }
+      this.notifyCameraZoomChanged();
+    });
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
     canvas.addEventListener("pointermove", this.handlePointerMove);
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
@@ -438,6 +471,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.loadedMeshes = [];
     this.loadedTransformNodes = [];
     this.disposeMeasurementOverlays(true);
+    this.resetMeasurementCalibrationState();
     this.disassembly?.dispose();
     this.disassembly = null;
     this.clearFocusedMesh();
@@ -619,6 +653,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (!this.rootMesh) {
       throw new Error("No mesh found in model file");
     }
+    const rootBounds = this.getRenderableBounds(this.rootMesh);
+    this.captureMeasurementBaseState(this.rootMesh, rootBounds);
 
     // Disable backface culling on all materials to prevent invisible faces
     // (CAD-converted models often have inconsistent face normals)
@@ -628,7 +664,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
     }
 
-    const fit = createPreviewOrbitCameraFit(this.getRenderableBounds(this.rootMesh));
+    const fit = createPreviewOrbitCameraFit(rootBounds);
 
     this.camera.target = toBabylonVector3(fit.target);
     this.camera.radius = fit.radius;
@@ -651,10 +687,6 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.cleanupPicking?.();
     this.cleanupPicking = setupPicking(this.scene, (result) => {
       if (this.isDisassemblyActive()) return;
-      if (this.measurementActive && result.pickedPoint) {
-        this.addMeasurementPoint(toBabylonVector3(result.pickedPoint));
-        return;
-      }
       const selectable = result.mesh && this.rootMesh
         ? findBabylonSelectablePartNode(
           this.rootMesh,
@@ -668,13 +700,29 @@ export class BabylonModelPreview implements WorkbenchPreview {
         pickedPoint: result.pickedPoint,
         screenX: result.screenX,
         screenY: result.screenY,
+        modifiers: result.modifiers,
       };
       this._lastPickResult = previewResult;
+      if (this.measurementActive && result.pickedPoint) {
+        if (result.modifiers?.altKey === true) {
+          this.setMeasurementSnapKind("free");
+          this.addMeasurementPoint(toBabylonVector3(result.pickedPoint));
+          return;
+        }
+        if (!this.measurementTargetNode) {
+          if (selectable) {
+            this.setMeasurementTargetNode(selectable);
+          }
+          return;
+        }
+        this.addMeasurementPoint(this.resolveMeasurementPickPoint(toBabylonVector3(result.pickedPoint), false));
+        return;
+      }
       if (this.focusSelectionEnabled && selectable) {
         this.setFocusedNode(selectable);
       }
       this._onPickCallbacks.forEach(cb => cb(previewResult));
-    }, () => !this.focusSelectionEnabled, (mesh) => this.resolvePickHighlightMeshes(mesh));
+    }, () => !this.focusSelectionEnabled && !this.measurementActive, (mesh) => this.resolvePickHighlightMeshes(mesh));
     this.ensureDisassemblyController();
 
     return this.createModelSummary(this.rootMesh);
@@ -962,11 +1010,22 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   toggleMeasurement(): boolean {
-    this.measurementActive = !this.measurementActive;
-    this.engine.getRenderingCanvas()?.classList.toggle("ai3d-measurement-active", this.measurementActive);
-    if (!this.measurementActive) {
-      this.cancelPendingMeasurement();
+    if (this.measurementActive) {
+      this.deactivateMeasurementMode();
+      return false;
     }
+    if (this.isDisassemblyActive()) {
+      this.disassembly?.setEnabled(false);
+    }
+    const measurementTarget = this.getCurrentMeasurementTargetNode();
+    this.cleanupPicking?.clearHighlight();
+    this.clearFocusedMesh();
+    if (this.focusSelectionEnabled) {
+      this.focusSelectionEnabled = false;
+    }
+    this.measurementActive = true;
+    this.setMeasurementTargetNode(measurementTarget, false);
+    setMeasurementCanvasActive(this.engine.getRenderingCanvas(), this.measurementActive);
     this.notifyMeasurementsChanged();
     return this.measurementActive;
   }
@@ -979,10 +1038,29 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.disposeMeasurementOverlays(false);
   }
 
+  cancelMeasurement(): void {
+    const hadPendingPoint = !!this.pendingPoint;
+    this.cancelPendingMeasurement();
+    if (hadPendingPoint) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private deactivateMeasurementMode(): boolean {
+    if (!this.measurementActive) return false;
+    this.measurementActive = false;
+    setMeasurementCanvasActive(this.engine.getRenderingCanvas(), false);
+    this.setMeasurementTargetNode(null, false);
+    this.cancelPendingMeasurement();
+    this.notifyMeasurementsChanged();
+    return true;
+  }
+
   private disposeMeasurementOverlays(deactivate: boolean): void {
     if (deactivate) {
       this.measurementActive = false;
-      this.engine.getRenderingCanvas()?.classList.remove("ai3d-measurement-active");
+      setMeasurementCanvasActive(this.engine.getRenderingCanvas(), false);
+      this.setMeasurementTargetNode(null, false);
     }
     this.cancelPendingMeasurement(false);
     for (const segment of this.measurementSegments) {
@@ -994,12 +1072,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
       marker.dispose(false, true);
     }
     this.measurementMarkers = [];
+    this.measurementMarkerPoints = [];
     this.notifyMeasurementsChanged();
   }
 
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
+    this.applyMeasurementModelScale();
+    this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
     this.notifyMeasurementsChanged();
   }
@@ -1020,7 +1101,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   getMeasurementBounds(): { x: number; y: number; z: number } | null {
     if (!this.rootMesh) return null;
-    const bounds = this.getRenderableBounds(this.rootMesh);
+    const bounds = this.measurementBaseBounds ?? this.getRenderableBounds(this.rootMesh);
     if (!bounds) return null;
     return {
       x: bounds.max.x - bounds.min.x,
@@ -1031,6 +1112,20 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   getMeasurementRecords(): MeasurementRecord[] {
     return this.createMeasurementRecords();
+  }
+
+  getMeasurementState(): MeasurementState {
+    return createMeasurementState({
+      active: this.measurementActive,
+      pending: !!this.pendingPoint,
+      records: this.createMeasurementRecords(),
+      unit: this.measurementUnit,
+      scale: this.getMeasurementScale(),
+      bounds: this.getMeasurementBounds(),
+      targetLocked: !!this.measurementTargetNode,
+      targetName: this.getMeasurementTargetName(),
+      snapKind: this.measurementSnapKind,
+    });
   }
 
   exportMeasurements(): string {
@@ -1047,12 +1142,145 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   updateMeasurementLabels(): void {
     if (this.measurementSegments.length === 0) return;
-    const markerSize = this.getMeasurementMarkerSize() * 4;
+    const markerSize = this.getMeasurementMarkerSize() * 3.2;
     for (const segment of this.measurementSegments) {
+      this.updateMeasurementLineGeometry(segment);
       const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
       segment.label.dispose(false, true);
-      const mid = Vector3.Center(segment.start, segment.end);
-      segment.label = this.createMeasurementLabelMesh(labelText, mid, markerSize);
+      const layout = this.createBabylonMeasurementDraftingLayout(segment.start, segment.end);
+      const labelPosition = layout?.labelPosition ?? Vector3.Center(
+        this.toMeasurementDisplayPoint(segment.start),
+        this.toMeasurementDisplayPoint(segment.end),
+      );
+      segment.label = this.createMeasurementLabelMesh(labelText, labelPosition, markerSize);
+    }
+  }
+
+  private captureMeasurementBaseState(root: Mesh, rootBounds: PreviewBounds | null): void {
+    this.measurementBaseRootScaling = root.scaling.clone();
+    this.measurementBaseBounds = rootBounds ? createPreviewBounds(rootBounds.min, rootBounds.max) : null;
+    this.measurementScale = { x: 1, y: 1, z: 1 };
+  }
+
+  private resetMeasurementCalibrationState(): void {
+    this.measurementScale = { x: 1, y: 1, z: 1 };
+    this.measurementBaseRootScaling = new Vector3(1, 1, 1);
+    this.measurementBaseBounds = null;
+    this.measurementMarkerPoints = [];
+  }
+
+  private applyMeasurementModelScale(): void {
+    if (!this.rootMesh) return;
+    const scale = sanitizeMeasurementScale(this.measurementScale);
+    this.rootMesh.scaling = new Vector3(
+      this.measurementBaseRootScaling.x * scale.x,
+      this.measurementBaseRootScaling.y * scale.y,
+      this.measurementBaseRootScaling.z * scale.z,
+    );
+    this.rootMesh.computeWorldMatrix(true);
+    for (const mesh of this.loadedMeshes) {
+      mesh.computeWorldMatrix(true);
+    }
+    this.invalidateMeshCache();
+    this.rebuildScaledSceneHelpers();
+    this.refitCameraToModel();
+    this.startRenderLoop();
+  }
+
+  private rebuildScaledSceneHelpers(): void {
+    const hadBoundingBox = !!this.bboxMesh;
+    const hadGround = !!this.groundMesh;
+    const hadGrid = !!this.gridMesh;
+    const hadAxis = this.axisMeshes.length > 0;
+    this.bboxMesh?.dispose();
+    this.bboxMesh = null;
+    this.groundMesh?.dispose();
+    this.groundMesh = null;
+    this.gridMesh?.dispose();
+    this.gridMesh = null;
+    for (const axis of this.axisMeshes) axis.dispose();
+    this.axisMeshes = [];
+    if (hadBoundingBox && this.rootMesh) {
+      const bounds = this.getRenderableBounds(this.rootMesh);
+      const center = toBabylonVector3(getPreviewBoundsCenter(bounds));
+      const size = toBabylonVector3(getPreviewBoundsSize(bounds));
+      this.bboxMesh = MeshBuilder.CreateBox("bbox", { width: size.x, height: size.y, depth: size.z }, this.scene);
+      this.bboxMesh.position = center;
+      const mat = new StandardMaterial("bbox-mat", this.scene);
+      mat.wireframe = true;
+      mat.emissiveColor = new Color3(1, 1, 0);
+      mat.disableLighting = true;
+      mat.alpha = 0.6;
+      this.bboxMesh.material = mat;
+    }
+    if (hadGround) this.createGround();
+    if (hadGrid) this.createGrid();
+    if (hadAxis) this.createAxis();
+  }
+
+  private refitCameraToModel(): void {
+    if (!this.rootMesh) return;
+    const fit = createPreviewOrbitCameraFit(this.getRenderableBounds(this.rootMesh));
+    this.camera.target = toBabylonVector3(fit.target);
+    this.camera.radius = fit.radius;
+    this.camera.lowerRadiusLimit = fit.lowerRadiusLimit;
+    this.camera.upperRadiusLimit = fit.upperRadiusLimit;
+    this.camera.minZ = fit.near;
+    this.camera.maxZ = fit.far;
+    this.initialCamera = {
+      alpha: this.camera.alpha,
+      beta: this.camera.beta,
+      radius: this.camera.radius,
+      target: this.camera.target.clone(),
+    };
+    this.notifyCameraZoomChanged();
+  }
+
+  private getMeasurementPivot(): Vector3 {
+    return this.rootMesh?.getAbsolutePosition().clone() ?? Vector3.Zero();
+  }
+
+  private toMeasurementDisplayPoint(point: Vector3): Vector3 {
+    const next = scaleMeasurementPointFromBase(point, this.getMeasurementPivot(), this.measurementScale);
+    return new Vector3(next.x, next.y, next.z);
+  }
+
+  private toMeasurementBasePoint(point: Vector3): Vector3 {
+    const next = unscaleMeasurementPointToBase(point, this.getMeasurementPivot(), this.measurementScale);
+    return new Vector3(next.x, next.y, next.z);
+  }
+
+  private updateMeasurementOverlayPositions(): void {
+    for (let i = 0; i < this.measurementMarkers.length; i++) {
+      const basePoint = this.measurementMarkerPoints[i];
+      if (basePoint) {
+        this.measurementMarkers[i].position = this.toMeasurementDisplayPoint(basePoint);
+      }
+    }
+    for (const segment of this.measurementSegments) {
+      this.updateMeasurementLineGeometry(segment);
+    }
+    if (this.pendingPoint && this.previewLine) {
+      this.updatePreviewLine();
+    }
+  }
+
+  private updateMeasurementLineGeometry(segment: BabylonMeasurementSegment): void {
+    const layout = this.createBabylonMeasurementDraftingLayout(segment.start, segment.end);
+    const lines = layout?.lineSegments ?? [[
+      this.toMeasurementDisplayPoint(segment.start),
+      this.toMeasurementDisplayPoint(segment.end),
+    ]];
+    segment.line = MeshBuilder.CreateLineSystem("measure-line", {
+      lines,
+      instance: segment.line,
+    }, this.scene);
+    segment.line.isPickable = false;
+    segment.line.renderingGroupId = 2;
+    segment.line.color = MEASUREMENT_LINE_COLOR.clone();
+    segment.line.alpha = 1;
+    if (layout) {
+      segment.label.position = layout.labelPosition;
     }
   }
 
@@ -1093,10 +1321,15 @@ export class BabylonModelPreview implements WorkbenchPreview {
    */
   setRenderScale(scale: number): number {
     const clamped = Math.max(0.25, Math.min(scale, 2.0));
+    this.renderScale = clamped;
     const qualityScale = { low: 2, medium: 1.33, high: 1 }[this.currentQuality];
     const mobileBoost = isMobile() ? 1.5 : 1;
     this.engine.setHardwareScalingLevel(qualityScale * mobileBoost / clamped);
-    return clamped;
+    return this.getRenderScale();
+  }
+
+  getRenderScale(): number {
+    return Number(this.renderScale.toFixed(2));
   }
 
   getCameraZoomState(): CameraZoomState | null {
@@ -1168,6 +1401,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (nextEnabled && this.isDisassemblyActive()) {
       this.disassembly?.setEnabled(false);
     }
+    if (nextEnabled) {
+      this.deactivateMeasurementMode();
+    }
     this.focusSelectionEnabled = nextEnabled;
     if (!this.focusSelectionEnabled) {
       this.clearFocusedMesh();
@@ -1188,6 +1424,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (nextEnabled) {
       this.focusSelectionEnabled = false;
       this.clearFocusedMesh();
+      this.deactivateMeasurementMode();
     }
     return controller.setEnabled(nextEnabled);
   }
@@ -1417,12 +1654,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
    * @param renderScale User-controlled resolution multiplier (1.0 = native).
    *   Lower values = less pixels = better performance.
    */
-  setRenderQuality(quality: "low" | "medium" | "high", renderScale = 1.0): void {
+  setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.currentQuality = quality;
+    this.renderScale = Math.max(0.25, Math.min(renderScale, 2.0));
     const scaleMap = { low: 2, medium: 1.33, high: 1 };
     const mobileBoost = isMobile() ? 1.5 : 1;
     // hardwareScalingLevel: higher = fewer pixels. renderScale < 1 = fewer pixels.
-    const scale = scaleMap[quality] * mobileBoost / Math.max(renderScale, 0.25);
+    const scale = scaleMap[quality] * mobileBoost / this.renderScale;
     this.engine.setHardwareScalingLevel(scale);
 
     if (this.shadowGenerator) {
@@ -1610,6 +1848,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     this.originalMeshVisibility.clear();
     this.focusedNode = null;
+    this.applyMeasurementTargetVisual(this.measurementTargetMeshes);
   }
 
   private findSelectableNode(node: BabylonSelectablePartNode): BabylonSelectablePartNode | null {
@@ -1630,12 +1869,203 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return null;
   }
 
+  private getCurrentMeasurementTargetNode(): BabylonSelectablePartNode | null {
+    const candidate = this.focusedNode
+      ?? (isBabylonSelectablePartNode(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
+    if (!candidate || isBabylonNodeDisposed(candidate)) return null;
+    return this.findSelectableNode(candidate);
+  }
+
+  private setMeasurementTargetNode(node: BabylonSelectablePartNode | null, notify = true): void {
+    this.clearMeasurementTargetVisual(false);
+    const target = node && !isBabylonNodeDisposed(node) ? this.findSelectableNode(node) : null;
+    if (!target || isBabylonNodeDisposed(target)) {
+      this.measurementTargetNode = null;
+      this.measurementTargetMeshes = [];
+      this.setMeasurementSnapKind(null, false);
+      if (notify) {
+        this.notifyMeasurementsChanged();
+      }
+      return;
+    }
+
+    const selectedMeshes = this.getMeasurementTargetMeshes(target);
+    if (selectedMeshes.length === 0) {
+      this.measurementTargetNode = null;
+      this.measurementTargetMeshes = [];
+      this.setMeasurementSnapKind(null, false);
+      if (notify) {
+        this.notifyMeasurementsChanged();
+      }
+      return;
+    }
+
+    this.measurementTargetNode = target;
+    this.measurementTargetMeshes = selectedMeshes;
+    this.setMeasurementSnapKind(null, false);
+    this.applyMeasurementTargetVisual(selectedMeshes);
+    this.scene.render();
+    if (notify) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private clearMeasurementTargetVisual(render = true): void {
+    for (const mesh of this.measurementTargetMeshes) {
+      if (mesh.isDisposed()) continue;
+      mesh.renderOutline = false;
+      mesh.outlineWidth = 0;
+    }
+    this.measurementTargetMeshes = [];
+    if (render && !this.scene.isDisposed) {
+      this.scene.render();
+    }
+  }
+
+  private applyMeasurementTargetVisual(meshes: readonly AbstractMesh[]): void {
+    if (!this.measurementActive || meshes.length === 0) return;
+    for (const mesh of meshes) {
+      if (mesh.isDisposed()) continue;
+      mesh.renderOutline = true;
+      mesh.outlineColor = new Color3(0.38, 0.65, 0.98);
+      mesh.outlineWidth = 0.045;
+    }
+  }
+
+  private setMeasurementSnapKind(kind: MeasurementSnapKind | null, notify = true): void {
+    if (this.measurementSnapKind === kind) return;
+    this.measurementSnapKind = kind;
+    if (notify) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private getMeasurementTargetName(): string | null {
+    const target = this.measurementTargetNode;
+    if (!target || isBabylonNodeDisposed(target)) return null;
+    return getBabylonNodeDisplayName(target, target.name || `node-${target.uniqueId}`);
+  }
+
+  private getMeasurementTargetBounds(): PreviewBounds | null {
+    if (!this.rootMesh || !this.measurementTargetNode || isBabylonNodeDisposed(this.measurementTargetNode)) {
+      return null;
+    }
+    const target = this.findSelectableNode(this.measurementTargetNode);
+    if (!target) return null;
+    this.measurementTargetNode = target;
+    const selectedMeshes = this.getRenderableMeshes(this.rootMesh)
+      .filter((candidate) => isBabylonNodeOrDescendant(candidate, target));
+    return getBabylonMeshesPreviewBounds(selectedMeshes);
+  }
+
+  private resolveMeasurementPickPoint(point: Vector3, forceFreePick: boolean): Vector3 {
+    if (forceFreePick) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    const snapInput = this.createMeasurementGeometrySnapInput();
+    if (!snapInput) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    const snapped = snapMeasurementPointToGeometry(this.toMeasurementPoint(point), snapInput);
+    if (!snapped) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    this.setMeasurementSnapKind(snapped.kind);
+    return toBabylonVector3(snapped.point);
+  }
+
+  private createMeasurementGeometrySnapInput(): {
+    vertices: MeasurementSnapVertexCandidate[];
+    edges: MeasurementSnapEdgeCandidate[];
+    targetId?: string;
+    vertexRadius: number;
+  } | null {
+    const target = this.measurementTargetNode;
+    if (!this.rootMesh || !target || isBabylonNodeDisposed(target)) return null;
+    const meshes = this.getMeasurementTargetMeshes(target);
+    if (meshes.length === 0) return null;
+
+    const vertices: MeasurementSnapVertexCandidate[] = [];
+    const edges: MeasurementSnapEdgeCandidate[] = [];
+    const targetId = `babylon:${target.uniqueId}`;
+
+    for (const mesh of meshes) {
+      if (mesh.isDisposed()) continue;
+      const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+      if (!positions || positions.length < 3) continue;
+      const matrix = mesh.computeWorldMatrix(true);
+      const objectVertices: PreviewWorldPoint[] = [];
+      const vertexCount = Math.floor(positions.length / 3);
+      for (let i = 0; i < vertexCount; i++) {
+        const local = new Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+        const world = Vector3.TransformCoordinates(local, matrix);
+        const previewPoint = this.toMeasurementPoint(world);
+        objectVertices.push(previewPoint);
+        vertices.push({ point: previewPoint, targetId });
+      }
+      const triangles = createMeasurementTrianglesFromIndices(vertexCount, mesh.getIndices() ?? null);
+      edges.push(...createMeasurementGeometryEdgesFromTriangles(objectVertices, triangles, targetId));
+    }
+
+    if (vertices.length === 0 && edges.length === 0) return null;
+    const bounds = this.getMeasurementTargetBounds();
+    const size = bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 };
+    return {
+      vertices,
+      edges,
+      targetId,
+      vertexRadius: Math.max(size.x, size.y, size.z, 0.001) * 0.045,
+    };
+  }
+
+  private getMeasurementTargetMeshes(target = this.measurementTargetNode): AbstractMesh[] {
+    if (!this.rootMesh || !target || isBabylonNodeDisposed(target)) return [];
+    return this.getRenderableMeshes(this.rootMesh)
+      .filter((candidate) => !candidate.isDisposed() && isBabylonNodeOrDescendant(candidate, target));
+  }
+
+  private createBabylonMeasurementDraftingLayout(start: Vector3, end: Vector3): {
+    lineSegments: Vector3[][];
+    labelPosition: Vector3;
+  } | null {
+    const displayStart = this.toMeasurementDisplayPoint(start);
+    const displayEnd = this.toMeasurementDisplayPoint(end);
+    const markerSize = this.getMeasurementMarkerSize();
+    const viewUp = this.camera.upVector?.clone?.() ?? new Vector3(0, 1, 0);
+    viewUp.normalize();
+    const layout = createMeasurementDraftingLayout(
+      this.toMeasurementPoint(displayStart),
+      this.toMeasurementPoint(displayEnd),
+      {
+        viewPosition: this.toMeasurementPoint(this.camera.position),
+        viewUp: this.toMeasurementPoint(viewUp),
+        offset: markerSize * 4.2,
+        extensionGap: markerSize * 0.55,
+        extensionOvershoot: markerSize * 0.8,
+        arrowLength: markerSize * 2.35,
+        arrowWidth: markerSize * 0.78,
+        labelGap: markerSize * 1.05,
+      },
+    );
+    if (!layout) return null;
+    return {
+      lineSegments: layout.lineSegments.map(([left, right]) => [
+        toBabylonVector3(left),
+        toBabylonVector3(right),
+      ]),
+      labelPosition: toBabylonVector3(layout.labelPoint),
+    };
+  }
+
   private getMeasurementMarkerSize(): number {
     if (!this.rootMesh) return 0.02;
     const bounds = this.getRenderableBounds(this.rootMesh);
     if (!bounds) return 0.02;
     const maxSpan = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 0.001);
-    return maxSpan * 0.015;
+    return maxSpan * 0.018;
   }
 
   private cancelPendingMeasurement(markDirty = true): void {
@@ -1650,6 +2080,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       const index = this.measurementMarkers.indexOf(pendingMarker);
       if (index >= 0) {
         this.measurementMarkers.splice(index, 1);
+        this.measurementMarkerPoints.splice(index, 1);
       }
       pendingMarker.dispose(false, true);
     } else if (pendingMarker) {
@@ -1669,8 +2100,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private findNearestMarkerIndex(point: Vector3): number {
     const threshold = this.getMeasurementMarkerSize() * 2.5;
+    const displayPoint = this.toMeasurementDisplayPoint(point);
     for (let i = 0; i < this.measurementMarkers.length; i++) {
-      if (Vector3.Distance(this.measurementMarkers[i].position, point) < threshold) {
+      const candidate = this.measurementMarkerPoints[i]
+        ? this.toMeasurementDisplayPoint(this.measurementMarkerPoints[i])
+        : this.measurementMarkers[i].position;
+      if (Vector3.Distance(candidate, displayPoint) < threshold) {
         return i;
       }
     }
@@ -1678,10 +2113,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private addMeasurementPoint(point: Vector3): void {
-    const existingIndex = this.findNearestMarkerIndex(point);
+    const basePoint = this.toMeasurementBasePoint(point);
+    const existingIndex = this.findNearestMarkerIndex(basePoint);
     const usePoint = existingIndex >= 0
-      ? this.measurementMarkers[existingIndex].position.clone()
-      : point;
+      ? this.measurementMarkerPoints[existingIndex].clone()
+      : basePoint;
 
     if (this.pendingPoint) {
       if (Vector3.Distance(usePoint, this.pendingPoint) < 0.0001) {
@@ -1689,12 +2125,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
-        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
-        marker.position = usePoint;
+        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size * 0.76, segments: 12 }, this.scene);
+        marker.position = this.toMeasurementDisplayPoint(usePoint);
         marker.isPickable = false;
         marker.material = createMeasurementMarkerMaterial(this.scene);
         marker.renderingGroupId = 2;
         this.measurementMarkers.push(marker);
+        this.measurementMarkerPoints.push(usePoint.clone());
       }
       this.createMeasurementSegment(this.pendingPoint, usePoint);
       if (this.pendingMarker) {
@@ -1707,12 +2144,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
     } else {
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
-        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size }, this.scene);
-        marker.position = usePoint;
+        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size * 0.76, segments: 12 }, this.scene);
+        marker.position = this.toMeasurementDisplayPoint(usePoint);
         marker.isPickable = false;
         marker.material = createMeasurementMarkerMaterial(this.scene);
         marker.renderingGroupId = 2;
         this.measurementMarkers.push(marker);
+        this.measurementMarkerPoints.push(usePoint.clone());
         this.pendingMarker = marker;
       } else {
         this.pendingMarker = this.measurementMarkers[existingIndex];
@@ -1726,36 +2164,42 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementSegment(start: Vector3, end: Vector3): void {
-    const line = MeshBuilder.CreateLines("measure-line", { points: [start, end] }, this.scene);
+    const displayStart = this.toMeasurementDisplayPoint(start);
+    const displayEnd = this.toMeasurementDisplayPoint(end);
+    const layout = this.createBabylonMeasurementDraftingLayout(start, end);
+    const line = MeshBuilder.CreateLineSystem("measure-line", {
+      lines: layout?.lineSegments ?? [[displayStart, displayEnd]],
+    }, this.scene);
     line.color = MEASUREMENT_LINE_COLOR.clone();
-    line.alpha = 0.94;
+    line.alpha = 1;
     line.isPickable = false;
     line.renderingGroupId = 2;
 
     const labelText = createMeasurementLabel(this.createMeasurementReading(start, end));
-    const mid = Vector3.Center(start, end);
-    const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 4);
+    const mid = layout?.labelPosition ?? Vector3.Center(displayStart, displayEnd);
+    const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 3.2);
 
-    this.measurementSegments.push({ start, end, line, label });
+    this.measurementSegments.push({ start: start.clone(), end: end.clone(), line, label });
   }
 
   private createMeasurementLabelMesh(text: { primary: string; secondary: string }, position: Vector3, scale: number): Mesh {
-    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 4, height: scale * 0.95 }, this.scene);
+    const plane = MeshBuilder.CreatePlane("measure-label", { width: scale * 3.7, height: scale * 1.08 }, this.scene);
     plane.position = position;
     plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
     plane.renderingGroupId = 2;
 
-    const texture = new DynamicTexture("measure-label-tex", { width: 640, height: 160 }, this.scene);
+    const texture = new DynamicTexture("measure-label-tex", { ...MEASUREMENT_LABEL_CANVAS }, this.scene);
     texture.hasAlpha = true;
     const ctx = texture.getContext() as CanvasRenderingContext2D;
-    drawMeasurementLabelCanvas(ctx, text, 640, 160);
+    drawMeasurementLabelCanvas(ctx, text, MEASUREMENT_LABEL_CANVAS.width, MEASUREMENT_LABEL_CANVAS.height);
     texture.update();
 
     const mat = new StandardMaterial("measure-label-mat", this.scene);
     mat.diffuseTexture = texture;
     mat.emissiveColor = new Color3(1, 1, 1);
     mat.disableLighting = true;
+    mat.disableDepthWrite = true;
     mat.opacityTexture = texture;
     mat.useAlphaFromDiffuseTexture = true;
     plane.material = mat;
@@ -1764,18 +2208,19 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private ensurePreviewLine(): void {
     if (this.previewLine) return;
-    this.previewLine = MeshBuilder.CreateLines("measure-preview", {
-      points: [Vector3.Zero(), Vector3.Zero()],
+    this.previewLine = MeshBuilder.CreateLineSystem("measure-preview", {
+      lines: Array.from({ length: 7 }, () => [Vector3.Zero(), Vector3.Zero()]),
       updatable: true,
     }, this.scene);
-    (this.previewLine as LinesMesh).color = MEASUREMENT_PREVIEW_COLOR.clone();
-    (this.previewLine as LinesMesh).alpha = 0.68;
+    this.previewLine.color = MEASUREMENT_PREVIEW_COLOR.clone();
+    this.previewLine.alpha = 0.82;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }
 
   private updatePreviewLine(): void {
     if (!this.pendingPoint || !this.previewLine || !this.rootMesh) return;
+    const displayStart = this.toMeasurementDisplayPoint(this.pendingPoint);
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -1784,17 +2229,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
     let endPoint: Vector3;
     if (pickResult.hit && pickResult.pickedPoint) {
-      endPoint = pickResult.pickedPoint;
+      endPoint = this.resolveMeasurementPickPoint(pickResult.pickedPoint, this.lastPointerClient.altKey);
     } else {
       const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
-      endPoint = this.pendingPoint.add(ray.direction.scale(5));
+      endPoint = displayStart.add(ray.direction.scale(5));
     }
-    this.previewLine = MeshBuilder.CreateLines("measure-preview", {
-      points: [this.pendingPoint, endPoint],
-      instance: this.previewLine as LinesMesh,
+    const previewLayout = this.createBabylonMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint));
+    this.previewLine = MeshBuilder.CreateLineSystem("measure-preview", {
+      lines: previewLayout?.lineSegments ?? [[displayStart, endPoint]],
+      instance: this.previewLine,
     }, this.scene);
-    (this.previewLine as LinesMesh).color = MEASUREMENT_PREVIEW_COLOR.clone();
-    (this.previewLine as LinesMesh).alpha = 0.68;
+    this.previewLine.color = MEASUREMENT_PREVIEW_COLOR.clone();
+    this.previewLine.alpha = 0.82;
     this.previewLine.isPickable = false;
     this.previewLine.renderingGroupId = 2;
   }

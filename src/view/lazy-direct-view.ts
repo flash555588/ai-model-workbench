@@ -6,6 +6,7 @@ import { t } from "../i18n";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
 import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
 import { shouldDeferDirectAutoload } from "./direct-autoload-policy";
+import { listPreferredConversionExts } from "../io/formats/route-preferences";
 
 type DirectViewDelegate = FileView & {
   contentEl: HTMLElement;
@@ -20,6 +21,7 @@ export class LazyDirectModelView extends FileView {
   private delegatePromise: Promise<DirectViewDelegate | null> | null = null;
   private closed = false;
   private manualLoadRequested = false;
+  private initialFileLoadSeen = false;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -45,17 +47,24 @@ export class LazyDirectModelView extends FileView {
   async onOpen(): Promise<void> {
     this.closed = false;
     if (this.file) {
+      this.initialFileLoadSeen = true;
       await this.loadOrDeferFile(this.file, true);
     }
   }
 
   async onLoadFile(file: TFile): Promise<void> {
-    await this.loadOrDeferFile(file, false);
+    const restoredFromWorkspace = !this.initialFileLoadSeen && !this.manualLoadRequested && !this.delegate;
+    this.initialFileLoadSeen = true;
+    await this.loadOrDeferFile(file, restoredFromWorkspace);
   }
 
   private async loadOrDeferFile(file: TFile, restoredFromWorkspace: boolean): Promise<void> {
     this.closed = false;
-    if (!this.delegate && !this.manualLoadRequested && shouldDeferDirectAutoload(file, restoredFromWorkspace)) {
+    const settings = this.getSettings();
+    if (!this.delegate && !this.manualLoadRequested && shouldDeferDirectAutoload(file, {
+      restoredFromWorkspace,
+      preferConversionExts: listPreferredConversionExts(settings),
+    })) {
       this.renderDeferredLoad(file);
       return;
     }
@@ -73,6 +82,7 @@ export class LazyDirectModelView extends FileView {
 
   async onClose(): Promise<void> {
     this.closed = true;
+    this.initialFileLoadSeen = false;
     unmarkDirectViewDom(this.contentEl);
     const delegate = this.delegate;
     this.delegate = null;

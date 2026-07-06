@@ -12,6 +12,17 @@ export interface PickResult {
   /** Screen coordinates from the pointer event (clientX, clientY). */
   screenX: number;
   screenY: number;
+  modifiers?: {
+    altKey?: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    shiftKey?: boolean;
+  };
+}
+
+export interface PickingCleanup {
+  (): void;
+  clearHighlight(): void;
 }
 
 /**
@@ -24,7 +35,7 @@ export function setupPicking(
   onPick: (result: PickResult) => void,
   shouldHighlight: () => boolean = () => true,
   resolveHighlightMeshes: (mesh: AbstractMesh) => readonly AbstractMesh[] = (mesh) => [mesh],
-): () => void {
+): PickingCleanup {
   const highlightLayer = new HighlightLayer("ai3d-pick-highlight", scene);
   const highlightColor = new Color3(0.15, 0.45, 1.0);
   let outlinedMeshes: AbstractMesh[] = [];
@@ -57,6 +68,12 @@ export function setupPicking(
     const evt = pointerInfo.event as PointerEvent;
     const screenX = evt.clientX;
     const screenY = evt.clientY;
+    const modifiers = {
+      altKey: evt.altKey,
+      ctrlKey: evt.ctrlKey,
+      metaKey: evt.metaKey,
+      shiftKey: evt.shiftKey,
+    };
 
     const pickInfo = pointerInfo.pickInfo;
     if (pickInfo?.hit && pickInfo.pickedMesh) {
@@ -71,16 +88,18 @@ export function setupPicking(
       } else {
         clearHighlight();
       }
-      onPick({ mesh: pickInfo.pickedMesh, pickedPoint: pickInfo.pickedPoint ?? null, screenX, screenY });
+      onPick({ mesh: pickInfo.pickedMesh, pickedPoint: pickInfo.pickedPoint ?? null, screenX, screenY, modifiers });
     } else {
       clearHighlight();
-      onPick({ mesh: null, pickedPoint: null, screenX, screenY });
+      onPick({ mesh: null, pickedPoint: null, screenX, screenY, modifiers });
     }
   });
 
-  return () => {
+  const cleanup = (() => {
     clearHighlight();
     highlightLayer.dispose();
     scene.onPointerObservable.remove(observer);
-  };
+  }) as PickingCleanup;
+  cleanup.clearHighlight = clearHighlight;
+  return cleanup;
 }

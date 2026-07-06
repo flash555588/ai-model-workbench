@@ -441,6 +441,7 @@ export class DirectModelView extends FileView {
       toolbar?.syncCapabilities();
       const summary = created.summary;
       this.applyLargeModelRenderBudget(created.preview, settings, summary);
+      toolbar?.syncCapabilities();
       renderModelPerformanceFeedback(host, summary);
       this.workbenchPanel = workbenchPanel;
       this.workbenchSummary = summary;

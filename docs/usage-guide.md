@@ -55,6 +55,22 @@ Use the measurement tool when the selected renderer exposes the measurement
 contract. Measurements are calibrated, include per-axis deltas, and can be copied
 as Markdown for notes.
 
+By default, measurement locks onto the currently selected object and snaps
+endpoints to that object's mesh vertices and triangle edges for short-distance
+work. If no object is selected, the first measurement click selects the target;
+hold `Alt`/`Option` while placing an endpoint to use the free surface pick
+backup.
+
+Completed measurements render as orthographic drawing-style dimension callouts:
+thin offset dimension lines, extension lines from the measured feature points,
+arrowheads, and compact drafting labels.
+
+To calibrate imported model scale, measure a known feature first, open the model
+scale details from the measurement strip, choose the real-world unit, enter the
+known length for the latest ruler, and apply it. The preview scales the loaded
+model uniformly from that reference so later measurements use the calibrated
+physical size.
+
 Useful habits:
 
 - Reset the view before measuring if the model is hard to frame.
@@ -149,7 +165,7 @@ paths in copied reports.
 | Model does not load | Confirm the file is inside the vault and the extension is supported. |
 | GLTF is missing resources | Keep `.bin` and textures beside the `.gltf` or in the referenced relative folders. |
 | OBJ textures are missing | Keep `.mtl` and texture files beside the OBJ; missing textures produce non-blocking warnings. |
-| CAD conversion fails | Run converter diagnostics and verify the selected Python/FreeCAD tool can launch. |
+| CAD conversion fails | Run converter diagnostics and verify the selected Python can import CadQuery/OCP or FreeCAD can launch. |
 | Route seems wrong | Set log level to `info` or `debug` and check `backend`, `reason`, and `rendererRollout`. |
 | Preview is slow | Reduce render quality/scale or use fewer simultaneous previews. |
 

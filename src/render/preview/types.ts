@@ -15,11 +15,19 @@ export interface PreviewWorldPoint {
 
 export type PreviewAxis = "x" | "y" | "z";
 
+export interface PreviewPickModifiers {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
 export interface PreviewPickResult {
   mesh: object | null;
   pickedPoint: object | null;
   screenX: number;
   screenY: number;
+  modifiers?: PreviewPickModifiers;
 }
 
 export interface PreviewProjectionResult {
@@ -197,9 +205,25 @@ export interface MeasurementRecord {
   reading: MeasurementReading;
 }
 
+export type MeasurementPhase = "inactive" | "select-target" | "ready" | "picking-end" | "reviewing";
+export type MeasurementSnapKind = "vertex" | "edge" | "free";
+
+export interface MeasurementState {
+  active: boolean;
+  phase: MeasurementPhase;
+  records: MeasurementRecord[];
+  unit: MeasurementUnit;
+  scale: MeasurementScale;
+  bounds: PreviewWorldPoint | null;
+  targetLocked?: boolean;
+  targetName?: string | null;
+  snapKind?: MeasurementSnapKind | null;
+}
+
 export interface MeasurementPreview {
   toggleMeasurement(): boolean;
   isMeasurementActive(): boolean;
+  cancelMeasurement(): void;
   clearMeasurements(): void;
   setMeasurementScale(scale: MeasurementScale): void;
   getMeasurementScale(): MeasurementScale;
@@ -207,6 +231,7 @@ export interface MeasurementPreview {
   getMeasurementUnit(): MeasurementUnit;
   getMeasurementBounds(): { x: number; y: number; z: number } | null;
   getMeasurementRecords(): MeasurementRecord[];
+  getMeasurementState(): MeasurementState;
   updateMeasurementLabels(): void;
   exportMeasurements(): string;
   observeMeasurements?(callback: () => void): () => void;
@@ -247,6 +272,7 @@ export interface BoundingBoxPreview {
 
 export interface RenderScalePreview {
   setRenderScale(scale: number): number;
+  getRenderScale?(): number;
 }
 
 export interface CameraZoomState {
@@ -300,6 +326,7 @@ export function supportsAnimationPreview(preview: unknown): preview is Animation
 export function supportsMeasurementPreview(preview: unknown): preview is MeasurementPreview {
   return hasMethod(preview, "toggleMeasurement")
     && hasMethod(preview, "isMeasurementActive")
+    && hasMethod(preview, "cancelMeasurement")
     && hasMethod(preview, "clearMeasurements")
     && hasMethod(preview, "setMeasurementScale")
     && hasMethod(preview, "getMeasurementScale")
@@ -307,6 +334,7 @@ export function supportsMeasurementPreview(preview: unknown): preview is Measure
     && hasMethod(preview, "getMeasurementUnit")
     && hasMethod(preview, "getMeasurementBounds")
     && hasMethod(preview, "getMeasurementRecords")
+    && hasMethod(preview, "getMeasurementState")
     && hasMethod(preview, "updateMeasurementLabels")
     && hasMethod(preview, "exportMeasurements");
 }

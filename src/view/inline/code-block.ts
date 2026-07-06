@@ -597,6 +597,7 @@ export function registerGridCodeBlockProcessor(
               return;
             }
             renderer = nextRenderer;
+            renderer.setRenderScale(settings.renderScale);
             gridToolbar.syncCapabilities();
             const activeRenderer = renderer;
             const readFile = async (path: string) => readBinaryPath(app, path);

@@ -9,8 +9,8 @@ import {
   GridHelper,
   HemisphereLight,
   Light,
-  Line,
   LineBasicMaterial,
+  LineSegments,
   Material,
   Mesh,
   MeshBasicMaterial,
@@ -60,6 +60,7 @@ import type {
 import { isMobile } from "../../utils/device";
 import { createStagedEl } from "../../utils/dom";
 import {
+  createPreviewBounds,
   getPreviewBoundsCenter,
   getPreviewBoundsSize,
   type PreviewBounds,
@@ -77,7 +78,9 @@ import type {
   PreviewProjectionResult,
   PreviewWorldPoint,
   MeasurementScale,
+  MeasurementSnapKind,
   MeasurementUnit,
+  MeasurementState,
   CameraZoomState,
   PreviewQualitySnapshot,
 } from "../preview/types";
@@ -95,11 +98,22 @@ import type { PreviewDisassemblyController } from "../preview/disassembly";
 import { createPreviewEvidence } from "../preview/evidence";
 import {
   createMeasurementLabel,
+  createMeasurementDraftingLayout,
+  createMeasurementGeometryEdgesFromTriangles,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
+  createMeasurementState,
+  createMeasurementTrianglesFromIndices,
   drawMeasurementLabelCanvas,
+  MEASUREMENT_LABEL_CANVAS,
   normalizeMeasurementUnit,
   sanitizeMeasurementScale,
+  scaleMeasurementPointFromBase,
+  setMeasurementCanvasActive,
+  snapMeasurementPointToGeometry,
+  unscaleMeasurementPointToBase,
+  type MeasurementSnapEdgeCandidate,
+  type MeasurementSnapVertexCandidate,
   type MeasurementReading,
   type MeasurementRecord,
 } from "../preview/measurement";
@@ -123,6 +137,7 @@ import {
   createThreeRenderableInfoBreakdown,
   createThreeRenderablePartPreviewSummary,
   findThreeSelectablePartObject,
+  getThreeObjectDisplayName,
   getThreeMaterialList as materialList,
   getThreeRenderableMaterialNames,
   getThreeObjectPreviewBounds as getObjectPreviewBounds,
@@ -151,11 +166,13 @@ const FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE = 0.62;
 const FRAME_BUDGET_SHADOW_SCALE = 0.86;
 const FRAME_BUDGET_MAX_OBSERVER_STRIDE = 4;
 const ENVIRONMENT_INSTALL_DELAY_MS = 120;
-const MEASUREMENT_LINE_COLOR = 0x8ab4f8;
-const MEASUREMENT_MARKER_COLOR = 0xe2e8f0;
+const MEASUREMENT_LINE_COLOR = 0xf8fafc;
+const MEASUREMENT_MARKER_COLOR = 0xf8fafc;
 const MEASUREMENT_PENDING_COLOR = 0xf59e0b;
-const MEASUREMENT_HOVER_COLOR = 0xf8fafc;
-const MEASUREMENT_PREVIEW_COLOR = 0xcbd5e1;
+const MEASUREMENT_HOVER_COLOR = 0xffffff;
+const MEASUREMENT_PREVIEW_COLOR = 0xe5e7eb;
+
+type ThreeMeasurementSegment = { start: Vector3; end: Vector3; line: LineSegments; label: Sprite };
 
 type DisposalReason = "initial" | "model-switch" | "destroy";
 
@@ -274,15 +291,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private lastPointerDown: { x: number; y: number } | null = null;
   private measurementActive = false;
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
+  private measurementBaseRootScale = new Vector3(1, 1, 1);
+  private measurementBaseBounds: PreviewBounds | null = null;
   private measurementUnit: MeasurementUnit = "mm";
-  private measurementSegments: Array<{ start: Vector3; end: Vector3; line: Line; label: Sprite }> = [];
+  private measurementSegments: ThreeMeasurementSegment[] = [];
   private measurementMarkers: Mesh[] = [];
+  private measurementMarkerPoints: Vector3[] = [];
+  private measurementTargetObject: Object3D | null = null;
+  private measurementTargetHelper: BoxHelper | null = null;
+  private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
   private pendingMarker: Mesh | null = null;
   private hoveredMarkerIndex = -1;
-  private lastPointerClient = { x: 0, y: 0 };
-  private previewLine: Line | null = null;
+  private lastPointerClient = { x: 0, y: 0, altKey: false };
+  private previewLine: LineSegments | null = null;
   private previewLineUpdateHandle = 0;
   private readonly originalMaterials = new Map<number, Material | Material[]>();
   private readonly focusedSelectedMeshes = new Map<number, Mesh>();
@@ -314,6 +337,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   };
   private readonly handleControlsChange = () => {
     this.prepareInteractiveFrameBudget();
+    if (this.measurementSegments.length > 0) {
+      this.updateMeasurementOverlayPositions();
+    }
     this.markDirty();
     this.notifyCameraZoomChanged();
   };
@@ -348,7 +374,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.dispatchPick(event);
   };
   private readonly handlePointerMove = (event: PointerEvent) => {
-    this.lastPointerClient = { x: event.clientX, y: event.clientY };
+    this.lastPointerClient = { x: event.clientX, y: event.clientY, altKey: event.altKey };
     if (event.buttons & 1) {
       this.prepareInteractiveFrameBudget();
     }
@@ -479,6 +505,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       throwIfPreviewLoadInterrupted(options);
       this.syncShadowFeatures();
       const rootBounds = this.getRootPreviewBounds(root);
+      this.captureMeasurementBaseState(root, rootBounds);
       this.updateShadowFraming(rootBounds);
       this.syncSceneHelpers();
       this.markDirty();
@@ -713,6 +740,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (nextEnabled && this.disassembly?.isEnabled()) {
       this.disassembly.setEnabled(false);
     }
+    if (nextEnabled) {
+      this.deactivateMeasurementMode();
+    }
     this.focusSelectionEnabled = nextEnabled;
     if (!this.focusSelectionEnabled) {
       this.clearFocusedMesh();
@@ -826,11 +856,22 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   toggleMeasurement(): boolean {
-    this.measurementActive = !this.measurementActive;
-    this.renderer.domElement.classList.toggle("ai3d-measurement-active", this.measurementActive);
-    if (!this.measurementActive) {
-      this.cancelPendingMeasurement();
+    if (this.measurementActive) {
+      this.deactivateMeasurementMode();
+      return false;
     }
+    if (this.disassembly?.isEnabled()) {
+      this.disassembly.setEnabled(false);
+    }
+    const measurementTarget = this.getCurrentMeasurementTargetObject();
+    this.clearSelectionHighlight();
+    if (this.focusSelectionEnabled) {
+      this.focusSelectionEnabled = false;
+      this.clearFocusedMesh();
+    }
+    this.measurementActive = true;
+    this.setMeasurementTargetObject(measurementTarget, false);
+    setMeasurementCanvasActive(this.renderer.domElement, this.measurementActive);
     this.notifyMeasurementsChanged();
     return this.measurementActive;
   }
@@ -843,10 +884,29 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disposeMeasurementOverlays(false);
   }
 
+  cancelMeasurement(): void {
+    const hadPendingPoint = !!this.pendingPoint;
+    this.cancelPendingMeasurement();
+    if (hadPendingPoint) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private deactivateMeasurementMode(): boolean {
+    if (!this.measurementActive) return false;
+    this.measurementActive = false;
+    setMeasurementCanvasActive(this.renderer.domElement, false);
+    this.setMeasurementTargetObject(null, false);
+    this.cancelPendingMeasurement();
+    this.notifyMeasurementsChanged();
+    return true;
+  }
+
   private disposeMeasurementOverlays(deactivate: boolean): void {
     if (deactivate) {
       this.measurementActive = false;
-      this.renderer.domElement.classList.remove("ai3d-measurement-active");
+      setMeasurementCanvasActive(this.renderer.domElement, false);
+      this.setMeasurementTargetObject(null, false);
     }
     this.cancelPendingMeasurement(false);
     for (const segment of this.measurementSegments) {
@@ -870,6 +930,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
     }
     this.measurementMarkers = [];
+    this.measurementMarkerPoints = [];
     this.markDirty();
     this.notifyMeasurementsChanged();
   }
@@ -877,6 +938,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
+    this.applyMeasurementModelScale();
+    this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
     this.notifyMeasurementsChanged();
   }
@@ -897,13 +960,27 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   getMeasurementBounds(): { x: number; y: number; z: number } | null {
     if (!this.rootObject) return null;
-    const bounds = getObjectPreviewBounds(this.rootObject);
+    const bounds = this.measurementBaseBounds ?? getObjectPreviewBounds(this.rootObject);
     const size = getPreviewBoundsSize(bounds);
     return size;
   }
 
   getMeasurementRecords(): MeasurementRecord[] {
     return this.createMeasurementRecords();
+  }
+
+  getMeasurementState(): MeasurementState {
+    return createMeasurementState({
+      active: this.measurementActive,
+      pending: !!this.pendingPoint,
+      records: this.createMeasurementRecords(),
+      unit: this.measurementUnit,
+      scale: this.getMeasurementScale(),
+      bounds: this.getMeasurementBounds(),
+      targetLocked: !!this.measurementTargetObject,
+      targetName: this.getMeasurementTargetName(),
+      snapKind: this.measurementSnapKind,
+    });
   }
 
   exportMeasurements(): string {
@@ -920,18 +997,117 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   updateMeasurementLabels(): void {
     if (this.measurementSegments.length === 0) return;
-    const markerSize = this.getMeasurementMarkerSize() * 4;
+    const markerSize = this.getMeasurementMarkerSize() * 3.2;
     for (const segment of this.measurementSegments) {
+      this.updateMeasurementLineGeometry(segment);
       const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
       segment.label.removeFromParent();
       const mat = segment.label.material;
       mat.map?.dispose();
       mat.dispose();
-      const mid = new Vector3().addVectors(segment.start, segment.end).multiplyScalar(0.5);
-      segment.label = this.createMeasurementLabelSprite(labelText, mid, markerSize);
+      const layout = this.createThreeMeasurementDraftingLayout(segment.start, segment.end);
+      const labelPosition = layout?.labelPosition ?? new Vector3()
+        .addVectors(this.toMeasurementDisplayPoint(segment.start), this.toMeasurementDisplayPoint(segment.end))
+        .multiplyScalar(0.5);
+      segment.label = this.createMeasurementLabelSprite(labelText, labelPosition, markerSize);
       this.scene.add(segment.label);
     }
     this.markDirty();
+  }
+
+  private captureMeasurementBaseState(root: Object3D, rootBounds: PreviewBounds | null): void {
+    this.measurementBaseRootScale.copy(root.scale);
+    this.measurementBaseBounds = rootBounds ? createPreviewBounds(rootBounds.min, rootBounds.max) : null;
+    this.measurementScale = { x: 1, y: 1, z: 1 };
+  }
+
+  private resetMeasurementCalibrationState(): void {
+    this.measurementScale = { x: 1, y: 1, z: 1 };
+    this.measurementBaseRootScale.set(1, 1, 1);
+    this.measurementBaseBounds = null;
+    this.measurementMarkerPoints = [];
+  }
+
+  private applyMeasurementModelScale(): void {
+    if (!this.rootObject) return;
+    this.applyRootMeasurementScale();
+    this.invalidateRootBoundsCache();
+    const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
+    this.updateShadowFraming(bounds);
+    if (this.bboxEnabled) {
+      this.ensureBoundingBoxHelper();
+    }
+    this.removeGroundShadow();
+    this.removeGrid();
+    this.syncSceneHelpers();
+    this.fitCameraToObject(this.rootObject, bounds);
+    this.applyRootMeasurementScale();
+    this.invalidateRootBoundsCache();
+  }
+
+  private applyRootMeasurementScale(): void {
+    if (!this.rootObject) return;
+    const scale = sanitizeMeasurementScale(this.measurementScale);
+    this.rootObject.scale.set(
+      this.measurementBaseRootScale.x * scale.x,
+      this.measurementBaseRootScale.y * scale.y,
+      this.measurementBaseRootScale.z * scale.z,
+    );
+    this.rootObject.updateMatrixWorld(true);
+  }
+
+  private getMeasurementPivot(): Vector3 {
+    if (!this.rootObject) return new Vector3();
+    return this.rootObject.getWorldPosition(new Vector3());
+  }
+
+  private toMeasurementDisplayPoint(point: Vector3): Vector3 {
+    const next = scaleMeasurementPointFromBase(point, this.getMeasurementPivot(), this.measurementScale);
+    return new Vector3(next.x, next.y, next.z);
+  }
+
+  private toMeasurementBasePoint(point: Vector3): Vector3 {
+    const next = unscaleMeasurementPointToBase(point, this.getMeasurementPivot(), this.measurementScale);
+    return new Vector3(next.x, next.y, next.z);
+  }
+
+  private updateMeasurementOverlayPositions(): void {
+    this.updateMeasurementTargetHelper();
+    for (let i = 0; i < this.measurementMarkers.length; i++) {
+      const basePoint = this.measurementMarkerPoints[i];
+      if (basePoint) {
+        this.measurementMarkers[i].position.copy(this.toMeasurementDisplayPoint(basePoint));
+      }
+    }
+    for (const segment of this.measurementSegments) {
+      this.updateMeasurementLineGeometry(segment);
+    }
+    if (this.pendingPoint && this.previewLine) {
+      this.schedulePreviewLineUpdate();
+    }
+  }
+
+  private updateMeasurementLineGeometry(segment: ThreeMeasurementSegment): void {
+    const layout = this.createThreeMeasurementDraftingLayout(segment.start, segment.end);
+    const linePoints = layout?.linePoints ?? [
+      this.toMeasurementDisplayPoint(segment.start),
+      this.toMeasurementDisplayPoint(segment.end),
+    ];
+    const position = segment.line.geometry.getAttribute("position");
+    if (position.count !== linePoints.length) {
+      segment.line.geometry.dispose();
+      segment.line.geometry = new BufferGeometry().setFromPoints(linePoints);
+    } else {
+      for (let i = 0; i < linePoints.length; i++) {
+        const point = linePoints[i];
+        position.setXYZ(i, point.x, point.y, point.z);
+      }
+      position.needsUpdate = true;
+    }
+    if (layout) {
+      segment.label.position.copy(layout.labelPosition);
+    }
+    segment.line.geometry.computeBoundingSphere();
   }
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.quality = quality;
@@ -944,6 +1120,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setRenderScale(scale: number): number {
     this.renderScale = Math.min(2, Math.max(0.25, scale));
     this.resizeRenderer();
+    return Number(this.renderScale.toFixed(2));
+  }
+
+  getRenderScale(): number {
     return Number(this.renderScale.toFixed(2));
   }
 
@@ -1096,6 +1276,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.focusSelectionEnabled = false;
       this.clearFocusedMesh();
       this.clearSelectionHighlight();
+      this.deactivateMeasurementMode();
     }
     const enabled = this.disassembly.setEnabled(nextEnabled);
     if (!enabled) {
@@ -1966,11 +2147,28 @@ export class ThreeModelPreview implements WorkbenchPreview {
       pickedPoint: hit?.point?.clone() ?? null,
       screenX: event.clientX,
       screenY: event.clientY,
+      modifiers: {
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+      },
     };
     this._lastPickResult = result;
 
     if (this.measurementActive && hit?.point) {
-      this.addMeasurementPoint(hit.point.clone());
+      if (event.altKey) {
+        this.setMeasurementSnapKind("free");
+        this.addMeasurementPoint(hit.point.clone());
+        return;
+      }
+      if (!this.measurementTargetObject) {
+        if (selectable) {
+          this.setMeasurementTargetObject(selectable);
+        }
+        return;
+      }
+      this.addMeasurementPoint(this.resolveMeasurementPickPoint(hit.point.clone(), false));
       return;
     }
 
@@ -1999,6 +2197,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.clearFocusedMesh();
     this.clearSelectionHighlight();
     this.disposeMeasurementOverlays(true);
+    this.resetMeasurementCalibrationState();
     this.wireframeEnabled = false;
     this.wireframeOriginalMaterials.clear();
     this.stlMaterial = null;
@@ -2406,12 +2605,191 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.markDirty();
   }
 
+  private setMeasurementTargetObject(object: Object3D | null, notify = true): void {
+    this.clearMeasurementTargetHelper(false);
+    const target = object && this.isObjectInLoadedRoot(object) ? object : null;
+    this.measurementTargetObject = target;
+    this.setMeasurementSnapKind(null, false);
+    if (target) {
+      this.measurementTargetHelper = new BoxHelper(target, 0x60a5fa);
+      this.scene.add(this.measurementTargetHelper);
+    }
+    this.markDirty();
+    if (notify) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private clearMeasurementTargetHelper(markDirty = true): void {
+    this.measurementTargetHelper?.removeFromParent();
+    this.measurementTargetHelper = null;
+    if (markDirty) {
+      this.markDirty();
+    }
+  }
+
+  private updateMeasurementTargetHelper(): void {
+    if (!this.measurementTargetHelper || !this.measurementTargetObject) return;
+    this.measurementTargetHelper.update();
+  }
+
+  private setMeasurementSnapKind(kind: MeasurementSnapKind | null, notify = true): void {
+    if (this.measurementSnapKind === kind) return;
+    this.measurementSnapKind = kind;
+    if (notify) {
+      this.notifyMeasurementsChanged();
+    }
+  }
+
+  private getCurrentMeasurementTargetObject(): Object3D | null {
+    if (!this.rootObject) return null;
+    const candidate = this.focusedObject
+      ?? this.highlightedObject
+      ?? (isThreeObject3D(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
+    if (!candidate || !this.isObjectInLoadedRoot(candidate)) return null;
+    return candidate;
+  }
+
+  private isObjectInLoadedRoot(object: Object3D): boolean {
+    if (!this.rootObject) return false;
+    let current: Object3D | null = object;
+    while (current) {
+      if (current === this.rootObject) return true;
+      current = current.parent;
+    }
+    return false;
+  }
+
+  private getMeasurementTargetName(): string | null {
+    const target = this.measurementTargetObject;
+    if (!target || !this.isObjectInLoadedRoot(target)) return null;
+    return getThreeObjectDisplayName(target, target.type || `object-${target.id}`);
+  }
+
+  private getMeasurementTargetBounds(): PreviewBounds | null {
+    const target = this.measurementTargetObject;
+    if (!target || !this.isObjectInLoadedRoot(target)) return null;
+    target.updateWorldMatrix(true, true);
+    return getObjectPreviewBounds(target);
+  }
+
+  private resolveMeasurementPickPoint(point: Vector3, forceFreePick: boolean): Vector3 {
+    if (forceFreePick) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    const snapInput = this.createMeasurementGeometrySnapInput();
+    if (!snapInput) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    const snapped = snapMeasurementPointToGeometry(this.toMeasurementPoint(point), snapInput);
+    if (!snapped) {
+      this.setMeasurementSnapKind("free");
+      return point;
+    }
+    this.setMeasurementSnapKind(snapped.kind);
+    return new Vector3(snapped.point.x, snapped.point.y, snapped.point.z);
+  }
+
+  private createMeasurementGeometrySnapInput(): {
+    vertices: MeasurementSnapVertexCandidate[];
+    edges: MeasurementSnapEdgeCandidate[];
+    targetId?: string;
+    vertexRadius: number;
+  } | null {
+    const target = this.measurementTargetObject;
+    if (!target || !this.isObjectInLoadedRoot(target)) return null;
+    const renderables = this.getMeasurementTargetRenderables();
+    if (renderables.length === 0) return null;
+    const vertices: MeasurementSnapVertexCandidate[] = [];
+    const edges: MeasurementSnapEdgeCandidate[] = [];
+    const targetId = `three:${target.id}`;
+
+    for (const object of renderables) {
+      const position = object.geometry.getAttribute("position");
+      if (!position || position.count <= 0) continue;
+      object.updateWorldMatrix(true, false);
+      const objectVertices: PreviewWorldPoint[] = [];
+      for (let i = 0; i < position.count; i++) {
+        const world = new Vector3().fromBufferAttribute(position, i).applyMatrix4(object.matrixWorld);
+        const point = this.toMeasurementPoint(world);
+        objectVertices.push(point);
+        vertices.push({ point, targetId });
+      }
+      if (isMesh(object)) {
+        const triangles = createMeasurementTrianglesFromIndices(position.count, object.geometry.getIndex()?.array ?? null);
+        edges.push(...createMeasurementGeometryEdgesFromTriangles(objectVertices, triangles, targetId));
+      }
+    }
+
+    if (vertices.length === 0 && edges.length === 0) return null;
+    const bounds = this.getMeasurementTargetBounds();
+    const size = bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 };
+    return {
+      vertices,
+      edges,
+      targetId,
+      vertexRadius: Math.max(size.x, size.y, size.z, 0.001) * 0.045,
+    };
+  }
+
+  private getMeasurementTargetRenderables(): ThreeRenderableObject[] {
+    const target = this.measurementTargetObject;
+    if (!this.rootObject || !target || !this.isObjectInLoadedRoot(target)) return [];
+    const renderableSet = new Set(this.getRenderableObjects(this.rootObject));
+    if (isThreeRenderableObject(target) && renderableSet.has(target)) {
+      return [target];
+    }
+    const renderables: ThreeRenderableObject[] = [];
+    target.traverse((child) => {
+      if (isThreeRenderableObject(child) && child.geometry && renderableSet.has(child)) {
+        renderables.push(child);
+      }
+    });
+    return renderables;
+  }
+
+  private createThreeMeasurementDraftingLayout(start: Vector3, end: Vector3): {
+    linePoints: Vector3[];
+    labelPosition: Vector3;
+  } | null {
+    const displayStart = this.toMeasurementDisplayPoint(start);
+    const displayEnd = this.toMeasurementDisplayPoint(end);
+    const markerSize = this.getMeasurementMarkerSize();
+    const cameraPosition = this.camera.getWorldPosition(new Vector3());
+    const cameraUp = new Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion).normalize();
+    const layout = createMeasurementDraftingLayout(
+      this.toMeasurementPoint(displayStart),
+      this.toMeasurementPoint(displayEnd),
+      {
+        viewPosition: this.toMeasurementPoint(cameraPosition),
+        viewUp: this.toMeasurementPoint(cameraUp),
+        offset: markerSize * 4.2,
+        extensionGap: markerSize * 0.55,
+        extensionOvershoot: markerSize * 0.8,
+        arrowLength: markerSize * 2.35,
+        arrowWidth: markerSize * 0.78,
+        labelGap: markerSize * 1.05,
+      },
+    );
+    if (!layout) return null;
+    const linePoints = layout.lineSegments.flatMap(([left, right]) => [
+      new Vector3(left.x, left.y, left.z),
+      new Vector3(right.x, right.y, right.z),
+    ]);
+    return {
+      linePoints,
+      labelPosition: new Vector3(layout.labelPoint.x, layout.labelPoint.y, layout.labelPoint.z),
+    };
+  }
+
   private getMeasurementMarkerSize(): number {
     if (!this.rootObject) return 0.02;
     const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
     const size = getPreviewBoundsSize(bounds);
     const maxSpan = Math.max(size.x, size.y, size.z, 0.001);
-    return maxSpan * 0.015;
+    return maxSpan * 0.018;
   }
 
   private cancelPendingMeasurement(markDirty = true): void {
@@ -2426,6 +2804,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       const index = this.measurementMarkers.indexOf(pendingMarker);
       if (index >= 0) {
         this.measurementMarkers.splice(index, 1);
+        this.measurementMarkerPoints.splice(index, 1);
       }
       this.disposeMeasurementMarker(pendingMarker);
     } else if (pendingMarker) {
@@ -2456,8 +2835,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private findNearestMarkerIndex(point: Vector3): number {
     const threshold = this.getMeasurementMarkerSize() * 2.5;
+    const displayPoint = this.toMeasurementDisplayPoint(point);
     for (let i = 0; i < this.measurementMarkers.length; i++) {
-      if (this.measurementMarkers[i].position.distanceTo(point) < threshold) {
+      const candidate = this.measurementMarkerPoints[i]
+        ? this.toMeasurementDisplayPoint(this.measurementMarkerPoints[i])
+        : this.measurementMarkers[i].position;
+      if (candidate.distanceTo(displayPoint) < threshold) {
         return i;
       }
     }
@@ -2465,10 +2848,11 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private addMeasurementPoint(point: Vector3): void {
-    const existingIndex = this.findNearestMarkerIndex(point);
+    const basePoint = this.toMeasurementBasePoint(point);
+    const existingIndex = this.findNearestMarkerIndex(basePoint);
     const usePoint = existingIndex >= 0
-      ? this.measurementMarkers[existingIndex].position.clone()
-      : point;
+      ? this.measurementMarkerPoints[existingIndex].clone()
+      : basePoint;
 
     if (this.pendingPoint) {
       if (usePoint.distanceTo(this.pendingPoint) < 0.0001) {
@@ -2476,18 +2860,19 @@ export class ThreeModelPreview implements WorkbenchPreview {
       }
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
-        const markerGeometry = new SphereGeometry(size, 16, 16);
+        const markerGeometry = new SphereGeometry(size * 0.38, 12, 12);
         const markerMaterial = new MeshBasicMaterial({
           color: MEASUREMENT_MARKER_COLOR,
           depthTest: false,
           transparent: true,
-          opacity: 0.96,
+          opacity: 0.48,
         });
         const marker = new Mesh(markerGeometry, markerMaterial);
-        marker.position.copy(usePoint);
+        marker.position.copy(this.toMeasurementDisplayPoint(usePoint));
         marker.renderOrder = 999;
         this.scene.add(marker);
         this.measurementMarkers.push(marker);
+        this.measurementMarkerPoints.push(usePoint.clone());
       }
       this.createMeasurementSegment(this.pendingPoint, usePoint);
       // 恢复起点标记颜色
@@ -2501,18 +2886,19 @@ export class ThreeModelPreview implements WorkbenchPreview {
     } else {
       if (existingIndex < 0) {
         const size = this.getMeasurementMarkerSize();
-        const markerGeometry = new SphereGeometry(size, 16, 16);
+        const markerGeometry = new SphereGeometry(size * 0.38, 12, 12);
         const markerMaterial = new MeshBasicMaterial({
           color: MEASUREMENT_MARKER_COLOR,
           depthTest: false,
           transparent: true,
-          opacity: 0.96,
+          opacity: 0.48,
         });
         const marker = new Mesh(markerGeometry, markerMaterial);
-        marker.position.copy(usePoint);
+        marker.position.copy(this.toMeasurementDisplayPoint(usePoint));
         marker.renderOrder = 999;
         this.scene.add(marker);
         this.measurementMarkers.push(marker);
+        this.measurementMarkerPoints.push(usePoint.clone());
         this.pendingMarker = marker;
       } else {
         this.pendingMarker = this.measurementMarkers[existingIndex];
@@ -2527,53 +2913,59 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementSegment(start: Vector3, end: Vector3): void {
-    const geometry = new BufferGeometry().setFromPoints([start, end]);
-    const line = new Line(
+    const layout = this.createThreeMeasurementDraftingLayout(start, end);
+    const displayStart = this.toMeasurementDisplayPoint(start);
+    const displayEnd = this.toMeasurementDisplayPoint(end);
+    const linePoints = layout?.linePoints ?? [displayStart, displayEnd];
+    const geometry = new BufferGeometry().setFromPoints(linePoints);
+    const line = new LineSegments(
       geometry,
       new LineBasicMaterial({
         color: MEASUREMENT_LINE_COLOR,
         transparent: true,
-        opacity: 0.94,
+        opacity: 1,
         depthTest: false,
+        depthWrite: false,
       }),
     );
     line.renderOrder = 998;
     this.scene.add(line);
 
     const labelText = createMeasurementLabel(this.createMeasurementReading(start, end));
-    const mid = new Vector3().addVectors(start, end).multiplyScalar(0.5);
-    const label = this.createMeasurementLabelSprite(labelText, mid, this.getMeasurementMarkerSize() * 4);
+    const mid = layout?.labelPosition ?? new Vector3().addVectors(displayStart, displayEnd).multiplyScalar(0.5);
+    const label = this.createMeasurementLabelSprite(labelText, mid, this.getMeasurementMarkerSize() * 3.2);
     this.scene.add(label);
 
-    this.measurementSegments.push({ start, end, line, label });
+    this.measurementSegments.push({ start: start.clone(), end: end.clone(), line, label });
   }
 
   private createMeasurementLabelSprite(text: { primary: string; secondary: string }, position: Vector3, scale: number): Sprite {
     const canvas = createStagedEl("canvas");
     const ctx = canvas.getContext("2d")!;
-    canvas.width = 640;
-    canvas.height = 160;
+    canvas.width = MEASUREMENT_LABEL_CANVAS.width;
+    canvas.height = MEASUREMENT_LABEL_CANVAS.height;
     drawMeasurementLabelCanvas(ctx, text, canvas.width, canvas.height);
 
     const texture = new CanvasTexture(canvas);
-    const material = new SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+    const material = new SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, transparent: true });
     const sprite = new Sprite(material);
     sprite.position.copy(position);
-    sprite.scale.set(scale * 4, scale * 0.95, 1);
+    sprite.scale.set(scale * 3.7, scale * 1.08, 1);
     sprite.renderOrder = 1000;
     return sprite;
   }
 
   private ensurePreviewLine(): void {
     if (this.previewLine) return;
-    const geometry = new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]);
-    this.previewLine = new Line(
+    const geometry = new BufferGeometry().setFromPoints(Array.from({ length: 14 }, () => new Vector3()));
+    this.previewLine = new LineSegments(
       geometry,
       new LineBasicMaterial({
         color: MEASUREMENT_PREVIEW_COLOR,
         transparent: true,
-        opacity: 0.68,
+        opacity: 0.82,
         depthTest: false,
+        depthWrite: false,
       }),
     );
     this.previewLine.renderOrder = 997;
@@ -2583,6 +2975,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private updatePreviewLine(): void {
     this.previewLineUpdateHandle = 0;
     if (!this.pendingPoint || !this.previewLine || !this.rootObject) return;
+    const displayStart = this.toMeasurementDisplayPoint(this.pendingPoint);
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((this.lastPointerClient.x - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((this.lastPointerClient.y - rect.top) / rect.height) * 2 + 1;
@@ -2590,16 +2983,25 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
     let endPoint: Vector3;
     if (hit?.point) {
-      endPoint = hit.point.clone();
+      endPoint = this.resolveMeasurementPickPoint(hit.point.clone(), this.lastPointerClient.altKey);
     } else {
-      endPoint = this.pendingPoint.clone().add(
+      endPoint = displayStart.clone().add(
         this.raycaster.ray.direction.clone().multiplyScalar(5),
       );
     }
+    const previewLayout = this.createThreeMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint));
+    const linePoints = previewLayout?.linePoints ?? [displayStart, endPoint];
     const position = this.previewLine.geometry.getAttribute("position");
-    position.setXYZ(0, this.pendingPoint.x, this.pendingPoint.y, this.pendingPoint.z);
-    position.setXYZ(1, endPoint.x, endPoint.y, endPoint.z);
-    position.needsUpdate = true;
+    if (position.count !== linePoints.length) {
+      this.previewLine.geometry.dispose();
+      this.previewLine.geometry = new BufferGeometry().setFromPoints(linePoints);
+    } else {
+      for (let i = 0; i < linePoints.length; i++) {
+        const point = linePoints[i];
+        position.setXYZ(i, point.x, point.y, point.z);
+      }
+      position.needsUpdate = true;
+    }
     this.previewLine.geometry.computeBoundingSphere();
     this.markDirty();
   }

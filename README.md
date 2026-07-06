@@ -334,6 +334,13 @@ model.glb
 For model review, open a supported model file directly from the Obsidian file
 explorer. Direct file view is the focused surface for annotations, measurements,
 snapshots, part evidence, and knowledge-note generation.
+Measurement endpoints lock onto the selected object and snap to its mesh
+vertices and triangle edges by default for precise short-distance work. If no
+object is selected, the first measurement click selects the target; hold
+`Alt`/`Option` while placing an endpoint to use the free surface pick backup.
+After measuring a known feature, the measurement inspector can scale the loaded
+model uniformly to the entered real-world length so subsequent dimensions read in
+physical units.
 
 ---
 
@@ -395,14 +402,21 @@ Only needed for CAD, FBX, and mesh conversion. Direct formats work without any e
 ### Python + CadQuery (STEP, IGES, BREP)
 
 ```bash
-# Install
-pip install cadquery trimesh
+# Recommended: use a dedicated conda/mamba environment
+conda create -n ai3d-cad python=3.11
+conda activate ai3d-cad
+mamba install -c conda-forge cadquery trimesh
+# Or, if mamba is unavailable:
+conda install -c conda-forge cadquery trimesh
+
+# Pip can also work when compatible CadQuery/OCP wheels are available
+python -m pip install cadquery trimesh
 ```
 
 Verify with the Python command your OS uses:
 
-- Windows: `py -c "import cadquery; print('OK')"`
-- macOS / Linux: `python3 -c "import cadquery; print('OK')"`
+- Windows: `py -c "import cadquery, trimesh; from OCP.STEPCAFControl import STEPCAFControl_Reader; from OCP.RWGltf import RWGltf_CafWriter; print('OK')"`
+- macOS / Linux: `python3 -c "import cadquery, trimesh; from OCP.STEPCAFControl import STEPCAFControl_Reader; from OCP.RWGltf import RWGltf_CafWriter; print('OK')"`
 
 If diagnostics resolve to `/usr/bin/python3` on macOS and the import check fails, install a separate Python (for example Homebrew Python), install `cadquery` and `trimesh` there, then set that interpreter path in plugin settings.
 

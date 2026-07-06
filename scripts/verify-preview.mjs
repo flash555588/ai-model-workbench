@@ -362,24 +362,47 @@ async function verifyCanvasAccessibility(page) {
   const metadata = await canvas.evaluate((entry) => ({
     role: entry.getAttribute("role"),
     label: entry.getAttribute("aria-label"),
+    labelledBy: entry.getAttribute("aria-labelledby"),
+    labelText: entry.getAttribute("aria-labelledby")
+      ? document.getElementById(entry.getAttribute("aria-labelledby"))?.textContent
+      : null,
     shortcuts: entry.getAttribute("aria-keyshortcuts"),
     title: entry.getAttribute("title"),
+    tooltip: entry.getAttribute("data-tooltip"),
     tabIndex: entry.tabIndex,
   }));
 
   assert(metadata.role === "application", `Preview canvas role was unexpected: ${metadata.role ?? "null"}`);
   assert(metadata.tabIndex === 0, `Preview canvas is not keyboard focusable: tabIndex=${metadata.tabIndex}`);
   assert(
-    typeof metadata.label === "string" && metadata.label.includes("3D") && metadata.label.includes("Shortcuts:"),
-    `Preview canvas label was missing useful context: ${metadata.label ?? "null"}`,
+    metadata.label === null,
+    `Preview canvas should not expose aria-label hover text: ${metadata.label ?? "null"}`,
+  );
+  assert(
+    typeof metadata.labelledBy === "string" && metadata.labelledBy.length > 0,
+    `Preview canvas was missing an aria-labelledby target: ${metadata.labelledBy ?? "null"}`,
+  );
+  assert(
+    typeof metadata.labelText === "string" && metadata.labelText.includes("3D"),
+    `Preview canvas label text was missing useful context: ${metadata.labelText ?? "null"}`,
+  );
+  assert(
+    typeof metadata.labelText === "string" &&
+      !metadata.labelText.includes("Shortcuts:") &&
+      !metadata.labelText.includes("reset view"),
+    `Preview canvas label text should not expose hover shortcut help: ${metadata.labelText ?? "null"}`,
   );
   assert(
     typeof metadata.shortcuts === "string" && metadata.shortcuts.includes("R") && metadata.shortcuts.includes("W"),
     `Preview canvas keyboard shortcuts were missing reset/wireframe keys: ${metadata.shortcuts ?? "null"}`,
   );
   assert(
-    typeof metadata.title === "string" && metadata.title.includes("reset view"),
-    `Preview canvas title did not expose shortcut hints: ${metadata.title ?? "null"}`,
+    metadata.title === null,
+    `Preview canvas should not expose a native hover tooltip: ${metadata.title ?? "null"}`,
+  );
+  assert(
+    metadata.tooltip === null,
+    `Preview canvas should not expose Obsidian tooltip metadata: ${metadata.tooltip ?? "null"}`,
   );
 
   await canvas.focus();
@@ -402,8 +425,8 @@ const toolbarLabels = {
   wireframe: "Toggle wireframe",
   axes: "Toggle orientation axes",
   boundingBox: "Toggle bounding box",
-  resolution: "Change resolution",
-  measurement: "Toggle distance measurement",
+  resolution: "Change render scale",
+  measurement: "Measure selected object; Alt/Option-click for free pick",
   copyMeasurements: "Copy measurements",
   clearMeasurements: "Clear measurements",
 };
@@ -421,8 +444,8 @@ async function getToolbarButton(page, label) {
   return button;
 }
 
-async function dispatchCanvasClick(page, clientX, clientY) {
-  await page.evaluate(({ clientX, clientY }) => {
+async function dispatchCanvasClick(page, clientX, clientY, modifiers = {}) {
+  await page.evaluate(({ clientX, clientY, modifiers }) => {
     const canvas = document.querySelector("#preview-canvas");
     if (!(canvas instanceof HTMLCanvasElement)) {
       throw new Error("Preview canvas is unavailable for synthetic click");
@@ -434,6 +457,10 @@ async function dispatchCanvasClick(page, clientX, clientY) {
       buttons: 1,
       clientX,
       clientY,
+      altKey: modifiers.altKey === true,
+      ctrlKey: modifiers.ctrlKey === true,
+      metaKey: modifiers.metaKey === true,
+      shiftKey: modifiers.shiftKey === true,
       isPrimary: true,
       pointerId: 1,
       pointerType: "mouse",
@@ -444,11 +471,15 @@ async function dispatchCanvasClick(page, clientX, clientY) {
       buttons: 0,
       clientX,
       clientY,
+      altKey: modifiers.altKey === true,
+      ctrlKey: modifiers.ctrlKey === true,
+      metaKey: modifiers.metaKey === true,
+      shiftKey: modifiers.shiftKey === true,
       isPrimary: true,
       pointerId: 1,
       pointerType: "mouse",
     }));
-  }, { clientX, clientY });
+  }, { clientX, clientY, modifiers });
 }
 
 async function pickSelectedPartInfo(page, box) {
@@ -521,6 +552,46 @@ async function readPickWorldPoint(page, clientX, clientY) {
 
 function worldPointDistance(left, right) {
   return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
+}
+
+function parseMarkdownVector(markdown, label, separator) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markdown.match(new RegExp(`\\|\\s*${escapedLabel}\\s*\\|\\s*([^|]+?)\\s*\\|`));
+  if (!match) return null;
+  const values = match[1].split(separator).map((entry) => Number.parseFloat(entry.trim()));
+  if (values.length !== 3 || values.some((value) => !Number.isFinite(value))) return null;
+  return { x: values[0], y: values[1], z: values[2] };
+}
+
+function parseSelectedPartBounds(markdown) {
+  if (!markdown) return null;
+  const size = parseMarkdownVector(markdown, "Bounding Size", /\s*x\s*/i);
+  const center = parseMarkdownVector(markdown, "Center", /\s*,\s*/);
+  if (!size || !center) return null;
+  return {
+    min: {
+      x: center.x - size.x / 2,
+      y: center.y - size.y / 2,
+      z: center.z - size.z / 2,
+    },
+    max: {
+      x: center.x + size.x / 2,
+      y: center.y + size.y / 2,
+      z: center.z + size.z / 2,
+    },
+  };
+}
+
+function assertMeasurementPointOnSelectedBounds(point, bounds, label) {
+  const tolerance = 0.08;
+  const lockedAxes = ["x", "y", "z"].filter((axis) =>
+    Math.abs(point[axis] - bounds.min[axis]) <= tolerance ||
+    Math.abs(point[axis] - bounds.max[axis]) <= tolerance
+  );
+  assert(
+    lockedAxes.length >= 2,
+    `${label} did not snap to a selected-part edge/corner: point=${JSON.stringify(point)}, bounds=${JSON.stringify(bounds)}`,
+  );
 }
 
 function clampClickToBox(box, clientX, clientY) {
@@ -613,7 +684,7 @@ async function verifyHelperToolbar(page) {
   await page.waitForTimeout(100);
   const afterText = (await resBtn.textContent())?.trim();
   assert(
-    !!beforeText && !!afterText && beforeText !== afterText,
+    !!beforeText && !!afterText && beforeText.includes("%") && afterText.includes("%") && beforeText !== afterText,
     `Resolution toolbar button did not cycle value: before=${beforeText ?? "null"}, after=${afterText ?? "null"}`,
   );
 }
@@ -630,12 +701,44 @@ async function verifyMeasurementTool(page, box, firstPick) {
     await measureBtn.evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
     "Measurement toolbar button did not show active state",
   );
+  assert(
+    await page.locator("#preview-canvas").evaluate((canvas) => canvas.classList.contains("ai3d-measurement-focus-aggregation")),
+    "Measurement activation did not trigger the blue focus aggregation effect",
+  );
+
+  const measurementStrip = page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").first();
+  await measurementStrip.waitFor({ timeout: 5000 });
+  const pickStartState = await measurementStrip.evaluate((strip) => ({
+    value: strip.querySelector(".ai3d-measurement-strip-value")?.textContent ?? "",
+    meta: strip.querySelector(".ai3d-measurement-strip-meta")?.textContent ?? "",
+    phase: strip.getAttribute("data-ai3d-measurement-phase"),
+  }));
+  const pickStartPreviewState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
+  assert(
+    pickStartState.value.includes("Pick start") &&
+      pickStartState.phase === "ready" &&
+      pickStartPreviewState?.targetLocked === true,
+    `Measurement status did not lock the selected target before the start point: ${JSON.stringify({ strip: pickStartState, state: pickStartPreviewState })}`,
+  );
 
   await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY);
   await page.waitForTimeout(100);
+  const pickEndState = await measurementStrip.evaluate((strip) => ({
+    value: strip.querySelector(".ai3d-measurement-strip-value")?.textContent ?? "",
+    phase: strip.getAttribute("data-ai3d-measurement-phase"),
+  }));
+  const firstSnapState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
+  assert(
+    pickEndState.phase === "picking-end" &&
+      (pickEndState.value.includes("Pick end") || pickEndState.value.includes("Snap:")) &&
+      ["vertex", "edge"].includes(firstSnapState?.snapKind),
+    `Measurement did not snap the start point to selected-target geometry: ${JSON.stringify({ strip: pickEndState, state: firstSnapState })}`,
+  );
+
   await dispatchCanvasClick(page, clickPair.second.clientX, clickPair.second.clientY);
   await page.waitForTimeout(120);
   const records = await page.evaluate(() => window.__ai3dPreview?.getMeasurementRecords?.() ?? []);
+  const completedSnapState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
 
   assert(records.length === 1, `Expected one measurement record, got ${JSON.stringify(records)}`);
   assert(records[0].reading.distance > 0, `Measurement distance was not positive: ${JSON.stringify(records[0])}`);
@@ -643,20 +746,51 @@ async function verifyMeasurementTool(page, box, firstPick) {
     records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
     `Measurement axis deltas were empty: ${JSON.stringify(records[0])}`,
   );
+  assert(
+    completedSnapState?.targetLocked === true && ["vertex", "edge"].includes(completedSnapState?.snapKind),
+    `Measurement did not keep the selected target and geometry snap after completion: ${JSON.stringify(completedSnapState)}`,
+  );
+  const measurementVisualState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const segment = preview?.measurementSegments?.[0] ?? null;
+    const line = segment?.line ?? null;
+    const geometry = line?.geometry ?? line?._geometry ?? null;
+    let lineVertexCount = 0;
+    const threePosition = geometry?.getAttribute?.("position");
+    if (threePosition && typeof threePosition.count === "number") {
+      lineVertexCount = threePosition.count;
+    } else {
+      const babylonPositions = line?.getVerticesData?.("position") ?? geometry?.getVerticesData?.("position") ?? null;
+      if (babylonPositions && typeof babylonPositions.length === "number") {
+        lineVertexCount = Math.floor(babylonPositions.length / 3);
+      }
+    }
+    return {
+      lineVertexCount,
+      lineClass: line?.constructor?.name ?? null,
+      hasLabel: !!segment?.label,
+    };
+  });
+  assert(
+    measurementVisualState.lineVertexCount >= 14 && measurementVisualState.hasLabel,
+    `Measurement overlay did not render as a drafting dimension glyph: ${JSON.stringify(measurementVisualState)}`,
+  );
   const detachedMeasurementGroupCount = await page.locator(".ai3d-helper-group-measurement").count();
   assert(detachedMeasurementGroupCount === 0, `Measurement controls should be integrated into inspect tools, found detached groups: ${detachedMeasurementGroupCount}`);
-  const measurementStrip = await page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").first();
-  await measurementStrip.waitFor({ timeout: 5000 });
   const measurementStripState = await measurementStrip.evaluate((strip) => ({
     text: strip.textContent ?? "",
     value: strip.querySelector(".ai3d-measurement-strip-value")?.textContent ?? "",
     meta: strip.querySelector(".ai3d-measurement-strip-meta")?.textContent ?? "",
     toolbarActionCount: document.querySelectorAll(".ai3d-helper-toolbar > button.ai3d-measurement-action, .ai3d-helper-group button.ai3d-measurement-action, .ai3d-helper-group button.ai3d-measurement-detail-action").length,
     borderStyle: getComputedStyle(strip).borderStyle,
+    phase: strip.getAttribute("data-ai3d-measurement-phase"),
   }));
   assert(measurementStripState.toolbarActionCount === 0, `Measurement actions should not appear as extra toolbar buttons: ${JSON.stringify(measurementStripState)}`);
   assert(
-    measurementStripState.value.trim().length > 0 && measurementStripState.meta.includes("1"),
+    measurementStripState.value.trim().length > 0 &&
+      !measurementStripState.value.includes("Pick start") &&
+      !measurementStripState.value.includes("Pick end") &&
+      measurementStripState.meta.includes("1"),
     `Measurement readout did not reflect the saved record: ${JSON.stringify(measurementStripState)}`,
   );
   assert(
@@ -674,18 +808,69 @@ async function verifyMeasurementTool(page, box, firstPick) {
   const detailActionCount = await page.locator(".ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden) button.ai3d-measurement-detail-action").count();
   assert(detailActionCount === 2, `Measurement detail actions were not available in the docked details row: ${detailActionCount}`);
 
+  const detailsPanel = page.locator(".ai3d-helper-toolbar > .ai3d-measurement-details:not(.is-hidden)").first();
+  const sectionCount = await detailsPanel.locator(".ai3d-measurement-section").count();
+  assert(sectionCount >= 3, `Measurement details were not grouped into inspector sections: ${sectionCount}`);
+  const unitSelect = detailsPanel.locator("select.ai3d-measurement-detail-select").first();
+  await unitSelect.selectOption("cm");
+  await page.waitForTimeout(100);
+  const referenceInput = detailsPanel.locator("input.ai3d-measurement-reference-input").first();
+  const referenceApply = detailsPanel.locator("[data-ai3d-action='calibrate-reference']").first();
+  const targetDistance = records[0].reading.distance * 2;
+  await referenceInput.fill(String(targetDistance));
+  await referenceApply.click();
+  await page.waitForTimeout(120);
   const calibrated = await page.evaluate(() => {
     const preview = window.__ai3dPreview;
-    preview?.setMeasurementUnit?.("cm");
-    preview?.setMeasurementScale?.({ x: 2, y: 2, z: 2 });
     return {
       unit: preview?.getMeasurementUnit?.(),
+      scale: preview?.getMeasurementScale?.() ?? null,
+      bounds: preview?.getMeasurementBounds?.() ?? null,
+      rootScale: preview?.rootObject?.scale
+        ? { x: preview.rootObject.scale.x, y: preview.rootObject.scale.y, z: preview.rootObject.scale.z }
+        : preview?.rootMesh?.scaling
+          ? { x: preview.rootMesh.scaling.x, y: preview.rootMesh.scaling.y, z: preview.rootMesh.scaling.z }
+          : null,
+      baseRootScale: preview?.measurementBaseRootScale
+        ? {
+            x: preview.measurementBaseRootScale.x,
+            y: preview.measurementBaseRootScale.y,
+            z: preview.measurementBaseRootScale.z,
+          }
+        : preview?.measurementBaseRootScaling
+          ? {
+              x: preview.measurementBaseRootScaling.x,
+              y: preview.measurementBaseRootScaling.y,
+              z: preview.measurementBaseRootScaling.z,
+            }
+          : null,
       records: preview?.getMeasurementRecords?.() ?? [],
       markdown: preview?.exportMeasurements?.() ?? "",
     };
   });
   assert(calibrated.unit === "cm", `Measurement unit did not update: ${JSON.stringify(calibrated)}`);
+  assert(
+    calibrated.scale &&
+      Math.abs((calibrated.scale.x ?? 0) - 2) < 0.05 &&
+      Math.abs((calibrated.scale.y ?? 0) - 2) < 0.05 &&
+      Math.abs((calibrated.scale.z ?? 0) - 2) < 0.05,
+    `Reference calibration did not apply a uniform model scale: ${JSON.stringify(calibrated)}`,
+  );
+  if (calibrated.rootScale) {
+    for (const axis of ["x", "y", "z"]) {
+      const base = calibrated.baseRootScale?.[axis] ?? 1;
+      const rootRatio = Math.abs(base) > 0.0001 ? calibrated.rootScale[axis] / base : calibrated.rootScale[axis];
+      assert(
+        Math.abs(rootRatio - calibrated.scale[axis]) < 0.08,
+        `Renderer root was not scaled on ${axis}: ${JSON.stringify(calibrated)}`,
+      );
+    }
+  }
   assert(calibrated.records[0]?.reading.unit === "cm", `Measurement record unit did not update: ${JSON.stringify(calibrated.records)}`);
+  assert(
+    Math.abs((calibrated.records[0]?.reading.distance ?? 0) - targetDistance) < Math.max(0.001, targetDistance * 0.01),
+    `Reference calibration did not update the measured distance: target=${targetDistance}, records=${JSON.stringify(calibrated.records)}`,
+  );
   assert(calibrated.markdown.includes("## Measurements"), "Measurement Markdown export missing heading");
   assert(calibrated.markdown.includes("Delta X"), "Measurement Markdown export missing delta columns");
   assert(calibrated.markdown.includes("cm"), `Measurement Markdown export missing calibrated unit: ${calibrated.markdown}`);
@@ -723,16 +908,41 @@ async function verifyMeasurementTool(page, box, firstPick) {
 
   await measureBtn.click();
   await page.waitForTimeout(100);
-  await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY);
-  await page.waitForTimeout(100);
-  await measureBtn.click();
+  let pendingBeforeEsc = null;
+  for (const candidate of [clickPair.first, clickPair.second]) {
+    await dispatchCanvasClick(page, candidate.clientX, candidate.clientY);
+    await page.waitForTimeout(100);
+    pendingBeforeEsc = await page.evaluate(() => ({
+      active: window.__ai3dPreview?.isMeasurementActive?.() ?? false,
+      records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+      state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
+    }));
+    if (pendingBeforeEsc.state?.phase === "picking-end") {
+      break;
+    }
+  }
+  assert(
+    pendingBeforeEsc?.state?.phase === "picking-end",
+    `Could not establish a pending measurement before Esc verification: ${JSON.stringify(pendingBeforeEsc)}`,
+  );
+  await page.locator("#preview-canvas").press("Escape");
   await page.waitForTimeout(100);
   const pendingCancelled = await page.evaluate(() => ({
     active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
     records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+    state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
   }));
-  assert(pendingCancelled.active === false, "Measurement mode stayed active after cancelling a pending point");
+  assert(pendingCancelled.active === true, `Esc should cancel the pending endpoint without leaving measurement mode: ${JSON.stringify(pendingCancelled)}`);
   assert(pendingCancelled.records.length === 0, "Cancelling a pending measurement created a record");
+  assert(pendingCancelled.state?.phase === "ready", `Pending measurement did not return to ready state: ${JSON.stringify(pendingCancelled)}`);
+  await page.locator("#preview-canvas").press("Escape");
+  await page.waitForTimeout(100);
+  const escapedOff = await page.evaluate(() => ({
+    active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
+    records: window.__ai3dPreview?.getMeasurementRecords?.() ?? [],
+    state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
+  }));
+  assert(escapedOff.active === false && escapedOff.state?.phase === "inactive", `Second Esc did not turn measurement mode off: ${JSON.stringify(escapedOff)}`);
 }
 
 async function verifyReadonlyPinMode(page, state) {

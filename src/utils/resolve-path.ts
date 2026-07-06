@@ -1,7 +1,17 @@
 import type { App } from "obsidian";
 import { TFile, TFolder } from "obsidian";
 import { readFile } from "./node-shim";
-import { pathIsAbsolute as isAbsolute, pathJoin as join, pathNormalize as normalize } from "./node-shim";
+
+function isAbsoluteFilesystemPath(path: string): boolean {
+  return path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function joinFilesystemPath(basePath: string, vaultPath: string): string {
+  const separator = basePath.includes("\\") ? "\\" : "/";
+  const base = basePath.replace(/[\\/]+$/, "");
+  const relative = vaultPath.replace(/^[\\/]+/, "").replace(/[\\/]/g, separator);
+  return `${base}${separator}${relative}`;
+}
 
 export function normalizePortablePath(path: string): string {
   return path.replace(/\\/g, "/");
@@ -118,7 +128,11 @@ function getVaultBasePath(app: App): string | null {
   const adapter = app.vault.adapter as {
     getBasePath?: () => string;
     basePath?: string;
-  };
+  } | undefined;
+
+  if (!adapter) {
+    return null;
+  }
 
   if (typeof adapter.getBasePath === "function") {
     return adapter.getBasePath();
@@ -146,8 +160,8 @@ export function resolveVaultPath(app: App, rawPath: string): string | null {
 }
 
 export function resolveVaultAbsolutePath(app: App, vaultPath: string): string | null {
-  if (isAbsolute(vaultPath)) {
-    return normalize(vaultPath);
+  if (isAbsoluteFilesystemPath(vaultPath)) {
+    return vaultPath;
   }
 
   const basePath = getVaultBasePath(app);
@@ -155,12 +169,12 @@ export function resolveVaultAbsolutePath(app: App, vaultPath: string): string | 
     return null;
   }
 
-  return normalize(join(basePath, vaultPath));
+  return joinFilesystemPath(basePath, vaultPath);
 }
 
 export async function readBinaryPath(app: App, path: string, options: ReadBinaryPathOptions = {}): Promise<ArrayBuffer> {
   throwIfSignalAborted(options.signal);
-  if (isAbsolute(path)) {
+  if (isAbsoluteFilesystemPath(path)) {
     const buf = await readFile(path, options.signal ? { signal: options.signal } : undefined);
     throwIfSignalAborted(options.signal);
     return toArrayBuffer(buf);

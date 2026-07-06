@@ -40,11 +40,29 @@ export interface ConverterCommandStatus {
 
 export interface ConverterDependencyCheck {
   kind: "cad-python" | "mesh-python" | "freecadcmd-cli" | "obj2gltf-cli" | "fbx2gltf-cli";
+  label?: string;
   ok: boolean;
   detail: string;
 }
 
 const WINDOWS_PATHEXT_FALLBACK = [".exe", ".cmd", ".bat", ".com"];
+const CAD_PYTHON_CHECKS: readonly { label: string; probe: string }[] = [
+  { label: "CadQuery import", probe: "import cadquery; print('ok')" },
+  { label: "trimesh import", probe: "import trimesh; print('ok')" },
+  {
+    label: "OCP STEP readers",
+    probe: [
+      "from OCP.STEPCAFControl import STEPCAFControl_Reader",
+      "from OCP.STEPControl import STEPControl_Reader",
+      "from OCP.BRepMesh import BRepMesh_IncrementalMesh",
+      "print('ok')",
+    ].join("; "),
+  },
+  {
+    label: "OCCT GLB writer",
+    probe: "from OCP.RWGltf import RWGltf_CafWriter, RWGltf_WriterTrsfFormat; print('ok')",
+  },
+];
 
 /**
  * Resolve FreeCAD command candidates dynamically using environment variables.
@@ -435,12 +453,16 @@ async function inspectDependencyChecks(status: ConverterCommandStatus): Promise<
   const args = [...status.args];
 
   if (status.id === "freecad") {
-    try {
-      await execFileAsync(command, [...args, "-c", "import cadquery, trimesh; print('ok')"]);
-      return [{ kind: "cad-python", ok: true, detail: "" }];
-    } catch (err) {
-      return [{ kind: "cad-python", ok: false, detail: compactProcessError(err) }];
+    const checks: ConverterDependencyCheck[] = [];
+    for (const check of CAD_PYTHON_CHECKS) {
+      try {
+        await execFileAsync(command, [...args, "-c", check.probe]);
+        checks.push({ kind: "cad-python", label: check.label, ok: true, detail: "" });
+      } catch (err) {
+        checks.push({ kind: "cad-python", label: check.label, ok: false, detail: compactProcessError(err) });
+      }
     }
+    return checks;
   }
 
   if (status.id === "assimp") {

@@ -141,11 +141,13 @@ future agent notes can refer to the same requirement over time.
 
 - Status: Verified
 - Priority: P1
-- User value: Users should be able to measure model distances repeatedly, calibrate units, keep completed records visible, and copy measurements into Markdown notes.
+- User value: Users should be able to measure model distances repeatedly, calibrate the whole model from a known real-world dimension, keep completed records visible, and copy measurements into Markdown notes.
 - Scope:
   - Shared measurement math, unit normalization, labels, and Markdown export.
+  - Selected-object geometry snapping to mesh vertices and triangle edges.
   - Three.js and Babylon.js measurement behavior.
   - Toolbar actions for measure, clear, copy, and calibration.
+  - Uniform model-root scaling from the latest measured reference distance.
   - Preview harness coverage for completed and cancelled measurements.
 - Out of scope:
   - Persisting measurements in `data.json`.
@@ -153,7 +155,9 @@ future agent notes can refer to the same requirement over time.
 - Acceptance criteria:
   - `supportsMeasurementPreview()` returns true only when the full measurement contract is available.
   - Three.js and Babylon.js produce equivalent reading/export formats.
+  - Measurement mode locks the selected object, visibly marks the target, and uses first-click target selection when no object is selected.
   - Completed measurements remain visible when measurement mode is turned off.
+  - Entering a known length for the latest measurement applies a uniform model scale and keeps ruler overlays anchored to their original mesh features.
   - Unfinished endpoints cancel cleanly.
   - Copy/export behavior handles empty records without throwing.
   - Measurement labels update after camera movement and resize.
