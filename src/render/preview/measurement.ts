@@ -192,10 +192,10 @@ export function snapMeasurementPointToGeometry(
     });
   }
 
-  const vertexRadius = input.vertexRadius ?? 0;
-  const candidate = nearestVertex && (nearestVertex.distance <= vertexRadius || !nearestEdge)
+  const vertexRadius = Math.max(input.vertexRadius ?? 0, 0);
+  const candidate = nearestVertex && nearestVertex.distance <= vertexRadius
     ? nearestVertex
-    : chooseNearestMeasurementSnapResult(nearestVertex, nearestEdge);
+    : nearestEdge ?? nearestVertex;
   if (!candidate) {
     return null;
   }

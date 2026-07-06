@@ -139,6 +139,43 @@ describe("measurement helpers", () => {
     expect(snapped?.point).toEqual({ x: 0, y: 0, z: 0 });
   });
 
+  it("uses edge projection once the pointer is outside the corner radius", () => {
+    const snapped = snapMeasurementPointToGeometry(
+      { x: -0.06, y: 0, z: 0 },
+      {
+        vertices: [
+          { point: { x: 0, y: 0, z: 0 } },
+          { point: { x: 1, y: 0, z: 0 } },
+        ],
+        edges: [
+          { start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 } },
+        ],
+        vertexRadius: 0.05,
+      },
+    );
+
+    expect(snapped?.kind).toBe("edge");
+    expect(snapped?.point).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it("rejects geometry snaps beyond the target snap distance", () => {
+    const snapped = snapMeasurementPointToGeometry(
+      { x: 3, y: 3, z: 0 },
+      {
+        vertices: [
+          { point: { x: 0, y: 0, z: 0 } },
+        ],
+        edges: [
+          { start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 } },
+        ],
+        vertexRadius: 0.05,
+        maxDistance: 0.5,
+      },
+    );
+
+    expect(snapped).toBeNull();
+  });
+
   it("creates geometry snap edges from indexed and non-indexed triangles without face diagonals", () => {
     const squareVertices = [
       { x: 0, y: 0, z: 0 },
