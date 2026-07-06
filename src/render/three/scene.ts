@@ -936,6 +936,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     this.measurementMarkers = [];
     this.measurementMarkerPoints = [];
+    this.setMeasurementSnapKind(null, false);
     this.markDirty();
     this.notifyMeasurementsChanged();
   }

@@ -1084,6 +1084,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     this.measurementMarkers = [];
     this.measurementMarkerPoints = [];
+    this.setMeasurementSnapKind(null, false);
     this.notifyMeasurementsChanged();
   }
 
