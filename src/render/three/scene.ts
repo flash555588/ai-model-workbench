@@ -2174,7 +2174,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
         return;
       }
-      const targetPoint = this.getMeasurementTargetRaycastPoint();
+      const targetPoint = this.getMeasurementTargetRaycastPoint(hit);
       if (!targetPoint) {
         this.setMeasurementSnapKind(null);
         return;
@@ -2768,11 +2768,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return renderables;
   }
 
-  private getMeasurementTargetRaycastPoint(): Vector3 | null {
+  private getMeasurementTargetRaycastPoint(frontmostHit?: { object?: Object3D; point?: Vector3 | null } | null): Vector3 | null {
     const renderables = this.getMeasurementTargetRenderables();
     if (renderables.length === 0) return null;
-    const hit = this.raycaster.intersectObjects(renderables, false)[0];
-    return hit?.point?.clone() ?? null;
+    const hit = frontmostHit ?? this.raycaster.intersectObjects(this.rootObject ? this.getRenderableObjects(this.rootObject) : [], false)[0];
+    if (!hit?.point) return null;
+    return renderables.includes(hit.object as ThreeRenderableObject) ? hit.point.clone() : null;
   }
 
   private createThreeMeasurementDraftingLayout(start: Vector3, end: Vector3): {

@@ -719,7 +719,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
           }
           return;
         }
-        const targetPoint = this.pickMeasurementTargetPoint(result.screenX, result.screenY);
+        const targetPoint = this.getMeasurementTargetPickPoint(result.mesh, result.pickedPoint);
         if (!targetPoint) {
           this.setMeasurementSnapKind(null);
           return;
@@ -2045,16 +2045,22 @@ export class BabylonModelPreview implements WorkbenchPreview {
       .filter((candidate) => !candidate.isDisposed() && isBabylonNodeOrDescendant(candidate, target));
   }
 
-  private pickMeasurementTargetPoint(clientX: number, clientY: number): Vector3 | null {
+  private getMeasurementTargetPickPoint(mesh: AbstractMesh | null | undefined, point: Vector3 | null | undefined): Vector3 | null {
+    if (!mesh || mesh.isDisposed() || !point) return null;
+    return this.measurementTargetMeshes.includes(mesh) ? point.clone() : null;
+  }
+
+  private pickFrontmostMeasurementTargetPoint(clientX: number, clientY: number): Vector3 | null {
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas || this.measurementTargetMeshes.length === 0) return null;
     const rect = canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    const targetMeshes = new Set(this.measurementTargetMeshes.filter((mesh) => !mesh.isDisposed()));
-    if (targetMeshes.size === 0) return null;
-    const pickResult = this.scene.pick(x, y, (mesh) => targetMeshes.has(mesh as AbstractMesh));
-    return pickResult?.hit && pickResult.pickedPoint ? pickResult.pickedPoint.clone() : null;
+    const pickResult = this.scene.pick(x, y, (mesh) =>
+      mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
+    return pickResult?.hit
+      ? this.getMeasurementTargetPickPoint(pickResult.pickedMesh, pickResult.pickedPoint)
+      : null;
   }
 
   private createBabylonMeasurementDraftingLayout(start: Vector3, end: Vector3): {
@@ -2266,7 +2272,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
         ? this.resolveMeasurementPickPoint(pickResult.pickedPoint, true)
         : displayStart.add(this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera).direction.scale(5));
     } else {
-      const targetPoint = this.pickMeasurementTargetPoint(this.lastPointerClient.x, this.lastPointerClient.y);
+      const targetPoint = this.pickFrontmostMeasurementTargetPoint(this.lastPointerClient.x, this.lastPointerClient.y);
       if (targetPoint) {
         endPoint = this.resolveMeasurementPickPoint(targetPoint, false);
       } else {

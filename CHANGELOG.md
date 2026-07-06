@@ -7,6 +7,7 @@
 - UI: upgrade measurement calibration so users can scale the loaded model uniformly from the latest ruler distance, keep overlays anchored in model space, apply locked model-size scaling from one known axis, and verify the workflow through preview automation.
 - UI: make distance measurement lock the selected object by default and snap endpoints to mesh vertices or visible crease/perimeter triangle edges, filtering coplanar face diagonals and preferring edge projection outside the corner radius, with first-click target selection when needed and Alt/Option-click preserving the older free surface pick as a backup.
 - UI: restrict normal measurement picks and hover previews to the locked measurement target so clicks on neighboring geometry no longer seed selected-object snap endpoints.
+- UI: require the locked measurement target to be the frontmost normal pick before snapping, preventing hidden target geometry behind another part from receiving ruler endpoints.
 - UI: clear stale measurement snap status after cancelling a pending endpoint so the selected-object ruler returns to a neutral ready state.
 - Performance: cache selected-target measurement snap candidates while measuring so hover previews do not repeatedly rebuild vertex and edge lists for the same object.
 - UI: restyle distance measurements as orthographic drawing-style dimension callouts with extension lines, arrowheads, and compact drafting labels instead of thick freehand ruler lines.
