@@ -315,6 +315,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private measurementTargetMeshes: AbstractMesh[] = [];
   private measurementSnapInputCache: MeasurementGeometrySnapInput | null = null;
   private measurementSnapInputCacheTargetId: number | null = null;
+  private measurementSnapInputCacheSignature: string | null = null;
   private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
@@ -1955,6 +1956,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private invalidateMeasurementSnapInputCache(): void {
     this.measurementSnapInputCache = null;
     this.measurementSnapInputCacheTargetId = null;
+    this.measurementSnapInputCacheSignature = null;
   }
 
   private getMeasurementTargetName(): string | null {
@@ -1997,11 +1999,16 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private createMeasurementGeometrySnapInput(): MeasurementGeometrySnapInput | null {
     const target = this.measurementTargetNode;
     if (!this.rootMesh || !target || isBabylonNodeDisposed(target)) return null;
-    if (this.measurementSnapInputCache && this.measurementSnapInputCacheTargetId === target.uniqueId) {
-      return this.measurementSnapInputCache;
-    }
     const meshes = this.getMeasurementTargetMeshes(target);
     if (meshes.length === 0) return null;
+    const signature = this.createMeasurementSnapInputSignature(meshes);
+    if (
+      this.measurementSnapInputCache &&
+      this.measurementSnapInputCacheTargetId === target.uniqueId &&
+      this.measurementSnapInputCacheSignature === signature
+    ) {
+      return this.measurementSnapInputCache;
+    }
 
     const vertices: MeasurementSnapVertexCandidate[] = [];
     const edges: MeasurementSnapEdgeCandidate[] = [];
@@ -2036,7 +2043,23 @@ export class BabylonModelPreview implements WorkbenchPreview {
     };
     this.measurementSnapInputCache = input;
     this.measurementSnapInputCacheTargetId = target.uniqueId;
+    this.measurementSnapInputCacheSignature = signature;
     return input;
+  }
+
+  private createMeasurementSnapInputSignature(meshes: readonly AbstractMesh[]): string {
+    return meshes.map((mesh) => {
+      const geometryId = "geometry" in mesh && mesh.geometry
+        ? (mesh.geometry as { uniqueId?: number }).uniqueId ?? "geometry"
+        : "none";
+      return [
+        mesh.uniqueId,
+        geometryId,
+        mesh.getTotalVertices(),
+        mesh.getTotalIndices(),
+        mesh.computeWorldMatrix(true).asArray().map(formatMeasurementSnapSignatureNumber).join(","),
+      ].join(":");
+    }).join("|");
   }
 
   private getMeasurementTargetMeshes(target = this.measurementTargetNode): AbstractMesh[] {
@@ -2331,6 +2354,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
       { splatCount: isSplat ? vertexCount : undefined, resourceWarnings: this.resourceWarnings },
     );
   }
+}
+
+function formatMeasurementSnapSignatureNumber(value: number): string {
+  return Number.isFinite(value) ? value.toPrecision(10) : String(value);
 }
 
 export function createBabylonModelPreview(canvas: HTMLCanvasElement): WorkbenchPreview {

@@ -302,6 +302,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private measurementTargetHelper: BoxHelper | null = null;
   private measurementSnapInputCache: MeasurementGeometrySnapInput | null = null;
   private measurementSnapInputCacheTarget: Object3D | null = null;
+  private measurementSnapInputCacheSignature: string | null = null;
   private measurementSnapKind: MeasurementSnapKind | null = null;
   private readonly measurementObservers = new Set<() => void>();
   private pendingPoint: Vector3 | null = null;
@@ -2648,6 +2649,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private invalidateMeasurementSnapInputCache(): void {
     this.measurementSnapInputCache = null;
     this.measurementSnapInputCacheTarget = null;
+    this.measurementSnapInputCacheSignature = null;
   }
 
   private setMeasurementSnapKind(kind: MeasurementSnapKind | null, notify = true): void {
@@ -2712,11 +2714,16 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private createMeasurementGeometrySnapInput(): MeasurementGeometrySnapInput | null {
     const target = this.measurementTargetObject;
     if (!target || !this.isObjectInLoadedRoot(target)) return null;
-    if (this.measurementSnapInputCache && this.measurementSnapInputCacheTarget === target) {
-      return this.measurementSnapInputCache;
-    }
     const renderables = this.getMeasurementTargetRenderables();
     if (renderables.length === 0) return null;
+    const signature = this.createMeasurementSnapInputSignature(renderables);
+    if (
+      this.measurementSnapInputCache &&
+      this.measurementSnapInputCacheTarget === target &&
+      this.measurementSnapInputCacheSignature === signature
+    ) {
+      return this.measurementSnapInputCache;
+    }
     const vertices: MeasurementSnapVertexCandidate[] = [];
     const edges: MeasurementSnapEdgeCandidate[] = [];
     const targetId = `three:${target.id}`;
@@ -2749,7 +2756,27 @@ export class ThreeModelPreview implements WorkbenchPreview {
     };
     this.measurementSnapInputCache = input;
     this.measurementSnapInputCacheTarget = target;
+    this.measurementSnapInputCacheSignature = signature;
     return input;
+  }
+
+  private createMeasurementSnapInputSignature(renderables: readonly ThreeRenderableObject[]): string {
+    return renderables.map((object) => {
+      const geometry = object.geometry;
+      const position = geometry.getAttribute("position");
+      const index = geometry.getIndex();
+      const positionVersion = position && "version" in position ? (position as { version?: number }).version ?? 0 : 0;
+      object.updateWorldMatrix(true, false);
+      return [
+        object.id,
+        geometry.id,
+        position?.count ?? 0,
+        positionVersion,
+        index?.count ?? 0,
+        index?.version ?? 0,
+        object.matrixWorld.elements.map(formatMeasurementSnapSignatureNumber).join(","),
+      ].join(":");
+    }).join("|");
   }
 
   private getMeasurementTargetRenderables(): ThreeRenderableObject[] {
@@ -3090,6 +3117,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
   }
 
+}
+
+function formatMeasurementSnapSignatureNumber(value: number): string {
+  return Number.isFinite(value) ? value.toPrecision(10) : String(value);
 }
 
 export function createThreeModelPreview(canvas: HTMLCanvasElement): WorkbenchPreview {
