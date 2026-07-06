@@ -3038,6 +3038,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     let endPoint: Vector3 | null = null;
     if (this.lastPointerClient.altKey) {
+      this.setMeasurementSnapKind("free");
       const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
       endPoint = hit?.point
         ? this.resolveMeasurementPickPoint(hit.point.clone(), true)

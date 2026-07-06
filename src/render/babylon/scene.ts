@@ -2290,6 +2290,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const y = this.lastPointerClient.y - rect.top;
     let endPoint: Vector3 | null = null;
     if (this.lastPointerClient.altKey) {
+      this.setMeasurementSnapKind("free");
       const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
       endPoint = pickResult.hit && pickResult.pickedPoint
         ? this.resolveMeasurementPickPoint(pickResult.pickedPoint, true)

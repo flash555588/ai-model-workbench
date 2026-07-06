@@ -9,6 +9,7 @@
 - UI: restrict normal measurement picks and hover previews to the locked measurement target so clicks on neighboring geometry no longer seed selected-object snap endpoints.
 - UI: require the locked measurement target to be the frontmost normal pick before snapping, preventing hidden target geometry behind another part from receiving ruler endpoints.
 - UI: clear stale measurement snap status after cancelling a pending endpoint so the selected-object ruler returns to a neutral ready state.
+- UI: keep the measurement strip in Free pick status while Alt/Option previewing the backup free ruler path, even when the pointer is over empty canvas space.
 - Performance: cache selected-target measurement snap candidates while measuring so hover previews do not repeatedly rebuild vertex and edge lists for the same object.
 - Performance: validate selected-target measurement snap caches against target mesh signatures so transformed or updated geometry rebuilds snap candidates instead of reusing stale vertex and edge lists.
 - UI: restyle distance measurements as orthographic drawing-style dimension callouts with extension lines, arrowheads, and compact drafting labels instead of thick freehand ruler lines.
