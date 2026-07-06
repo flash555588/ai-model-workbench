@@ -594,6 +594,18 @@ function assertMeasurementPointOnSelectedBounds(point, bounds, label) {
   );
 }
 
+function isPointInsideSelectedBounds(point, bounds) {
+  const tolerance = 0.08;
+  return ["x", "y", "z"].every((axis) =>
+    point[axis] >= bounds.min[axis] - tolerance &&
+    point[axis] <= bounds.max[axis] + tolerance
+  );
+}
+
+function isBoxLikeMeasurementFixture(markdown) {
+  return /cubie_|cube/i.test(markdown);
+}
+
 function clampClickToBox(box, clientX, clientY) {
   return {
     clientX: Math.min(Math.max(clientX, box.x + 8), box.x + box.width - 8),
@@ -601,9 +613,68 @@ function clampClickToBox(box, clientX, clientY) {
   };
 }
 
-async function findMeasurementClickPair(page, box, firstPick) {
+async function projectSelectedBoundsMeasurementPair(page, bounds) {
+  return page.evaluate((selectedBounds) => {
+    const preview = window.__ai3dPreview;
+    const provider = preview?.getAnnotationProvider?.();
+    const canvas = document.querySelector("#preview-canvas");
+    if (!provider || !(canvas instanceof HTMLCanvasElement)) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const center = {
+      x: (selectedBounds.min.x + selectedBounds.max.x) / 2,
+      y: (selectedBounds.min.y + selectedBounds.max.y) / 2,
+      z: (selectedBounds.min.z + selectedBounds.max.z) / 2,
+    };
+    const insetRatio = 0.035;
+    const candidates = [];
+    for (const x of [selectedBounds.min.x, selectedBounds.max.x]) {
+      for (const y of [selectedBounds.min.y, selectedBounds.max.y]) {
+        for (const z of [selectedBounds.min.z, selectedBounds.max.z]) {
+          const point = {
+            x: x + (center.x - x) * insetRatio,
+            y: y + (center.y - y) * insetRatio,
+            z: z + (center.z - z) * insetRatio,
+          };
+          const projection = { screenX: 0, screenY: 0, depth: 0 };
+          if (!provider.projectWorldPoint(point, projection)) continue;
+          if (!Number.isFinite(projection.screenX) || !Number.isFinite(projection.screenY)) continue;
+          if (projection.depth < -0.05 || projection.depth > 1.05) continue;
+          const clientX = rect.left + projection.screenX;
+          const clientY = rect.top + projection.screenY;
+          if (clientX < rect.left + 8 || clientX > rect.right - 8 || clientY < rect.top + 8 || clientY > rect.bottom - 8) continue;
+          candidates.push({ clientX, clientY, point, depth: projection.depth });
+        }
+      }
+    }
+
+    let best = null;
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = i + 1; j < candidates.length; j++) {
+        const left = candidates[i];
+        const right = candidates[j];
+        const screenDistance = Math.hypot(left.clientX - right.clientX, left.clientY - right.clientY);
+        if (screenDistance < 24) continue;
+        if (!best || screenDistance > best.screenDistance) {
+          best = { first: left, second: right, screenDistance };
+        }
+      }
+    }
+    return best ? { first: best.first, second: best.second } : null;
+  }, bounds);
+}
+
+async function findMeasurementClickPair(page, box, firstPick, selectedBounds = null) {
   const candidates = [
     { clientX: firstPick.clientX, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX + 20, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX - 20, clientY: firstPick.clientY },
+    { clientX: firstPick.clientX, clientY: firstPick.clientY + 20 },
+    { clientX: firstPick.clientX, clientY: firstPick.clientY - 20 },
+    { clientX: firstPick.clientX + 32, clientY: firstPick.clientY + 24 },
+    { clientX: firstPick.clientX - 32, clientY: firstPick.clientY + 24 },
+    { clientX: firstPick.clientX + 32, clientY: firstPick.clientY - 24 },
+    { clientX: firstPick.clientX - 32, clientY: firstPick.clientY - 24 },
     { clientX: firstPick.clientX + 64, clientY: firstPick.clientY },
     { clientX: firstPick.clientX - 64, clientY: firstPick.clientY },
     { clientX: firstPick.clientX, clientY: firstPick.clientY + 64 },
@@ -619,10 +690,11 @@ async function findMeasurementClickPair(page, box, firstPick) {
     { clientX: box.x + box.width * 0.5, clientY: box.y + box.height * 0.44 },
   ].map((entry) => clampClickToBox(box, entry.clientX, entry.clientY));
 
+  const acceptsPoint = (point) => point && (!selectedBounds || isPointInsideSelectedBounds(point, selectedBounds));
   let first = null;
   for (const candidate of candidates) {
     const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
-    if (point) {
+    if (acceptsPoint(point)) {
       first = { ...candidate, point };
       break;
     }
@@ -631,7 +703,7 @@ async function findMeasurementClickPair(page, box, firstPick) {
 
   for (const candidate of candidates) {
     const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
-    if (point && worldPointDistance(point, first.point) > 0.0001) {
+    if (acceptsPoint(point) && worldPointDistance(point, first.point) > 0.0001) {
       return { first, second: { ...candidate, point } };
     }
   }
@@ -690,7 +762,18 @@ async function verifyHelperToolbar(page) {
 }
 
 async function verifyMeasurementTool(page, box, firstPick) {
-  const clickPair = await findMeasurementClickPair(page, box, firstPick);
+  const selectedBounds = parseSelectedPartBounds(firstPick.markdown);
+  assert(selectedBounds, `Could not parse selected-part bounds for measurement snap verification: ${firstPick.markdown}`);
+  const isBoxLikeFixture = isBoxLikeMeasurementFixture(firstPick.markdown);
+  const clickPair = (isBoxLikeFixture ? await projectSelectedBoundsMeasurementPair(page, selectedBounds) : null)
+    ?? await findMeasurementClickPair(page, box, firstPick, selectedBounds);
+  await dispatchCanvasClick(page, firstPick.clientX, firstPick.clientY);
+  await page.waitForTimeout(100);
+  const restoredSelection = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+  assert(
+    restoredSelection === firstPick.markdown,
+    `Measurement verification could not restore the originally selected target: ${JSON.stringify({ expected: firstPick.markdown, actual: restoredSelection })}`,
+  );
   const measureBtn = await getToolbarButton(page, toolbarLabels.measurement);
   await measureBtn.click();
   await page.waitForTimeout(100);
@@ -746,6 +829,10 @@ async function verifyMeasurementTool(page, box, firstPick) {
     records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
     `Measurement axis deltas were empty: ${JSON.stringify(records[0])}`,
   );
+  if (isBoxLikeFixture) {
+    assertMeasurementPointOnSelectedBounds(records[0].start, selectedBounds, "Measurement start");
+    assertMeasurementPointOnSelectedBounds(records[0].end, selectedBounds, "Measurement end");
+  }
   assert(
     completedSnapState?.targetLocked === true && ["vertex", "edge"].includes(completedSnapState?.snapKind),
     `Measurement did not keep the selected target and geometry snap after completion: ${JSON.stringify(completedSnapState)}`,
@@ -906,9 +993,15 @@ async function verifyMeasurementTool(page, box, firstPick) {
   const visibleMeasurementStripCount = await page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").count();
   assert(visibleMeasurementStripCount === 0, `Measurement strip stayed visible after clearing records: ${visibleMeasurementStripCount}`);
 
+  const escTargetMarkdown = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
+  const escTargetBounds = parseSelectedPartBounds(escTargetMarkdown) ?? selectedBounds;
+  const escClickPair = (isBoxLikeMeasurementFixture(escTargetMarkdown)
+    ? await projectSelectedBoundsMeasurementPair(page, escTargetBounds)
+    : null) ?? await findMeasurementClickPair(page, box, { ...firstPick, markdown: escTargetMarkdown }, escTargetBounds);
+
   await measureBtn.click();
   await page.waitForTimeout(100);
-  await dispatchCanvasClick(page, clickPair.first.clientX, clickPair.first.clientY, { altKey: true });
+  await dispatchCanvasClick(page, escClickPair.first.clientX, escClickPair.first.clientY, { altKey: true });
   await page.waitForTimeout(100);
   const freePickPending = await page.evaluate(() => ({
     active: window.__ai3dPreview?.isMeasurementActive?.() ?? false,
@@ -938,7 +1031,7 @@ async function verifyMeasurementTool(page, box, firstPick) {
   );
 
   let pendingBeforeEsc = null;
-  for (const candidate of [clickPair.first, clickPair.second]) {
+  for (const candidate of [escClickPair.first, escClickPair.second]) {
     await dispatchCanvasClick(page, candidate.clientX, candidate.clientY);
     await page.waitForTimeout(100);
     pendingBeforeEsc = await page.evaluate(() => ({

@@ -2161,8 +2161,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     };
     this._lastPickResult = result;
 
-    if (this.measurementActive && hit?.point) {
+    if (this.measurementActive) {
       if (event.altKey) {
+        if (!hit?.point) return;
         this.setMeasurementSnapKind("free");
         this.addMeasurementPoint(hit.point.clone());
         return;
@@ -2173,7 +2174,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
         }
         return;
       }
-      this.addMeasurementPoint(this.resolveMeasurementPickPoint(hit.point.clone(), false));
+      const targetPoint = this.getMeasurementTargetRaycastPoint();
+      if (!targetPoint) {
+        this.setMeasurementSnapKind(null);
+        return;
+      }
+      this.addMeasurementPoint(this.resolveMeasurementPickPoint(targetPoint, false));
       return;
     }
 
@@ -2762,6 +2768,13 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return renderables;
   }
 
+  private getMeasurementTargetRaycastPoint(): Vector3 | null {
+    const renderables = this.getMeasurementTargetRenderables();
+    if (renderables.length === 0) return null;
+    const hit = this.raycaster.intersectObjects(renderables, false)[0];
+    return hit?.point?.clone() ?? null;
+  }
+
   private createThreeMeasurementDraftingLayout(start: Vector3, end: Vector3): {
     linePoints: Vector3[];
     labelPosition: Vector3;
@@ -2995,17 +3008,24 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.pointer.x = ((this.lastPointerClient.x - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((this.lastPointerClient.y - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
-    let endPoint: Vector3;
-    if (hit?.point) {
-      endPoint = this.resolveMeasurementPickPoint(hit.point.clone(), this.lastPointerClient.altKey);
+    let endPoint: Vector3 | null = null;
+    if (this.lastPointerClient.altKey) {
+      const hit = this.raycaster.intersectObjects(this.getRenderableObjects(this.rootObject), false)[0];
+      endPoint = hit?.point
+        ? this.resolveMeasurementPickPoint(hit.point.clone(), true)
+        : displayStart.clone().add(this.raycaster.ray.direction.clone().multiplyScalar(5));
     } else {
-      endPoint = displayStart.clone().add(
-        this.raycaster.ray.direction.clone().multiplyScalar(5),
-      );
+      const targetPoint = this.getMeasurementTargetRaycastPoint();
+      if (targetPoint) {
+        endPoint = this.resolveMeasurementPickPoint(targetPoint, false);
+      } else {
+        this.setMeasurementSnapKind(null);
+      }
     }
-    const previewLayout = this.createThreeMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint));
-    const linePoints = previewLayout?.linePoints ?? [displayStart, endPoint];
+    const previewLayout = endPoint
+      ? this.createThreeMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint))
+      : null;
+    const linePoints = endPoint && previewLayout ? previewLayout.linePoints : [displayStart, displayStart];
     const position = this.previewLine.geometry.getAttribute("position");
     if (position.count !== linePoints.length) {
       this.previewLine.geometry.dispose();

@@ -706,8 +706,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
         modifiers: result.modifiers,
       };
       this._lastPickResult = previewResult;
-      if (this.measurementActive && result.pickedPoint) {
+      if (this.measurementActive) {
         if (result.modifiers?.altKey === true) {
+          if (!result.pickedPoint) return;
           this.setMeasurementSnapKind("free");
           this.addMeasurementPoint(toBabylonVector3(result.pickedPoint));
           return;
@@ -718,7 +719,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
           }
           return;
         }
-        this.addMeasurementPoint(this.resolveMeasurementPickPoint(toBabylonVector3(result.pickedPoint), false));
+        const targetPoint = this.pickMeasurementTargetPoint(result.screenX, result.screenY);
+        if (!targetPoint) {
+          this.setMeasurementSnapKind(null);
+          return;
+        }
+        this.addMeasurementPoint(this.resolveMeasurementPickPoint(targetPoint, false));
         return;
       }
       if (this.focusSelectionEnabled && selectable) {
@@ -2039,6 +2045,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
       .filter((candidate) => !candidate.isDisposed() && isBabylonNodeOrDescendant(candidate, target));
   }
 
+  private pickMeasurementTargetPoint(clientX: number, clientY: number): Vector3 | null {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas || this.measurementTargetMeshes.length === 0) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const targetMeshes = new Set(this.measurementTargetMeshes.filter((mesh) => !mesh.isDisposed()));
+    if (targetMeshes.size === 0) return null;
+    const pickResult = this.scene.pick(x, y, (mesh) => targetMeshes.has(mesh as AbstractMesh));
+    return pickResult?.hit && pickResult.pickedPoint ? pickResult.pickedPoint.clone() : null;
+  }
+
   private createBabylonMeasurementDraftingLayout(start: Vector3, end: Vector3): {
     lineSegments: Vector3[][];
     labelPosition: Vector3;
@@ -2241,17 +2259,25 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const rect = canvas.getBoundingClientRect();
     const x = this.lastPointerClient.x - rect.left;
     const y = this.lastPointerClient.y - rect.top;
-    const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
-    let endPoint: Vector3;
-    if (pickResult.hit && pickResult.pickedPoint) {
-      endPoint = this.resolveMeasurementPickPoint(pickResult.pickedPoint, this.lastPointerClient.altKey);
+    let endPoint: Vector3 | null = null;
+    if (this.lastPointerClient.altKey) {
+      const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
+      endPoint = pickResult.hit && pickResult.pickedPoint
+        ? this.resolveMeasurementPickPoint(pickResult.pickedPoint, true)
+        : displayStart.add(this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera).direction.scale(5));
     } else {
-      const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
-      endPoint = displayStart.add(ray.direction.scale(5));
+      const targetPoint = this.pickMeasurementTargetPoint(this.lastPointerClient.x, this.lastPointerClient.y);
+      if (targetPoint) {
+        endPoint = this.resolveMeasurementPickPoint(targetPoint, false);
+      } else {
+        this.setMeasurementSnapKind(null);
+      }
     }
-    const previewLayout = this.createBabylonMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint));
+    const previewLayout = endPoint
+      ? this.createBabylonMeasurementDraftingLayout(this.pendingPoint, this.toMeasurementBasePoint(endPoint))
+      : null;
     this.previewLine = MeshBuilder.CreateLineSystem("measure-preview", {
-      lines: previewLayout?.lineSegments ?? [[displayStart, endPoint]],
+      lines: previewLayout?.lineSegments ?? [[displayStart, displayStart]],
       instance: this.previewLine,
     }, this.scene);
     this.previewLine.color = MEASUREMENT_PREVIEW_COLOR.clone();
