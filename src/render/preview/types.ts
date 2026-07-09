@@ -89,6 +89,7 @@ export type PreviewCapabilityId =
   | "wireframe"
   | "orientation-gizmo"
   | "bounding-box"
+  | "slice"
   | "render-scale"
   | "camera-zoom"
   | "workbench";
@@ -237,6 +238,28 @@ export interface MeasurementPreview {
   observeMeasurements?(callback: () => void): () => void;
 }
 
+export interface SliceState {
+  active: boolean;
+  normal: PreviewWorldPoint;
+  offset: number;
+  point: PreviewWorldPoint | null;
+  dragging?: boolean;
+  axis: PreviewAxis;
+  position: number;
+  thickness: number;
+  bounds: PreviewWorldPoint | null;
+}
+
+export interface SlicePreview {
+  toggleSlice(): boolean;
+  isSliceActive(): boolean;
+  setSlicePlane(normal: PreviewWorldPoint, offset?: number): SliceState;
+  setSliceOffset(offset: number): SliceState;
+  resetSlicePlane(): SliceState;
+  getSliceState(): SliceState;
+  observeSlice?(callback: () => void): () => void;
+}
+
 export interface DisassemblyPreview {
   toggleDisassembly(): boolean;
   resetDisassembly(): void;
@@ -337,6 +360,15 @@ export function supportsMeasurementPreview(preview: unknown): preview is Measure
     && hasMethod(preview, "getMeasurementState")
     && hasMethod(preview, "updateMeasurementLabels")
     && hasMethod(preview, "exportMeasurements");
+}
+
+export function supportsSlicePreview(preview: unknown): preview is SlicePreview {
+  return hasMethod(preview, "toggleSlice")
+    && hasMethod(preview, "isSliceActive")
+    && hasMethod(preview, "setSlicePlane")
+    && hasMethod(preview, "setSliceOffset")
+    && hasMethod(preview, "resetSlicePlane")
+    && hasMethod(preview, "getSliceState");
 }
 
 export function supportsDisassemblyPreview(preview: unknown): preview is DisassemblyPreview {

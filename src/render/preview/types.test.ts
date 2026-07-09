@@ -9,6 +9,7 @@ import {
   supportsMeasurementPreview,
   supportsOrientationGizmoPreview,
   supportsRenderScalePreview,
+  supportsSlicePreview,
   supportsWireframePreview,
   supportsWorkbenchPreview,
 } from "./types";
@@ -35,6 +36,7 @@ describe("preview capability guards", () => {
     })).toBe(false);
     expect(supportsOrientationGizmoPreview({ toggleOrientationGizmo: true })).toBe(false);
     expect(supportsRenderScalePreview({ setRenderScale: 1 })).toBe(false);
+    expect(supportsSlicePreview({ toggleSlice: () => true, isSliceActive: false })).toBe(false);
     expect(supportsWireframePreview({ toggleWireframe: "yes" })).toBe(false);
   });
 
@@ -57,6 +59,50 @@ describe("preview capability guards", () => {
     })).toBe(true);
     expect(supportsOrientationGizmoPreview({ toggleOrientationGizmo: () => true })).toBe(true);
     expect(supportsRenderScalePreview({ setRenderScale: () => 1 })).toBe(true);
+    expect(supportsSlicePreview({
+      toggleSlice: () => true,
+      isSliceActive: () => false,
+      setSlicePlane: () => ({
+        active: false,
+        normal: { x: 0, y: 0, z: 1 },
+        offset: 0.5,
+        point: null,
+        axis: "z",
+        position: 0.5,
+        thickness: 0.08,
+        bounds: null,
+      }),
+      setSliceOffset: () => ({
+        active: false,
+        normal: { x: 0, y: 0, z: 1 },
+        offset: 0.5,
+        point: null,
+        axis: "z",
+        position: 0.5,
+        thickness: 0.08,
+        bounds: null,
+      }),
+      resetSlicePlane: () => ({
+        active: false,
+        normal: { x: 0, y: 0, z: 1 },
+        offset: 0.5,
+        point: null,
+        axis: "z",
+        position: 0.5,
+        thickness: 0.08,
+        bounds: null,
+      }),
+      getSliceState: () => ({
+        active: false,
+        normal: { x: 0, y: 0, z: 1 },
+        offset: 0.5,
+        point: null,
+        axis: "z",
+        position: 0.5,
+        thickness: 0.08,
+        bounds: null,
+      }),
+    })).toBe(true);
     expect(supportsWireframePreview({ toggleWireframe: () => true })).toBe(true);
     expect(supportsWorkbenchPreview({
       setExplode: () => undefined,

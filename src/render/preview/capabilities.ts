@@ -9,6 +9,7 @@ import {
   supportsMeasurementPreview,
   supportsOrientationGizmoPreview,
   supportsRenderScalePreview,
+  supportsSlicePreview,
   supportsWireframePreview,
   supportsWorkbenchPreview,
   type PreviewCapabilityId,
@@ -28,6 +29,7 @@ export function collectPreviewCapabilities(preview: unknown): PreviewCapabilityI
   if (supportsWireframePreview(preview)) capabilities.push("wireframe");
   if (supportsOrientationGizmoPreview(preview)) capabilities.push("orientation-gizmo");
   if (supportsBoundingBoxPreview(preview)) capabilities.push("bounding-box");
+  if (supportsSlicePreview(preview)) capabilities.push("slice");
   if (supportsRenderScalePreview(preview)) capabilities.push("render-scale");
   if (supportsCameraZoomPreview(preview)) capabilities.push("camera-zoom");
   if (supportsWorkbenchPreview(preview)) capabilities.push("workbench");
@@ -83,6 +85,7 @@ export function describePreviewRouteCapabilities(route: PreviewRouteDecision): P
       "wireframe",
       "orientation-gizmo",
       "bounding-box",
+      "slice",
       "render-scale",
       "camera-zoom",
       "workbench",
@@ -99,6 +102,7 @@ export function describePreviewRouteCapabilities(route: PreviewRouteDecision): P
     "wireframe",
     "orientation-gizmo",
     "bounding-box",
+    "slice",
     "render-scale",
     "camera-zoom",
     "workbench",

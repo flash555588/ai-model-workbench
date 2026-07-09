@@ -12,6 +12,8 @@
 - UI: keep the measurement strip in Free pick status while Alt/Option previewing the backup free ruler path, even when the pointer is over empty canvas space.
 - UI: cap selected-object corner snapping by target edge scale so large grouped selections do not over-prioritize distant vertices when the pointer is closer to an edge.
 - UI: reset snap status when measurements are cleared so the ruler strip does not report stale snapping after returning to an empty ready state.
+- UI: refresh the measurement preview when Alt/Option is pressed or released so the backup free-pick path updates without requiring a mouse move.
+- UI: refactor the Slice tool for Three.js and Babylon previews around a draggable cutting plane with touch-capable canvas manipulation, view-aligned reset, single-plane clipping, and a compact plane status panel instead of X/Y/Z axis sliders.
 - Performance: cache selected-target measurement snap candidates while measuring so hover previews do not repeatedly rebuild vertex and edge lists for the same object.
 - Performance: validate selected-target measurement snap caches against target mesh signatures so transformed or updated geometry rebuilds snap candidates instead of reusing stale vertex and edge lists.
 - UI: restyle distance measurements as orthographic drawing-style dimension callouts with extension lines, arrowheads, and compact drafting labels instead of thick freehand ruler lines.

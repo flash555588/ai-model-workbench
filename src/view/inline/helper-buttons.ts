@@ -13,6 +13,7 @@ import {
   supportsOrientationGizmoPreview,
   supportsRenderScalePreview,
   supportsMeasurementPreview,
+  supportsSlicePreview,
   supportsWireframePreview,
 } from "../../render/preview/types";
 import type {
@@ -29,6 +30,8 @@ import type {
   MeasurementState,
   MeasurementUnit,
   WireframePreview,
+  SlicePreview,
+  SliceState,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
 import { getPortableStem } from "../../utils/resolve-path";
@@ -102,7 +105,7 @@ export type SnapshotProvider =
     | "exportModelInfo"
     | "exportSelectedPartInfo"
   >>
-  & Partial<AnimationPreview & BoundingBoxPreview & CameraZoomPreview & DisassemblyPreview & FocusSelectionPreview & MeasurementPreview & OrientationGizmoPreview & RenderScalePreview & WireframePreview>;
+  & Partial<AnimationPreview & BoundingBoxPreview & CameraZoomPreview & DisassemblyPreview & FocusSelectionPreview & MeasurementPreview & OrientationGizmoPreview & RenderScalePreview & SlicePreview & WireframePreview>;
 
 /** Handle returned by createHelperButtons — callers hold a direct reference. */
 export interface HelperToolbar {
@@ -185,6 +188,8 @@ export function createHelperButtons(
   const zoomControl = createCameraZoomControl(previewHost, getPreview);
   let boundMeasurementPreview: MeasurementPreview | null = null;
   let releaseMeasurementObserver: (() => void) | null = null;
+  let boundSlicePreview: SlicePreview | null = null;
+  let releaseSliceObserver: (() => void) | null = null;
 
   const markSecondary = <T extends HTMLButtonElement>(button: T): T => {
     button.classList.add("is-secondary");
@@ -255,9 +260,11 @@ export function createHelperButtons(
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
     const disassemblyPreview = preview && supportsDisassemblyPreview(preview) ? preview : null;
     const measurementPreview = preview && supportsMeasurementPreview(preview) ? preview : null;
+    const slicePreview = preview && supportsSlicePreview(preview) ? preview : null;
     setTogglePressed(focusBtn, !!focusPreview?.isFocusSelectionEnabled());
     setTogglePressed(disassembleBtn, !!disassemblyPreview?.isDisassemblyEnabled());
     setTogglePressed(measureBtn, !!measurementPreview?.isMeasurementActive());
+    setTogglePressed(sliceBtn, !!slicePreview?.isSliceActive());
     if (preview && supportsOrientationGizmoPreview(preview)) {
       setTogglePressed(gizmoBtn, !!preview.isOrientationGizmoEnabled?.());
     }
@@ -284,12 +291,14 @@ export function createHelperButtons(
       toggleCapabilityButton(focusBtn, !!focusPreview);
       toggleCapabilityButton(disassembleBtn, !!disassemblyPreview);
       toggleCapabilityButton(resBtn, !!renderScalePreview);
+      toggleCapabilityButton(sliceBtn, !!preview && supportsSlicePreview(preview));
       toggleCapabilityButton(animBtn, !!animationPreview?.hasAnimations());
     }
     syncRenderScaleButton(renderScalePreview);
     toggleCapabilityButton(measureBtn, !!preview && supportsMeasurementPreview(preview));
     syncToggleStates();
     syncMeasurementDetails();
+    syncSliceDetails();
     syncGroupVisibility();
     zoomControl.sync();
   };
@@ -425,6 +434,22 @@ export function createHelperButtons(
     const on = preview.toggleDisassembly();
     syncCapabilities();
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
+  });
+
+  // Slice mode toggle button (stacked section planes)
+  const sliceBtn = inspectGroup.createEl("button", {
+    cls: "ai3d-inline-btn ai3d-slice-btn is-hidden",
+    attr: { "aria-label": t("helper.toggleSliceLabel"), "aria-pressed": "false" },
+  });
+  setAction(sliceBtn, "toggle-slice");
+  sliceBtn.appendChild(createSvgIcon(`<path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 17l8 4 8-4"/><path d="M4 12l3-1.5"/><path d="M17 10.5l3 1.5"/>`));
+  sliceBtn.createSpan({ cls: "ai3d-slice-btn-text", text: t("helper.sliceButtonText") });
+  sliceBtn.addEventListener("click", () => {
+    const preview = getPreview();
+    if (!preview || !supportsSlicePreview(preview)) return;
+    const active = preview.toggleSlice();
+    syncCapabilities();
+    showTooltip(sliceBtn, active ? t("helper.sliceOn") : t("helper.sliceOff"));
   });
 
   // Render scale cycle button (canvas resolution percentage, not model size)
@@ -1021,6 +1046,84 @@ export function createHelperButtons(
     if (measurementStrip.classList.contains("is-hidden")) return;
     setMeasurementDetailsOpen(measurementDetails.classList.contains("is-hidden"), measurementStrip);
   });
+
+  const sliceDetails = toolbar.createDiv({ cls: "ai3d-slice-details is-hidden" });
+  sliceDetails.setAttribute("role", "group");
+  sliceDetails.setAttribute("aria-label", t("helper.sliceTitle"));
+  sliceDetails.addEventListener("pointerdown", stopToolbarEvent);
+  sliceDetails.addEventListener("mousedown", stopToolbarEvent);
+  sliceDetails.addEventListener("click", stopToolbarEvent);
+  const sliceHeader = sliceDetails.createDiv({ cls: "ai3d-slice-header" });
+  sliceHeader.createSpan({ cls: "ai3d-slice-title", text: t("helper.sliceTitle") });
+  const sliceSummary = sliceHeader.createSpan({ cls: "ai3d-slice-summary" });
+  const sliceResetBtn = sliceHeader.createEl("button", {
+    cls: "ai3d-slice-reset-btn",
+    attr: { type: "button", "aria-label": t("helper.sliceReset") },
+  });
+  sliceResetBtn.appendChild(createSvgIcon(`<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>`));
+  const sliceOffsetRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
+  sliceOffsetRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceOffsetLabel") });
+  const sliceOffsetValue = sliceOffsetRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-offset-value" });
+  const sliceNormalRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
+  sliceNormalRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceNormalLabel") });
+  const sliceNormalValue = sliceNormalRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-normal-value" });
+
+  function formatSlicePercent(value: number): string {
+    const percent = Math.round(Math.max(0, Math.min(value, 1)) * 1000) / 10;
+    return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(1)}%`;
+  }
+
+  function formatSliceNumber(value: number): string {
+    if (!Number.isFinite(value)) return "0.00";
+    const rounded = Math.round(value * 100) / 100;
+    return rounded.toFixed(2);
+  }
+
+  function formatSliceNormal(state: SliceState): string {
+    return `${formatSliceNumber(state.normal.x)}, ${formatSliceNumber(state.normal.y)}, ${formatSliceNumber(state.normal.z)}`;
+  }
+
+  function getSlicePreview(): SlicePreview | null {
+    const preview = getPreview();
+    return preview && supportsSlicePreview(preview) ? preview : null;
+  }
+
+  function resetSliceControls(): void {
+    const preview = getSlicePreview();
+    if (!preview) return;
+    preview.resetSlicePlane();
+    syncSliceDetails();
+  }
+
+  function bindSlicePreview(preview: SlicePreview | null): void {
+    if (preview === boundSlicePreview) return;
+    releaseSliceObserver?.();
+    releaseSliceObserver = null;
+    boundSlicePreview = preview;
+    if (preview?.observeSlice) {
+      releaseSliceObserver = preview.observeSlice(() => {
+        syncToggleStates();
+        syncSliceDetails();
+      });
+    }
+  }
+
+  function syncSliceDetails(): void {
+    const preview = getSlicePreview();
+    bindSlicePreview(preview);
+    if (!preview) {
+      sliceDetails.classList.add("is-hidden");
+      return;
+    }
+    const state: SliceState = preview.getSliceState();
+    setTogglePressed(sliceBtn, state.active);
+    sliceDetails.classList.toggle("is-hidden", !state.active);
+    sliceOffsetValue.textContent = formatSlicePercent(state.offset);
+    sliceNormalValue.textContent = formatSliceNormal(state);
+    sliceSummary.textContent = state.dragging ? t("helper.sliceDragging") : t("helper.sliceReady");
+  }
+
+  sliceResetBtn.addEventListener("click", resetSliceControls);
 
 
   renderToolbarButtons();

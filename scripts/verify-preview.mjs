@@ -425,6 +425,7 @@ const toolbarLabels = {
   wireframe: "Toggle wireframe",
   axes: "Toggle orientation axes",
   boundingBox: "Toggle bounding box",
+  slice: "Slice model",
   resolution: "Change render scale",
   measurement: "Measure selected object; Alt/Option-click for free pick",
   copyMeasurements: "Copy measurements",
@@ -749,6 +750,103 @@ async function verifyHelperToolbar(page) {
 
   const bboxBtn = await getToolbarButton(page, toolbarLabels.boundingBox);
   await verifyToggleButton(bboxBtn, "Bounding box");
+
+  const beforeSliceSnapshot = await page.evaluate(() => window.__ai3dPreview?.captureSnapshot?.() ?? "");
+  const sliceBtn = await getToolbarButton(page, toolbarLabels.slice);
+  const sliceButtonText = ((await sliceBtn.textContent()) ?? "").trim();
+  assert(sliceButtonText.includes("Slice"), `Slice toolbar button is not visibly labeled: ${sliceButtonText}`);
+  await sliceBtn.click();
+  await page.waitForTimeout(150);
+  const sliceDetails = page.locator(".ai3d-helper-toolbar > .ai3d-slice-details:not(.is-hidden)").first();
+  await sliceDetails.waitFor({ timeout: 5000 });
+  let sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(
+    sliceState?.active === true &&
+      typeof sliceState.offset === "number" &&
+      Math.abs(sliceState.offset - 0.5) < 0.001 &&
+      sliceState.normal &&
+      Number.isFinite(sliceState.normal.x) &&
+      Number.isFinite(sliceState.normal.y) &&
+      Number.isFinite(sliceState.normal.z),
+    `Slice mode did not activate with default state: ${JSON.stringify(sliceState)}`,
+  );
+  assert(
+    await sliceBtn.evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
+    "Slice toolbar button did not show active state",
+  );
+  let sliceOverlayState = await page.evaluate(() => ({
+    planes: window.__ai3dPreview?.sliceOverlayPlanes?.length ?? 0,
+    lines: window.__ai3dPreview?.sliceOverlayLines?.length ?? 0,
+  }));
+  assert(
+    sliceOverlayState.planes >= 1 && sliceOverlayState.lines >= 2,
+    `Slice overlay planes/frames were not created: ${JSON.stringify(sliceOverlayState)}`,
+  );
+  const planeButtons = await sliceDetails.locator(".ai3d-slice-plane-btn").count();
+  const rangeInputs = await sliceDetails.locator(".ai3d-slice-range").count();
+  const numericInputs = await sliceDetails.locator(".ai3d-slice-number").count();
+  const presetButtons = await sliceDetails.locator(".ai3d-slice-preset-btn").count();
+  assert(
+    planeButtons === 0 && rangeInputs === 0 && numericInputs === 0 && presetButtons === 0,
+    `Slice inspector still exposed axis/progress controls: ${JSON.stringify({ planeButtons, rangeInputs, numericInputs, presetButtons })}`,
+  );
+  const offsetText = (await sliceDetails.locator(".ai3d-slice-offset-value").textContent()) ?? "";
+  const normalText = (await sliceDetails.locator(".ai3d-slice-normal-value").textContent()) ?? "";
+  assert(
+    offsetText.includes("50%") && normalText.split(",").length === 3,
+    `Slice plane status was incomplete: ${JSON.stringify({ offsetText, normalText })}`,
+  );
+
+  const sliceOffsetBeforeDrag = sliceState.offset;
+  const canvasBox = await page.locator("canvas").first().boundingBox();
+  assert(canvasBox, "Preview canvas bounding box was unavailable for slice drag");
+  const startX = Math.round(canvasBox.x + canvasBox.width * 0.5);
+  const startY = Math.round(canvasBox.y + canvasBox.height * 0.5);
+  await page.locator("canvas").first().evaluate((canvas, point) => {
+    const target = canvas;
+    const options = {
+      pointerId: 41,
+      pointerType: "touch",
+      isPrimary: true,
+      clientX: point.startX,
+      clientY: point.startY,
+      button: 0,
+      buttons: 1,
+      bubbles: true,
+      cancelable: true,
+    };
+    target.dispatchEvent(new PointerEvent("pointerdown", options));
+    target.dispatchEvent(new PointerEvent("pointermove", { ...options, clientY: point.startY - 96 }));
+    target.dispatchEvent(new PointerEvent("pointerup", { ...options, clientY: point.startY - 96, buttons: 0 }));
+  }, { startX, startY });
+  await page.waitForTimeout(150);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(
+    sliceState?.active === true &&
+      Math.abs(sliceState.offset - sliceOffsetBeforeDrag) > 0.01,
+    `Touch drag did not move the cutting plane: ${JSON.stringify({ before: sliceOffsetBeforeDrag, after: sliceState })}`,
+  );
+  const afterSliceSnapshot = await page.evaluate(() => window.__ai3dPreview?.captureSnapshot?.() ?? "");
+  assert(
+    beforeSliceSnapshot.startsWith("data:image/png;base64,") &&
+      afterSliceSnapshot.startsWith("data:image/png;base64,") &&
+      beforeSliceSnapshot !== afterSliceSnapshot,
+    "Slice activation did not change the rendered preview snapshot",
+  );
+  const sliceSummary = (await sliceDetails.locator(".ai3d-slice-summary").textContent()) ?? "";
+  assert(sliceSummary.includes("Plane"), `Slice summary did not reflect plane state: ${sliceSummary}`);
+  await sliceBtn.click();
+  await page.waitForTimeout(100);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(sliceState?.active === false, `Slice mode did not turn off: ${JSON.stringify(sliceState)}`);
+  sliceOverlayState = await page.evaluate(() => ({
+    planes: window.__ai3dPreview?.sliceOverlayPlanes?.length ?? 0,
+    lines: window.__ai3dPreview?.sliceOverlayLines?.length ?? 0,
+  }));
+  assert(
+    sliceOverlayState.planes === 0 && sliceOverlayState.lines === 0,
+    `Slice overlay planes/frames were not removed after toggle off: ${JSON.stringify(sliceOverlayState)}`,
+  );
 
   const resBtn = await getToolbarButton(page, toolbarLabels.resolution);
   const beforeText = (await resBtn.textContent())?.trim();

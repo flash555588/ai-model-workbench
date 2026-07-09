@@ -6,6 +6,8 @@ import {
   CanvasTexture,
   Color,
   DirectionalLight,
+  DoubleSide,
+  Float32BufferAttribute,
   GridHelper,
   HemisphereLight,
   Light,
@@ -21,6 +23,7 @@ import {
   OrthographicCamera,
   PCFSoftShadowMap,
   PerspectiveCamera,
+  Plane as ThreePlane,
   PlaneGeometry,
   PointLight,
   PMREMGenerator,
@@ -62,6 +65,7 @@ import { createStagedEl } from "../../utils/dom";
 import {
   createPreviewBounds,
   getPreviewBoundsCenter,
+  getPreviewBoundsRadius,
   getPreviewBoundsSize,
   type PreviewBounds,
 } from "../preview/bounds";
@@ -83,6 +87,7 @@ import type {
   MeasurementState,
   CameraZoomState,
   PreviewQualitySnapshot,
+  SliceState,
 } from "../preview/types";
 import {
   throwIfPreviewLoadInterrupted,
@@ -93,7 +98,12 @@ import {
   formatAnnotationCameraStateKey,
   projectNormalizedDevicePointToCanvas,
 } from "../preview/annotation-projection";
-import { createPreviewLineOfSight, isPreviewHitOccluded, toPreviewWorldPoint } from "../preview/geometry";
+import {
+  createPreviewLineOfSight,
+  isPreviewHitOccluded,
+  normalizePreviewWorldPoint,
+  toPreviewWorldPoint,
+} from "../preview/geometry";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import { createPreviewEvidence } from "../preview/evidence";
 import {
@@ -119,6 +129,21 @@ import {
   type MeasurementReading,
   type MeasurementRecord,
 } from "../preview/measurement";
+import {
+  createSlicePlaneGeometry,
+  createSliceRange,
+  createSliceClipPlanes,
+  createSliceState,
+  DEFAULT_SLICE_NORMAL,
+  DEFAULT_SLICE_OFFSET,
+  DEFAULT_SLICE_THICKNESS,
+  normalizeSliceAxis,
+  normalizeSliceNormal,
+  normalizeSliceOffset,
+  normalizeSliceThickness,
+  type SlicePlaneGeometry,
+  type SliceRange,
+} from "../preview/slice";
 import { createThreeDisassemblyController } from "./disassembly";
 import { ThreeFocusDimMaterialCache } from "./focus-materials";
 import { setThreeExplode, resetThreeExplode } from "./explode";
@@ -173,8 +198,28 @@ const MEASUREMENT_MARKER_COLOR = 0xf8fafc;
 const MEASUREMENT_PENDING_COLOR = 0xf59e0b;
 const MEASUREMENT_HOVER_COLOR = 0xffffff;
 const MEASUREMENT_PREVIEW_COLOR = 0xe5e7eb;
+const SLICE_PLANE_COLOR = 0x38bdf8;
+const SLICE_FRAME_COLOR = 0x93c5fd;
+const SLICE_CENTER_FRAME_COLOR = 0xe0f2fe;
+const SLICE_PLANE_OPACITY = 0.12;
+const SLICE_FRAME_OPACITY = 0.84;
 
 type ThreeMeasurementSegment = { start: Vector3; end: Vector3; line: LineSegments; label: Sprite };
+type ThreeSliceDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startOffset: number;
+  screenAxis: Vector2;
+  pixelsToOffset: number;
+  moved: boolean;
+};
+type ThreeMaterialClippingSnapshot = {
+  material: Material;
+  clippingPlanes: Material["clippingPlanes"];
+  clipIntersection: Material["clipIntersection"];
+  clipShadows: Material["clipShadows"];
+};
 
 type DisposalReason = "initial" | "model-switch" | "destroy";
 
@@ -275,6 +320,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private bboxEnabled = false;
   private wireframeEnabled = false;
   private wireframeOriginalMaterials = new Map<number, Material | Material[]>();
+  private sliceActive = false;
+  private sliceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+  private sliceOffset = DEFAULT_SLICE_OFFSET;
+  private sliceThickness = DEFAULT_SLICE_THICKNESS;
+  private slicePlanes: ThreePlane[] = [];
+  private sliceOverlayPlanes: Mesh[] = [];
+  private sliceOverlayLines: LineSegments[] = [];
+  private sliceDragState: ThreeSliceDragState | null = null;
+  private readonly sliceObservers = new Set<() => void>();
+  private readonly sliceOriginalMaterialClipping = new Map<string, ThreeMaterialClippingSnapshot>();
+  private sliceOriginalLocalClippingEnabled: boolean | null = null;
   private sceneConfig: SceneConfig = {};
   private focusSelectionEnabled = false;
   private explodeStateActive = false;
@@ -366,11 +422,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
   };
   private readonly handlePointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.isPrimary === false) return;
+    if (this.sliceActive && this.beginSliceDrag(event)) return;
     this.lastPointerDown = { x: event.clientX, y: event.clientY };
     this.prepareInteractiveFrameBudget();
   };
   private readonly handlePointerUp = (event: PointerEvent) => {
     if (event.button !== 0 || event.isPrimary === false) return;
+    if (this.endSliceDrag(event)) return;
+    this.lastPointerClient = { x: event.clientX, y: event.clientY, altKey: event.altKey };
     const down = this.lastPointerDown;
     this.lastPointerDown = null;
     if (!down) return;
@@ -380,6 +439,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   };
   private readonly handlePointerMove = (event: PointerEvent) => {
     this.lastPointerClient = { x: event.clientX, y: event.clientY, altKey: event.altKey };
+    if (this.updateSliceDrag(event)) return;
     if (event.buttons & 1) {
       this.prepareInteractiveFrameBudget();
     }
@@ -410,6 +470,16 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.hoveredMarkerIndex = newHover;
       this.markDirty();
     }
+  };
+  private readonly handlePointerCancel = (event: PointerEvent) => {
+    this.endSliceDrag(event, true);
+  };
+  private readonly handleMeasurementModifierKey = (event: KeyboardEvent) => {
+    if (event.key !== "Alt") return;
+    this.updateMeasurementModifierAltKey(event.type === "keydown");
+  };
+  private readonly handleMeasurementModifierBlur = () => {
+    this.updateMeasurementModifierAltKey(false);
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -458,8 +528,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     canvas.addEventListener("pointerdown", this.handlePointerDown);
     canvas.addEventListener("pointerup", this.handlePointerUp);
     canvas.addEventListener("pointermove", this.handlePointerMove);
+    canvas.addEventListener("pointercancel", this.handlePointerCancel);
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
     canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
+    window.addEventListener("keydown", this.handleMeasurementModifierKey);
+    window.addEventListener("keyup", this.handleMeasurementModifierKey);
+    window.addEventListener("blur", this.handleMeasurementModifierBlur);
 
     this.resizeRenderer();
     this.startRenderLoop();
@@ -513,6 +587,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.captureMeasurementBaseState(root, rootBounds);
       this.updateShadowFraming(rootBounds);
       this.syncSceneHelpers();
+      this.syncSliceClipping();
+      this.notifySliceChanged();
       this.markDirty();
 
       if (animations.length > 0) {
@@ -575,6 +651,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.renderObservers.clear();
     this.cameraZoomObservers.clear();
     this.measurementObservers.clear();
+    this.sliceObservers.clear();
     this.disassembly?.dispose();
     this.disassembly = null;
     this.disassemblySetup = false;
@@ -593,12 +670,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls.removeEventListener("change", this.handleControlsChange);
     this.controls.dispose();
     const canvas = this.renderer.domElement;
+    canvas.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
     canvas.removeEventListener("wheel", this.preventCanvasWheelScroll);
     canvas.removeEventListener("pointerdown", this.handlePointerDown);
     canvas.removeEventListener("pointerup", this.handlePointerUp);
     canvas.removeEventListener("pointermove", this.handlePointerMove);
+    canvas.removeEventListener("pointercancel", this.handlePointerCancel);
     canvas.removeEventListener("webglcontextlost", this.handleContextLost);
     canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
+    window.removeEventListener("keydown", this.handleMeasurementModifierKey);
+    window.removeEventListener("keyup", this.handleMeasurementModifierKey);
+    window.removeEventListener("blur", this.handleMeasurementModifierBlur);
     this.resizeObs.disconnect();
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
@@ -747,6 +829,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     if (nextEnabled) {
       this.deactivateMeasurementMode();
+      this.deactivateSliceMode();
     }
     this.focusSelectionEnabled = nextEnabled;
     if (!this.focusSelectionEnabled) {
@@ -769,6 +852,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (enabled === this.wireframeEnabled) return;
     this.wireframeEnabled = enabled;
     this.applyWireframe(enabled);
+    this.syncSliceClipping();
     this.markDirty();
   }
 
@@ -848,6 +932,93 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return !!this.bboxHelper;
   }
 
+  toggleSlice(): boolean {
+    if (this.sliceActive) {
+      this.deactivateSliceMode();
+      return false;
+    }
+    if (this.disassembly?.isEnabled()) {
+      this.disassembly.setEnabled(false);
+    }
+    this.deactivateMeasurementMode();
+    if (this.focusSelectionEnabled) {
+      this.focusSelectionEnabled = false;
+      this.clearFocusedMesh();
+      this.clearSelectionHighlight();
+    }
+    this.alignSlicePlaneToCamera();
+    this.sliceActive = true;
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.sliceActive;
+  }
+
+  isSliceActive(): boolean {
+    return this.sliceActive;
+  }
+
+  setSlicePlane(normal: PreviewWorldPoint, offset = this.sliceOffset): SliceState {
+    const normalized = normalizeSliceNormal(normal);
+    this.sliceNormal.set(normalized.x, normalized.y, normalized.z);
+    this.sliceOffset = normalizeSliceOffset(offset);
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  setSliceOffset(offset: number): SliceState {
+    this.sliceOffset = normalizeSliceOffset(offset);
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  resetSlicePlane(): SliceState {
+    this.alignSlicePlaneToCamera();
+    this.sliceOffset = DEFAULT_SLICE_OFFSET;
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  setSliceAxis(axis: PreviewAxis): SliceState {
+    const normalizedAxis = normalizeSliceAxis(axis);
+    return this.setSlicePlane({
+      x: normalizedAxis === "x" ? 1 : 0,
+      y: normalizedAxis === "y" ? 1 : 0,
+      z: normalizedAxis === "z" ? 1 : 0,
+    });
+  }
+
+  setSlicePosition(position: number): SliceState {
+    return this.setSliceOffset(position);
+  }
+
+  setSliceThickness(thickness: number): SliceState {
+    this.sliceThickness = normalizeSliceThickness(thickness);
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  getSliceState(): SliceState {
+    return createSliceState(
+      this.sliceActive,
+      toPreviewWorldPoint(this.sliceNormal),
+      this.sliceOffset,
+      this.getRootPreviewBounds(),
+      !!this.sliceDragState,
+      this.sliceThickness,
+    );
+  }
+
+  observeSlice(callback: () => void): () => void {
+    this.sliceObservers.add(callback);
+    callback();
+    return () => {
+      this.sliceObservers.delete(callback);
+    };
+  }
+
   hasAnimations(): boolean {
     return this.mixer !== null;
   }
@@ -868,6 +1039,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (this.disassembly?.isEnabled()) {
       this.disassembly.setEnabled(false);
     }
+    this.deactivateSliceMode();
     const measurementTarget = this.getCurrentMeasurementTargetObject();
     this.clearSelectionHighlight();
     if (this.focusSelectionEnabled) {
@@ -1285,6 +1457,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearFocusedMesh();
       this.clearSelectionHighlight();
       this.deactivateMeasurementMode();
+      this.deactivateSliceMode();
     }
     const enabled = this.disassembly.setEnabled(nextEnabled);
     if (!enabled) {
@@ -2209,6 +2382,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.invalidateMeshCache();
     this.markDirty();
     this.clearFocusedMesh();
+    this.renderer.domElement.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
+    this.restoreSliceMaterialClipping();
+    this.restoreSliceLocalClippingEnabled();
+    this.disposeSliceOverlay(false);
     this.clearSelectionHighlight();
     this.disposeMeasurementOverlays(true);
     this.resetMeasurementCalibrationState();
@@ -2498,6 +2675,307 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return this.cachedRootPreviewBounds;
   }
 
+  private getSliceRange(): SliceRange | null {
+    return createSliceRange(this.getRootPreviewBounds(), {
+      normal: toPreviewWorldPoint(this.sliceNormal),
+      offset: this.sliceOffset,
+    });
+  }
+
+  private alignSlicePlaneToCamera(): void {
+    const normal = new Vector3();
+    this.camera.getWorldDirection(normal);
+    if (!Number.isFinite(normal.lengthSq()) || normal.lengthSq() <= Number.EPSILON) {
+      normal.set(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+    }
+    normal.normalize();
+    this.sliceNormal.copy(normal);
+  }
+
+  private deactivateSliceMode(): boolean {
+    if (!this.sliceActive && !this.sliceDragState) return false;
+    this.endSliceDrag(null, true);
+    this.sliceActive = false;
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return true;
+  }
+
+  private beginSliceDrag(event: PointerEvent): boolean {
+    if (!this.rootObject || !this.sliceActive) return false;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const pixelsToOffset = 1 / Math.max(Math.min(rect.width, rect.height) * 0.72, 1);
+    this.sliceDragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startOffset: this.sliceOffset,
+      screenAxis: this.getSliceScreenAxis(),
+      pixelsToOffset,
+      moved: false,
+    };
+    this.lastPointerDown = null;
+    this.controls.enabled = false;
+    this.renderer.domElement.classList.add("ai3d-slice-dragging");
+    try {
+      this.renderer.domElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Programmatic or canceled touch sequences may not have a capturable pointer.
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    this.prepareInteractiveFrameBudget();
+    this.notifySliceChanged();
+    return true;
+  }
+
+  private updateSliceDrag(event: PointerEvent): boolean {
+    const state = this.sliceDragState;
+    if (!state || state.pointerId !== event.pointerId) return false;
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    const delta = dx * state.screenAxis.x + dy * state.screenAxis.y;
+    const nextOffset = normalizeSliceOffset(state.startOffset + delta * state.pixelsToOffset);
+    const moved = Math.hypot(dx, dy) > 2;
+    state.moved = state.moved || moved;
+    event.preventDefault();
+    event.stopPropagation();
+    this.prepareInteractiveFrameBudget();
+    if (Math.abs(nextOffset - this.sliceOffset) <= 0.0005) return true;
+    this.sliceOffset = nextOffset;
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return true;
+  }
+
+  private endSliceDrag(event: PointerEvent | null, cancelled = false): boolean {
+    const state = this.sliceDragState;
+    if (!state) return false;
+    if (event && state.pointerId !== event.pointerId) return false;
+    this.sliceDragState = null;
+    this.controls.enabled = true;
+    this.renderer.domElement.classList.remove("ai3d-slice-dragging");
+    if (event) {
+      try {
+        this.renderer.domElement.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be gone after canceled touch/pointer sequences.
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (!cancelled || state.moved) {
+      this.notifySliceChanged();
+    }
+    this.markDirty();
+    return true;
+  }
+
+  private getSliceScreenAxis(): Vector2 {
+    const range = this.getSliceRange();
+    const bounds = this.getRootPreviewBounds();
+    if (!range || !bounds) return new Vector2(0, -1);
+    const radius = Math.max(getPreviewBoundsRadius(bounds), range.span * 0.25, Number.EPSILON);
+    const center = new Vector3(range.point.x, range.point.y, range.point.z);
+    const normal = new Vector3(range.normal.x, range.normal.y, range.normal.z).normalize();
+    const projectedCenter = center.clone().project(this.camera);
+    const projectedNormal = center.clone().add(normal.multiplyScalar(radius * 0.35)).project(this.camera);
+    const axis = new Vector2(
+      projectedNormal.x - projectedCenter.x,
+      -(projectedNormal.y - projectedCenter.y),
+    );
+    if (!Number.isFinite(axis.lengthSq()) || axis.lengthSq() <= 0.000001) {
+      return new Vector2(0, -1);
+    }
+    return axis.normalize();
+  }
+
+  private createThreeSlicePlanes(range: SliceRange | null): ThreePlane[] {
+    const planes = createSliceClipPlanes(range, "three");
+    return planes?.map((plane) => new ThreePlane(
+      new Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
+      plane.constant,
+    )) ?? [];
+  }
+
+  private syncSliceClipping(): void {
+    this.renderer.domElement.classList.toggle("ai3d-slice-active", this.sliceActive);
+    if (!this.rootObject || !this.sliceActive) {
+      this.restoreSliceMaterialClipping();
+      this.disposeSliceOverlay();
+      this.slicePlanes = [];
+      this.restoreSliceLocalClippingEnabled();
+      this.renderer.domElement.classList.remove("ai3d-slice-dragging");
+      this.markDirty();
+      return;
+    }
+
+    const range = this.getSliceRange();
+    this.slicePlanes = this.createThreeSlicePlanes(range);
+    if (this.slicePlanes.length === 0) {
+      this.restoreSliceMaterialClipping();
+      this.disposeSliceOverlay();
+      this.restoreSliceLocalClippingEnabled();
+      this.markDirty();
+      return;
+    }
+
+    this.syncSliceOverlay(range);
+    if (this.sliceOriginalLocalClippingEnabled === null) {
+      this.sliceOriginalLocalClippingEnabled = this.renderer.localClippingEnabled;
+    }
+    this.renderer.localClippingEnabled = true;
+    const activeMaterialIds = new Set<string>();
+    for (const mesh of this.getRenderableMeshes(this.rootObject)) {
+      for (const material of materialList(mesh.material)) {
+        activeMaterialIds.add(material.uuid);
+        if (!this.sliceOriginalMaterialClipping.has(material.uuid)) {
+          this.sliceOriginalMaterialClipping.set(material.uuid, {
+            material,
+            clippingPlanes: material.clippingPlanes,
+            clipIntersection: material.clipIntersection,
+            clipShadows: material.clipShadows,
+          });
+        }
+        material.clippingPlanes = this.slicePlanes;
+        material.clipIntersection = false;
+        material.clipShadows = true;
+        material.needsUpdate = true;
+      }
+    }
+
+    for (const [id, snapshot] of Array.from(this.sliceOriginalMaterialClipping.entries())) {
+      if (!activeMaterialIds.has(id)) {
+        snapshot.material.clippingPlanes = snapshot.clippingPlanes;
+        snapshot.material.clipIntersection = snapshot.clipIntersection;
+        snapshot.material.clipShadows = snapshot.clipShadows;
+        snapshot.material.needsUpdate = true;
+        this.sliceOriginalMaterialClipping.delete(id);
+      }
+    }
+    this.markDirty();
+  }
+
+  private restoreSliceMaterialClipping(): void {
+    for (const snapshot of this.sliceOriginalMaterialClipping.values()) {
+      snapshot.material.clippingPlanes = snapshot.clippingPlanes;
+      snapshot.material.clipIntersection = snapshot.clipIntersection;
+      snapshot.material.clipShadows = snapshot.clipShadows;
+      snapshot.material.needsUpdate = true;
+    }
+    this.sliceOriginalMaterialClipping.clear();
+  }
+
+  private restoreSliceLocalClippingEnabled(): void {
+    if (this.sliceOriginalLocalClippingEnabled === null) return;
+    this.renderer.localClippingEnabled = this.sliceOriginalLocalClippingEnabled;
+    this.sliceOriginalLocalClippingEnabled = null;
+  }
+
+  private syncSliceOverlay(range: SliceRange | null): void {
+    this.disposeSliceOverlay(false);
+    const bounds = this.getRootPreviewBounds();
+    if (!bounds || !range) return;
+
+    const planeGeometry = createSlicePlaneGeometry(bounds, range);
+    const plane = this.createSliceOverlayPlane(planeGeometry);
+    const frame = this.createSliceOverlayLines(planeGeometry.segments, SLICE_FRAME_COLOR, SLICE_FRAME_OPACITY);
+    const normalGuide = this.createSliceOverlayLines(this.createSliceNormalGuide(bounds, range), SLICE_CENTER_FRAME_COLOR, 0.92);
+    this.sliceOverlayPlanes.push(plane);
+    this.sliceOverlayLines.push(frame, normalGuide);
+    this.scene.add(plane, frame, normalGuide);
+  }
+
+  private createSliceOverlayPlane(plane: SlicePlaneGeometry): Mesh {
+    const geometry = new BufferGeometry();
+    const corners = plane.corners;
+    geometry.setAttribute("position", new Float32BufferAttribute([
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[1].x, corners[1].y, corners[1].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[0].x, corners[0].y, corners[0].z,
+      corners[2].x, corners[2].y, corners[2].z,
+      corners[3].x, corners[3].y, corners[3].z,
+    ], 3));
+    geometry.computeVertexNormals();
+    const material = new MeshBasicMaterial({
+      color: SLICE_PLANE_COLOR,
+      transparent: true,
+      opacity: SLICE_PLANE_OPACITY,
+      side: DoubleSide,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const mesh = new Mesh(geometry, material);
+    mesh.name = "ai3d-slice-plane";
+    mesh.renderOrder = 995;
+    return mesh;
+  }
+
+  private createSliceOverlayLines(
+    segments: Array<[PreviewWorldPoint, PreviewWorldPoint]>,
+    color: number,
+    opacity: number,
+  ): LineSegments {
+    const geometry = new BufferGeometry();
+    const positions: number[] = [];
+    for (const [start, end] of segments) {
+      positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
+    }
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    const material = new LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: false,
+    });
+    const lines = new LineSegments(geometry, material);
+    lines.name = "ai3d-slice-frame";
+    lines.renderOrder = 996;
+    return lines;
+  }
+
+  private createSliceNormalGuide(bounds: PreviewBounds, range: SliceRange): Array<[PreviewWorldPoint, PreviewWorldPoint]> {
+    const radius = Math.max(getPreviewBoundsRadius(bounds), range.span * 0.25, Number.EPSILON);
+    const normal = normalizePreviewWorldPoint(range.normal) ?? DEFAULT_SLICE_NORMAL;
+    const start = range.point;
+    const end = {
+      x: start.x + normal.x * radius * 0.26,
+      y: start.y + normal.y * radius * 0.26,
+      z: start.z + normal.z * radius * 0.26,
+    };
+    return [[start, end]];
+  }
+
+  private disposeSliceOverlay(markDirty = true): void {
+    for (const plane of this.sliceOverlayPlanes) {
+      plane.removeFromParent();
+      plane.geometry.dispose();
+      for (const material of materialList(plane.material)) {
+        material.dispose();
+      }
+    }
+    for (const line of this.sliceOverlayLines) {
+      line.removeFromParent();
+      line.geometry.dispose();
+      for (const material of materialList(line.material)) {
+        material.dispose();
+      }
+    }
+    this.sliceOverlayPlanes = [];
+    this.sliceOverlayLines = [];
+    if (markDirty) {
+      this.markDirty();
+    }
+  }
+
+  private notifySliceChanged(): void {
+    for (const callback of this.sliceObservers) {
+      callback();
+    }
+  }
+
   private ensureBoundingBoxHelper(): void {
     if (!this.rootObject) return;
     this.bboxHelper?.removeFromParent();
@@ -2551,6 +3029,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     for (const mesh of selectedMeshes) {
       this.focusedSelectedMeshes.set(mesh.id, mesh);
     }
+    this.syncSliceClipping();
     this.markDirty();
   }
 
@@ -2562,6 +3041,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.focusHelper?.removeFromParent();
     this.focusHelper = null;
     this.focusedObject = null;
+    this.syncSliceClipping();
     this.markDirty();
   }
 
@@ -2659,6 +3139,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.measurementSnapKind = kind;
     if (notify) {
       this.notifyMeasurementsChanged();
+    }
+  }
+
+  private updateMeasurementModifierAltKey(altKey: boolean): void {
+    if (this.lastPointerClient.altKey === altKey) return;
+    this.lastPointerClient = { ...this.lastPointerClient, altKey };
+    if (this.measurementActive && this.pendingPoint) {
+      this.schedulePreviewLineUpdate();
     }
   }
 
