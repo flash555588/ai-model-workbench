@@ -62,6 +62,16 @@ describe("preview capability profile", () => {
         thickness: 0.08,
         bounds: null,
       }),
+      setSliceRotation: () => ({
+        active: false,
+        normal: { x: 0, y: 1, z: 0 },
+        offset: 0.5,
+        point: null,
+        axis: "y",
+        position: 0.5,
+        thickness: 0.08,
+        bounds: null,
+      }),
       resetSlicePlane: () => ({
         active: false,
         normal: { x: 0, y: 0, z: 1 },

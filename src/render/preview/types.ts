@@ -13,6 +13,12 @@ export interface PreviewWorldPoint {
   z: number;
 }
 
+export interface PreviewEulerDegrees {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export type PreviewAxis = "x" | "y" | "z";
 
 export interface PreviewPickModifiers {
@@ -218,6 +224,7 @@ export interface MeasurementState {
   bounds: PreviewWorldPoint | null;
   targetLocked?: boolean;
   targetName?: string | null;
+  targetScope?: "model" | "part";
   snapKind?: MeasurementSnapKind | null;
 }
 
@@ -246,6 +253,7 @@ export interface SliceState {
   dragging?: boolean;
   interactionMode: SliceInteractionMode;
   tiltDegrees: number;
+  rotationDegrees?: PreviewEulerDegrees;
   axis: PreviewAxis;
   position: number;
   thickness: number;
@@ -259,6 +267,7 @@ export interface SlicePreview {
   isSliceActive(): boolean;
   setSlicePlane(normal: PreviewWorldPoint, offset?: number): SliceState;
   setSliceOffset(offset: number): SliceState;
+  setSliceRotation(rotation: PreviewEulerDegrees): SliceState;
   setSliceInteractionMode?(mode: SliceInteractionMode): SliceState;
   resetSlicePlane(): SliceState;
   getSliceState(): SliceState;
@@ -372,6 +381,7 @@ export function supportsSlicePreview(preview: unknown): preview is SlicePreview 
     && hasMethod(preview, "isSliceActive")
     && hasMethod(preview, "setSlicePlane")
     && hasMethod(preview, "setSliceOffset")
+    && hasMethod(preview, "setSliceRotation")
     && hasMethod(preview, "resetSlicePlane")
     && hasMethod(preview, "getSliceState");
 }

@@ -754,12 +754,71 @@ body {
   flex-basis: 58px;
 }
 
-.ai3d-slice-offset-value,
-.ai3d-slice-tilt-value {
-  flex: 1 1 160px;
+.ai3d-slice-number-control,
+.ai3d-slice-axis-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
+}
+
+.ai3d-slice-number-control {
+  flex: 0 1 180px;
+}
+
+.ai3d-slice-number-input {
+  width: 86px;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  background: var(--background-primary-alt);
   color: var(--text-normal);
-  overflow-wrap: anywhere;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai3d-slice-number-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+.ai3d-slice-number-unit {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai3d-slice-rotation-row {
+  align-items: flex-end;
+}
+
+.ai3d-slice-axis-control {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.ai3d-slice-axis-label {
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  font-weight: 700;
+}
+
+.ai3d-slice-axis-control .ai3d-slice-number-unit {
+  display: none;
+}
+
+.ai3d-slice-axis-x .ai3d-slice-axis-label {
+  color: #ef4444;
+}
+
+.ai3d-slice-axis-y .ai3d-slice-axis-label {
+  color: #22c55e;
+}
+
+.ai3d-slice-axis-z .ai3d-slice-axis-label {
+  color: #3b82f6;
 }
 
 .ai3d-slice-mode-row {

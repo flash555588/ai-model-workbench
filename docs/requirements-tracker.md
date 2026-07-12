@@ -155,7 +155,7 @@ future agent notes can refer to the same requirement over time.
 - Acceptance criteria:
   - `supportsMeasurementPreview()` returns true only when the full measurement contract is available.
   - Three.js and Babylon.js produce equivalent reading/export formats.
-  - Measurement mode locks the selected object, visibly marks the target, and uses first-click target selection when no object is selected.
+  - Measurement mode covers the entire model by default, or locks and visibly marks the focused component when focus was active before measurement.
   - Completed measurements remain visible when measurement mode is turned off.
   - Entering a known length for the latest measurement applies a uniform model scale and keeps ruler overlays anchored to their original mesh features.
   - Unfinished endpoints cancel cleanly.

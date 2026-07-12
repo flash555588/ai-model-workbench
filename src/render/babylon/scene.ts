@@ -92,6 +92,7 @@ import type {
   PreviewPickResult,
   PreviewProjectionResult,
   PreviewWorldPoint,
+  PreviewEulerDegrees,
   MeasurementScale,
   MeasurementSnapKind,
   MeasurementUnit,
@@ -135,6 +136,7 @@ import {
   createSliceOffsetForPoint,
   createSliceRange,
   createSliceClipPlanes,
+  createSlicePlaneAxesFromEulerDegrees,
   createSliceState,
   DEFAULT_SLICE_INTERACTION_MODE,
   DEFAULT_SLICE_NORMAL,
@@ -146,6 +148,7 @@ import {
   normalizeSliceOffset,
   normalizeSliceThickness,
   normalizeSliceRotationRadians,
+  getSliceEulerDegreesFromPlaneAxes,
   resolveSliceRotationSnapMode,
   rotateSliceNormalAroundAxis,
   shouldUseSliceScreenRotation,
@@ -394,7 +397,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private sliceActive = false;
   private sliceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private slicePlaneX = new Vector3(1, 0, 0);
-  private slicePlaneY = new Vector3(0, 1, 0);
+  private slicePlaneY = new Vector3(0, 0, -1);
   private sliceCenter: Vector3 | null = null;
   private sliceReferenceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private sliceOffset = DEFAULT_SLICE_OFFSET;
@@ -1323,6 +1326,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       bounds: this.getMeasurementBounds(),
       targetLocked: !!this.measurementTargetNode,
       targetName: this.getMeasurementTargetName(),
+      targetScope: this.measurementTargetNode === this.rootMesh ? "model" : "part",
       snapKind: this.measurementSnapKind,
     });
   }
@@ -1608,7 +1612,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.clearFocusedMesh();
       this.cleanupPicking?.clearHighlight();
     }
-    this.alignSlicePlaneToCamera();
+    this.alignSlicePlaneToWorld();
     this.sliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
     this.sliceActive = true;
     this.syncSliceClipping();
@@ -1639,6 +1643,26 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return this.getSliceState();
   }
 
+  setSliceRotation(rotation: PreviewEulerDegrees): SliceState {
+    const bounds = this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null;
+    const range = this.getSliceRange();
+    const anchor = this.sliceCenter?.clone()
+      ?? (range ? new Vector3(range.point.x, range.point.y, range.point.z) : null);
+    const axes = createSlicePlaneAxesFromEulerDegrees(rotation);
+    this.slicePlaneX.set(axes.x.x, axes.x.y, axes.x.z);
+    this.slicePlaneY.set(axes.y.x, axes.y.y, axes.y.z);
+    this.sliceNormal.set(axes.z.x, axes.z.y, axes.z.z);
+    if (anchor) {
+      this.sliceCenter = anchor;
+      this.sliceOffset = createSliceOffsetForPoint(bounds, axes.z, toPreviewWorldPoint(anchor));
+    } else {
+      this.setSliceCenterFromOffset(this.sliceOffset);
+    }
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
   setSliceInteractionMode(mode: SliceInteractionMode): SliceState {
     const nextMode = normalizeSliceInteractionMode(mode);
     if (nextMode === this.sliceInteractionMode) return this.getSliceState();
@@ -1650,7 +1674,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   resetSlicePlane(): SliceState {
-    this.alignSlicePlaneToCamera();
+    this.alignSlicePlaneToWorld();
     this.sliceOffset = DEFAULT_SLICE_OFFSET;
     this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
@@ -1689,7 +1713,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
       toPreviewWorldPoint(this.sliceReferenceNormal),
     );
     const range = this.getSliceRange();
-    return range ? { ...state, offset: range.offset, position: range.offset, point: { ...range.point } } : state;
+    const rotationDegrees = getSliceEulerDegreesFromPlaneAxes({
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    });
+    return range
+      ? { ...state, rotationDegrees, offset: range.offset, position: range.offset, point: { ...range.point } }
+      : { ...state, rotationDegrees };
   }
 
   observeSlice(callback: () => void): () => void {
@@ -2136,15 +2167,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (range) this.sliceCenter = new Vector3(range.point.x, range.point.y, range.point.z);
   }
 
-  private alignSlicePlaneToCamera(): void {
-    const normal = this.camera.getForwardRay().direction;
-    if (!Number.isFinite(normal.lengthSquared()) || normal.lengthSquared() <= Number.EPSILON) {
-      normal.set(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
-    }
-    normal.normalize();
-    this.sliceNormal.copyFrom(normal);
-    this.rebuildSlicePlaneAxes(this.camera.getDirection(new Vector3(1, 0, 0)).normalize());
-    this.sliceReferenceNormal.copyFrom(normal);
+  private alignSlicePlaneToWorld(): void {
+    this.sliceNormal.set(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+    this.rebuildSlicePlaneAxes(new Vector3(1, 0, 0));
+    this.sliceReferenceNormal.copyFrom(this.sliceNormal);
     this.sliceCenter = null;
     this.setSliceCenterFromOffset(this.sliceOffset);
   }
@@ -2851,10 +2877,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private getCurrentMeasurementTargetNode(): BabylonSelectablePartNode | null {
-    const candidate = this.focusedNode
-      ?? (isBabylonSelectablePartNode(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
-    if (!candidate || isBabylonNodeDisposed(candidate)) return null;
-    return this.findSelectableNode(candidate);
+    if (
+      this.focusSelectionEnabled &&
+      this.focusedNode &&
+      !isBabylonNodeDisposed(this.focusedNode)
+    ) {
+      return this.findSelectableNode(this.focusedNode);
+    }
+    return this.rootMesh && !this.rootMesh.isDisposed() ? this.rootMesh : null;
   }
 
   private setMeasurementTargetNode(node: BabylonSelectablePartNode | null, notify = true): void {

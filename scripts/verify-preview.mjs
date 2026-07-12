@@ -422,12 +422,13 @@ async function readPreviewState(page) {
 }
 
 const toolbarLabels = {
+  reset: "Reset view",
   wireframe: "Toggle wireframe",
   axes: "Toggle orientation axes",
   boundingBox: "Toggle bounding box",
   slice: "Slice model",
   resolution: "Change render scale",
-  measurement: "Measure selected object; Alt/Option-click for free pick",
+  measurement: "Measure model; focus a part first to limit scope; Alt/Option-click for free pick",
   copyMeasurements: "Copy measurements",
   clearMeasurements: "Clear measurements",
 };
@@ -774,9 +775,14 @@ async function verifyHelperToolbar(page) {
       typeof sliceState.offset === "number" &&
       Math.abs(sliceState.offset - 0.5) < 0.001 &&
       sliceState.normal &&
-      Number.isFinite(sliceState.normal.x) &&
-      Number.isFinite(sliceState.normal.y) &&
-      Number.isFinite(sliceState.normal.z),
+      Math.abs(sliceState.normal.x) < 0.001 &&
+      Math.abs(sliceState.normal.y - 1) < 0.001 &&
+      Math.abs(sliceState.normal.z) < 0.001 &&
+      sliceState.axis === "y" &&
+      Math.abs(sliceState.tiltDegrees) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.x ?? Number.NaN) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.y ?? Number.NaN) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.z ?? Number.NaN) < 0.001,
     `Slice mode did not activate with default state: ${JSON.stringify(sliceState)}`,
   );
   assert(
@@ -798,18 +804,44 @@ async function verifyHelperToolbar(page) {
   );
   const planeButtons = await sliceDetails.locator(".ai3d-slice-plane-btn").count();
   const rangeInputs = await sliceDetails.locator(".ai3d-slice-range").count();
-  const numericInputs = await sliceDetails.locator(".ai3d-slice-number").count();
+  const numericInputs = await sliceDetails.locator("input.ai3d-slice-number-input").count();
   const presetButtons = await sliceDetails.locator(".ai3d-slice-preset-btn").count();
   assert(
-    planeButtons === 0 && rangeInputs === 0 && numericInputs === 0 && presetButtons === 0,
+    planeButtons === 0 && rangeInputs === 0 && numericInputs === 4 && presetButtons === 0,
     `Slice inspector still exposed axis/progress controls: ${JSON.stringify({ planeButtons, rangeInputs, numericInputs, presetButtons })}`,
   );
-  const offsetText = (await sliceDetails.locator(".ai3d-slice-offset-value").textContent()) ?? "";
-  const tiltText = (await sliceDetails.locator(".ai3d-slice-tilt-value").textContent()) ?? "";
+  const offsetInput = sliceDetails.locator("input.ai3d-slice-offset-value").first();
+  const rotationInputs = sliceDetails.locator("input.ai3d-slice-rotation-input");
+  const offsetText = await offsetInput.inputValue();
+  const rotationValues = await rotationInputs.evaluateAll((inputs) => inputs.map((input) => input.value));
   assert(
-    offsetText.includes("50%") && tiltText.includes("°") && await sliceDetails.locator(".ai3d-slice-mode-btn").count() === 0,
-    `Slice gizmo status was incomplete: ${JSON.stringify({ offsetText, tiltText })}`,
+    offsetText === "50" &&
+      JSON.stringify(rotationValues) === JSON.stringify(["0", "0", "0"]) &&
+      await sliceDetails.locator(".ai3d-slice-mode-btn").count() === 0,
+    `Slice numeric controls were incomplete: ${JSON.stringify({ offsetText, rotationValues })}`,
   );
+
+  await offsetInput.fill("25");
+  await offsetInput.press("Enter");
+  await page.waitForTimeout(50);
+  const positionedState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(
+    Math.abs((positionedState?.offset ?? Number.NaN) - 0.25) < 0.001,
+    `Slice position input did not update the cutting plane: ${JSON.stringify(positionedState)}`,
+  );
+  await rotationInputs.nth(0).fill("30");
+  await rotationInputs.nth(0).press("Enter");
+  await page.waitForTimeout(100);
+  const numericState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(
+    Math.abs((numericState?.rotationDegrees?.x ?? Number.NaN) - 30) < 0.1 &&
+      Math.abs(numericState?.rotationDegrees?.y ?? Number.NaN) < 0.1 &&
+      Math.abs(numericState?.rotationDegrees?.z ?? Number.NaN) < 0.1,
+    `Slice numeric inputs did not update position and XYZ rotation: ${JSON.stringify(numericState)}`,
+  );
+  await sliceDetails.locator(".ai3d-slice-reset-btn").click();
+  await page.waitForTimeout(100);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
 
   const sliceOffsetBeforeDrag = sliceState.offset;
   const canvasBox = await page.locator("canvas").first().boundingBox();
@@ -1054,6 +1086,22 @@ async function verifyHelperToolbar(page) {
   );
   const sliceSummary = (await sliceDetails.locator(".ai3d-slice-summary").textContent()) ?? "";
   assert(sliceSummary.includes("axis ring"), `Slice summary did not reflect gizmo state: ${sliceSummary}`);
+  await sliceDetails.locator(".ai3d-slice-reset-btn").click();
+  await page.waitForTimeout(100);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(
+    sliceState?.active === true &&
+      Math.abs(sliceState.offset - 0.5) < 0.001 &&
+      Math.abs(sliceState.normal.x) < 0.001 &&
+      Math.abs(sliceState.normal.y - 1) < 0.001 &&
+      Math.abs(sliceState.normal.z) < 0.001 &&
+      sliceState.axis === "y" &&
+      Math.abs(sliceState.tiltDegrees) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.x ?? Number.NaN) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.y ?? Number.NaN) < 0.001 &&
+      Math.abs(sliceState.rotationDegrees?.z ?? Number.NaN) < 0.001,
+    `Slice reset did not restore the model-centered world-horizontal plane: ${JSON.stringify(sliceState)}`,
+  );
   await sliceBtn.click();
   await page.waitForTimeout(100);
   sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
@@ -1081,6 +1129,10 @@ async function verifyHelperToolbar(page) {
     !!beforeText && !!afterText && beforeText.includes("%") && afterText.includes("%") && beforeText !== afterText,
     `Resolution toolbar button did not cycle value: before=${beforeText ?? "null"}, after=${afterText ?? "null"}`,
   );
+
+  const resetBtn = await getToolbarButton(page, toolbarLabels.reset);
+  await resetBtn.click();
+  await page.waitForTimeout(200);
 }
 
 async function verifyMeasurementTool(page, box, firstPick) {
@@ -1131,11 +1183,28 @@ async function verifyMeasurementTool(page, box, firstPick) {
     meta: strip.querySelector(".ai3d-measurement-strip-meta")?.textContent ?? "",
     phase: strip.getAttribute("data-ai3d-measurement-phase"),
   }));
-  const pickStartPreviewState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
+  const pickStartPreviewState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const state = preview?.getMeasurementState?.() ?? null;
+    const root = preview?.rootObject ?? preview?.rootMesh ?? null;
+    const target = preview?.measurementTargetObject ?? preview?.measurementTargetNode ?? null;
+    const targetMeshCount = preview?.measurementTargetObject
+      ? preview.getMeasurementTargetRenderables?.().length ?? 0
+      : preview?.measurementTargetMeshes?.length ?? 0;
+    return {
+      state,
+      targetIsRoot: !!root && target === root,
+      targetMeshCount,
+      totalMeshCount: window.__ai3dPreviewVerify?.summary?.meshCount ?? 0,
+    };
+  });
   assert(
     pickStartState.value.includes("Pick start") &&
       pickStartState.phase === "ready" &&
-      pickStartPreviewState?.targetLocked === true,
+      pickStartPreviewState.state?.targetLocked === true &&
+      pickStartPreviewState.state?.targetScope === "model" &&
+      pickStartPreviewState.targetIsRoot === true &&
+      pickStartPreviewState.targetMeshCount === pickStartPreviewState.totalMeshCount,
     `Measurement status did not lock the selected target before the start point: ${JSON.stringify({ strip: pickStartState, state: pickStartPreviewState })}`,
   );
 
@@ -1401,6 +1470,42 @@ async function verifyMeasurementTool(page, box, firstPick) {
     state: window.__ai3dPreview?.getMeasurementState?.() ?? null,
   }));
   assert(escapedOff.active === false && escapedOff.state?.phase === "inactive", `Second Esc did not turn measurement mode off: ${JSON.stringify(escapedOff)}`);
+
+  const focusedScope = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    if (!preview?.toggleFocusSelection || !preview?.toggleMeasurement) return { skipped: true };
+    const focusEnabled = preview.toggleFocusSelection();
+    const focusedTarget = preview.focusedObject ?? preview.focusedNode ?? null;
+    const measurementEnabled = preview.toggleMeasurement();
+    const measurementTarget = preview.measurementTargetObject ?? preview.measurementTargetNode ?? null;
+    const root = preview.rootObject ?? preview.rootMesh ?? null;
+    const state = preview.getMeasurementState?.() ?? null;
+    const targetMeshCount = preview.measurementTargetObject
+      ? preview.getMeasurementTargetRenderables?.().length ?? 0
+      : preview.measurementTargetMeshes?.length ?? 0;
+    if (preview.isMeasurementActive?.()) preview.toggleMeasurement();
+    return {
+      skipped: false,
+      focusEnabled,
+      measurementEnabled,
+      capturedFocusedTarget: !!focusedTarget && measurementTarget === focusedTarget,
+      targetIsRoot: measurementTarget === root,
+      targetMeshCount,
+      state,
+    };
+  });
+  assert(
+    !focusedScope.skipped &&
+      focusedScope.focusEnabled === true &&
+      focusedScope.measurementEnabled === true &&
+      focusedScope.capturedFocusedTarget === true &&
+      focusedScope.targetMeshCount >= 1 &&
+      (
+        (focusedScope.targetIsRoot === false && focusedScope.state?.targetScope === "part") ||
+        (focusedScope.targetIsRoot === true && focusedScope.targetMeshCount === 1 && focusedScope.state?.targetScope === "model")
+      ),
+    `Focused measurement did not limit scope to the focused part: ${JSON.stringify(focusedScope)}`,
+  );
 }
 
 async function verifyReadonlyPinMode(page, state) {
@@ -2020,6 +2125,22 @@ async function verify() {
       await verifyMeasurementTool(page, box, selectedPartPick);
     }
 
+    if (verifyMode === "readonly-pin") {
+      await verifyReadonlyPinMode(page, state);
+      await verifyHelperToolbar(page);
+      console.log("Readonly pin preview verification passed");
+      console.log(JSON.stringify({
+        mode: verifyMode,
+        rendererRollout: verifyRollout,
+        route: state.route,
+        summary: state.summary,
+        pixelStats: stats,
+        performance: performanceSnapshot,
+        selectedPart: selectedPartMarkdown,
+      }, null, 2));
+      return;
+    }
+
     await verifyHelperToolbar(page);
 
     if (verifyMode === "workbench") {
@@ -2065,21 +2186,6 @@ async function verify() {
       await page.waitForFunction(() => window.__ai3dPreviewVerify?.pinCount === 0, null, { timeout: 5000 });
 
       console.log("Direct edit preview verification passed");
-      console.log(JSON.stringify({
-        mode: verifyMode,
-        rendererRollout: verifyRollout,
-        route: state.route,
-        summary: state.summary,
-        pixelStats: stats,
-        performance: performanceSnapshot,
-        selectedPart: selectedPartMarkdown,
-      }, null, 2));
-      return;
-    }
-
-    if (verifyMode === "readonly-pin") {
-      await verifyReadonlyPinMode(page, state);
-      console.log("Readonly pin preview verification passed");
       console.log(JSON.stringify({
         mode: verifyMode,
         rendererRollout: verifyRollout,

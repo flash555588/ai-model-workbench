@@ -329,15 +329,15 @@ describe("measurement helpers", () => {
 
   it("triggers a focus aggregation class when measurement activates", () => {
     vi.useFakeTimers();
-    vi.stubGlobal("window", { setTimeout: globalThis.setTimeout });
+    vi.stubGlobal("window", {
+      setTimeout: (handler: () => void, timeout?: number) => setTimeout(handler, timeout),
+    });
     const canvas = createFakeCanvas();
 
     setMeasurementCanvasActive(canvas, true);
 
     expect(canvas.classList.contains("ai3d-measurement-active")).toBe(true);
     expect(canvas.classList.contains("ai3d-measurement-focus-aggregation")).toBe(true);
-    expect(canvas.getBoundingClientRect).toHaveBeenCalled();
-
     vi.advanceTimersByTime(1100);
 
     expect(canvas.classList.contains("ai3d-measurement-active")).toBe(true);

@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.7.5 - 2026-07-12
+
 - Stability: gate conversion-backed direct file views behind an explicit Load model action even when Obsidian restores them through `onLoadFile`, preventing STEP/STP workspace restore loops from freezing the vault.
 - Stability: make the direct-view load gate settings-aware for preferred OBJ conversion and keep mobile direct-format reads on Obsidian vault APIs instead of desktop Node path helpers.
 - UI: upgrade measurement calibration so users can scale the loaded model uniformly from the latest ruler distance, keep overlays anchored in model space, apply locked model-size scaling from one known axis, and verify the workflow through preview automation.
-- UI: make distance measurement lock the selected object by default and snap endpoints to mesh vertices or visible crease/perimeter triangle edges, filtering coplanar face diagonals and preferring edge projection outside the corner radius, with first-click target selection when needed and Alt/Option-click preserving the older free surface pick as a backup.
+- UI: make distance measurement cover the entire model by default while allowing a previously focused component to limit the measurement scope, and snap endpoints to mesh vertices or visible crease/perimeter triangle edges with Alt/Option-click preserving the free surface pick backup.
 - UI: restrict normal measurement picks and hover previews to the locked measurement target so clicks on neighboring geometry no longer seed selected-object snap endpoints.
 - UI: require the locked measurement target to be the frontmost normal pick before snapping, preventing hidden target geometry behind another part from receiving ruler endpoints.
 - UI: clear stale measurement snap status after cancelling a pending endpoint so the selected-object ruler returns to a neutral ready state.
@@ -13,12 +15,14 @@
 - UI: cap selected-object corner snapping by target edge scale so large grouped selections do not over-prioritize distant vertices when the pointer is closer to an edge.
 - UI: reset snap status when measurements are cleared so the ruler strip does not report stale snapping after returning to an empty ready state.
 - UI: refresh the measurement preview when Alt/Option is pressed or released so the backup free-pick path updates without requiring a mouse move.
-- UI: refactor the Slice tool for Three.js and Babylon previews around a visible transparent cutting board with an adaptive red/green/blue rotation gizmo, a normal-axis move arrow, separate touch-capable move and rotate modes, view-aligned reset, single-plane clipping, and a compact board status panel instead of X/Y/Z axis sliders.
+- UI: refactor the Slice tool for Three.js and Babylon previews around a visible transparent cutting board with an adaptive red/green/blue rotation gizmo, a normal-axis move arrow, separate touch-capable move and rotate modes, world-horizontal centered reset, single-plane clipping, and a compact board status panel instead of X/Y/Z axis sliders.
 - UI: keep camera orbit available while slicing by capturing pointer drags only near the center handle, move arrow, or colored rotation rings, with Alt/Option drag always reserved for the camera.
 - UI: keep the Slice ruler, movable angle handle, cutting board, and pointer hit regions in one plane-local coordinate frame; compute rotation from mouse-ray intersection around the board center, preserve that center as the pivot, and provide coarse 45-degree plus fine 5-degree snapping.
 - Performance: update Slice clipping planes in place while dragging and avoid rebinding or recompiling every model material on each pointer frame, preventing model flicker during cutting-board movement.
 - Stability: freeze the Slice rotation ring's starting coordinate frame and pivot for the full pointer gesture so the already-rotated board cannot feed back into mouse-angle calculation and cause rotational twitching.
 - Stability: stabilize Babylon Slice rotation by pausing camera inertia and auto-rotation during gizmo drags, falling back to screen-space rotation for edge-on rings, adding snap-zone hysteresis, coalescing pointer updates to animation frames, and reusing the angle label texture.
+- UI: define Slice 0 degrees as the world-horizontal XZ plane, and make reset restore that plane through the placed model's world-bounds center at 50 percent instead of aligning it to the current camera.
+- UI: add editable Slice position and X/Y/Z rotation fields modeled after plane controls, keep 0/0/0 as the world-horizontal pose, and synchronize numeric edits with the in-scene rotation rings in both renderers.
 - UI: size the visible Slice cutting board from every model bounding-box corner projected into the board's local frame, with a minimum 10 percent margin so the board always extends beyond the model at any angle or offset.
 - UI: unify annotation, focus, disassembly, measurement, and Slice as linked exclusive preview modes, synchronize toolbar and canvas mode feedback, preserve camera orbit and view overlays, and refresh Slice plus selection helpers after measurement calibration rescales the model.
 - UI: make the Slice normal-axis rotation ring rotate the cutting board's local ruler and handle frame without moving the clipping plane, and reset displaced disassembly parts whenever focus, measurement, or Slice takes control.

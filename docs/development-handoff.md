@@ -8,7 +8,7 @@ README, implementation, verification scripts, and release/security docs.
 
 AI Model Workbench is an Obsidian plugin that renders 3D model files inside a vault,
 adds 3D annotations/bookmarks, and generates linked knowledge notes from model evidence.
-The current package version is `0.7.1`.
+The current package version is `0.7.5`.
 
 Important runtime files:
 
@@ -240,7 +240,7 @@ npm run verify:preview -- --model "models/resource-fixtures/grouped-parts/groupe
 
 ## Current Follow-Up Direction
 
-Short-term product direction after `0.7.1`:
+Short-term product direction after `0.7.5`:
 
 - Keep tightening auto part registration and cross-model part reuse feedback.
 - Keep improving direct workbench UX without prematurely moving all workbench routes.

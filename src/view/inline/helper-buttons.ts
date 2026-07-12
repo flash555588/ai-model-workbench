@@ -686,6 +686,9 @@ export function createHelperButtons(
     if (state.phase === "select-target") {
       return t("helper.measurementTargetMissing");
     }
+    if (state.targetScope === "model") {
+      return t("helper.measurementTargetModel");
+    }
     if (state.targetName) {
       return formatT("helper.measurementTargetLabel", { target: state.targetName });
     }
@@ -1140,20 +1143,35 @@ export function createHelperButtons(
   sliceResetBtn.appendChild(createSvgIcon(`<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>`));
   const sliceOffsetRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
   sliceOffsetRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceOffsetLabel") });
-  const sliceOffsetValue = sliceOffsetRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-offset-value" });
-  const sliceTiltRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
-  sliceTiltRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceTiltLabel") });
-  const sliceTiltValue = sliceTiltRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-tilt-value" });
-
-  function formatSlicePercent(value: number): string {
-    const percent = Math.round(Math.max(0, Math.min(value, 1)) * 1000) / 10;
-    return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(1)}%`;
+  const sliceOffsetControl = sliceOffsetRow.createDiv({ cls: "ai3d-slice-number-control" });
+  const sliceOffsetInput = sliceOffsetControl.createEl("input", {
+    cls: "ai3d-slice-number-input ai3d-slice-offset-value",
+    attr: { type: "number", min: "0", max: "100", step: "0.1", inputmode: "decimal" },
+  });
+  sliceOffsetControl.createSpan({ cls: "ai3d-slice-number-unit", text: "%" });
+  const sliceRotationRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-rotation-row" });
+  sliceRotationRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceRotationLabel") });
+  const rotationInputs = {} as Record<"x" | "y" | "z", HTMLInputElement>;
+  for (const axis of ["x", "y", "z"] as const) {
+    const control = sliceRotationRow.createDiv({ cls: `ai3d-slice-axis-control ai3d-slice-axis-${axis}` });
+    control.createSpan({ cls: "ai3d-slice-axis-label", text: axis.toUpperCase() });
+    rotationInputs[axis] = control.createEl("input", {
+      cls: "ai3d-slice-number-input ai3d-slice-rotation-input",
+      attr: {
+        type: "number",
+        min: "-180",
+        max: "180",
+        step: "0.1",
+        inputmode: "decimal",
+        "aria-label": `${t("helper.sliceRotationLabel")} ${axis.toUpperCase()}`,
+      },
+    });
+    control.createSpan({ cls: "ai3d-slice-number-unit", text: "°" });
   }
 
-  function formatSliceTilt(value: number): string {
-    if (!Number.isFinite(value)) return "0°";
-    const rounded = Math.round(Math.max(0, Math.min(value, 180)) * 10) / 10;
-    return Number.isInteger(rounded) ? `${rounded}°` : `${rounded.toFixed(1)}°`;
+  function formatSliceInput(value: number): string {
+    const rounded = Math.round((Number.isFinite(value) ? value : 0) * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
   }
 
   function getSlicePreview(): SlicePreview | null {
@@ -1191,14 +1209,52 @@ export function createHelperButtons(
     const state: SliceState = preview.getSliceState();
     setTogglePressed(sliceBtn, state.active);
     sliceDetails.classList.toggle("is-hidden", !state.active);
-    sliceOffsetValue.textContent = formatSlicePercent(state.offset);
-    sliceTiltValue.textContent = formatSliceTilt(state.tiltDegrees);
+    if (activeDocument.activeElement !== sliceOffsetInput) {
+      sliceOffsetInput.value = formatSliceInput(Math.max(0, Math.min(state.offset, 1)) * 100);
+    }
+    const rotation = state.rotationDegrees ?? { x: 0, y: 0, z: 0 };
+    for (const axis of ["x", "y", "z"] as const) {
+      if (activeDocument.activeElement !== rotationInputs[axis]) {
+        rotationInputs[axis].value = formatSliceInput(rotation[axis]);
+      }
+    }
     sliceSummary.textContent = state.dragging
       ? t(state.interactionMode === "rotate" ? "helper.sliceRotating" : "helper.sliceMoving")
       : t("helper.sliceGizmoReady");
   }
 
   sliceResetBtn.addEventListener("click", resetSliceControls);
+
+  const applySliceOffsetInput = (): void => {
+    const preview = getSlicePreview();
+    if (!preview) return;
+    const value = Number.parseFloat(sliceOffsetInput.value);
+    if (!Number.isFinite(value)) {
+      syncSliceDetails();
+      return;
+    }
+    preview.setSliceOffset(Math.max(0, Math.min(value, 100)) / 100);
+  };
+  const applySliceRotationInputs = (): void => {
+    const preview = getSlicePreview();
+    if (!preview) return;
+    const current = preview.getSliceState().rotationDegrees ?? { x: 0, y: 0, z: 0 };
+    const parseAxis = (axis: "x" | "y" | "z"): number => {
+      const value = Number.parseFloat(rotationInputs[axis].value);
+      return Number.isFinite(value) ? value : current[axis];
+    };
+    preview.setSliceRotation({ x: parseAxis("x"), y: parseAxis("y"), z: parseAxis("z") });
+  };
+  sliceOffsetInput.addEventListener("change", applySliceOffsetInput);
+  sliceOffsetInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") applySliceOffsetInput();
+  });
+  for (const axis of ["x", "y", "z"] as const) {
+    rotationInputs[axis].addEventListener("change", applySliceRotationInputs);
+    rotationInputs[axis].addEventListener("keydown", (event) => {
+      if (event.key === "Enter") applySliceRotationInputs();
+    });
+  }
 
 
   renderToolbarButtons();

@@ -89,21 +89,23 @@
 
 ## Current Release
 
-`0.7.1` is a source-review patch for the `0.7.0` compatibility, performance, and support-boundary release. It keeps the `0.7.0` renderer routing, conversion behavior, STEP/CAD warnings, generated-side-file controls, and large-model behavior unchanged while addressing Obsidian review findings in source and CSS lint output.
+`0.7.5` upgrades the Slice and measurement workflows across Babylon.js and Three.js previews. Slice now uses a stable world-horizontal `0°` reset, editable position and X/Y/Z rotation fields, a model-covering cutting board, synchronized plane-local ruler/gizmo controls, and linked interaction rules that prevent conflicts with focus, measurement, disassembly, and camera orbit.
 
 Release highlights:
 
-- Removes a disallowed `obsidianmd/prefer-create-el` disable directive while preserving detached DOM creation for CodeMirror widgets and preview canvases.
-- Tightens typed path-cache and binary-buffer helpers so review tooling no longer reports unnecessary assertions or unsafe iterator values.
-- Replaces the direct-view `!important` CSS override with a higher-specificity selector.
-- Keeps all `0.7.0` compatibility behavior: Babylon.js remains the default single-model route, Converted GLB Three fast path remains configurable, and STEP/CAD files remain conversion-backed.
+- Defines Slice `0°` as the world-horizontal XZ plane and resets it through the model's world-bounds center at `50%`.
+- Adds editable Slice position and X/Y/Z rotation inputs synchronized with the in-scene cutting board, ruler, move handle, and rotation rings.
+- Stabilizes Babylon.js and Three.js Slice dragging with a fixed gesture frame, centered pivot, camera-inertia isolation, snap hysteresis, and frame-coalesced updates.
+- Sizes the cutting board beyond all projected model corners and updates clipping planes in place to avoid flicker while moving.
+- Measures the whole model by default; only an explicitly focused component narrows the measurement target.
+- Coordinates Slice, measurement, focus, and disassembly as linked exclusive modes while preserving camera orbit and view overlays.
 - Babylon.js compatibility mode remains the default for single-model previews, with Three.js still available as an explicit opt-in route.
 - Converted GLB outputs from STEP/FBX/3MF/DAE/etc. can use a configurable Three.js fast path with silent Babylon fallback.
 - Auxiliary conversion side files can be stored in a user-selected folder instead of only under the Obsidian config directory.
 - Direct file view, `3dgrid`, measurement, camera zoom, and large-model loading paths have tighter performance and stability behavior.
 - README warnings now call out STEP/CAD conversion limits, external converter risk, large-model resource pressure, generated side files, renderer-route differences, mobile limits, and optional remote-draft privacy.
 
-See [docs/release-notes/0.7.1.md](docs/release-notes/0.7.1.md), [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
+See [docs/release-notes/0.7.5.md](docs/release-notes/0.7.5.md), [docs/release-notes/0.7.1.md](docs/release-notes/0.7.1.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 
@@ -652,7 +654,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.7.1`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.7.1` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.7.5`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.7.5` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

@@ -81,6 +81,7 @@ import type {
   PreviewPickResult,
   PreviewProjectionResult,
   PreviewWorldPoint,
+  PreviewEulerDegrees,
   MeasurementScale,
   MeasurementSnapKind,
   MeasurementUnit,
@@ -136,6 +137,7 @@ import {
   createSliceOffsetForPoint,
   createSliceRange,
   createSliceClipPlanes,
+  createSlicePlaneAxesFromEulerDegrees,
   createSliceState,
   DEFAULT_SLICE_INTERACTION_MODE,
   DEFAULT_SLICE_NORMAL,
@@ -147,6 +149,7 @@ import {
   normalizeSliceOffset,
   normalizeSliceThickness,
   normalizeSliceRotationRadians,
+  getSliceEulerDegreesFromPlaneAxes,
   resolveSliceRotationSnapMode,
   rotateSliceNormalAroundAxis,
   shouldUseSliceScreenRotation,
@@ -383,7 +386,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private sliceActive = false;
   private sliceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private slicePlaneX = new Vector3(1, 0, 0);
-  private slicePlaneY = new Vector3(0, 1, 0);
+  private slicePlaneY = new Vector3(0, 0, -1);
   private sliceCenter: Vector3 | null = null;
   private sliceReferenceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private sliceOffset = DEFAULT_SLICE_OFFSET;
@@ -1013,7 +1016,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearFocusedMesh();
       this.clearSelectionHighlight();
     }
-    this.alignSlicePlaneToCamera();
+    this.alignSlicePlaneToWorld();
     this.sliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
     this.sliceActive = true;
     this.syncSliceClipping();
@@ -1044,6 +1047,26 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return this.getSliceState();
   }
 
+  setSliceRotation(rotation: PreviewEulerDegrees): SliceState {
+    const bounds = this.getRootPreviewBounds();
+    const range = this.getSliceRange();
+    const anchor = this.sliceCenter?.clone()
+      ?? (range ? new Vector3(range.point.x, range.point.y, range.point.z) : null);
+    const axes = createSlicePlaneAxesFromEulerDegrees(rotation);
+    this.slicePlaneX.set(axes.x.x, axes.x.y, axes.x.z);
+    this.slicePlaneY.set(axes.y.x, axes.y.y, axes.y.z);
+    this.sliceNormal.set(axes.z.x, axes.z.y, axes.z.z);
+    if (anchor) {
+      this.sliceCenter = anchor;
+      this.sliceOffset = createSliceOffsetForPoint(bounds, axes.z, toPreviewWorldPoint(anchor));
+    } else {
+      this.setSliceCenterFromOffset(this.sliceOffset);
+    }
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
   setSliceInteractionMode(mode: SliceInteractionMode): SliceState {
     const nextMode = normalizeSliceInteractionMode(mode);
     if (nextMode === this.sliceInteractionMode) return this.getSliceState();
@@ -1055,7 +1078,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   resetSlicePlane(): SliceState {
-    this.alignSlicePlaneToCamera();
+    this.alignSlicePlaneToWorld();
     this.sliceOffset = DEFAULT_SLICE_OFFSET;
     this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
@@ -1094,7 +1117,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
       toPreviewWorldPoint(this.sliceReferenceNormal),
     );
     const range = this.getSliceRange();
-    return range ? { ...state, offset: range.offset, position: range.offset, point: { ...range.point } } : state;
+    const rotationDegrees = getSliceEulerDegreesFromPlaneAxes({
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    });
+    return range
+      ? { ...state, rotationDegrees, offset: range.offset, position: range.offset, point: { ...range.point } }
+      : { ...state, rotationDegrees };
   }
 
   observeSlice(callback: () => void): () => void {
@@ -1250,6 +1280,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       bounds: this.getMeasurementBounds(),
       targetLocked: !!this.measurementTargetObject,
       targetName: this.getMeasurementTargetName(),
+      targetScope: this.measurementTargetObject === this.rootObject ? "model" : "part",
       snapKind: this.measurementSnapKind,
     });
   }
@@ -2798,17 +2829,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (range) this.sliceCenter = new Vector3(range.point.x, range.point.y, range.point.z);
   }
 
-  private alignSlicePlaneToCamera(): void {
-    const normal = new Vector3();
-    this.camera.getWorldDirection(normal);
-    if (!Number.isFinite(normal.lengthSq()) || normal.lengthSq() <= Number.EPSILON) {
-      normal.set(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
-    }
-    normal.normalize();
-    this.sliceNormal.copy(normal);
-    const cameraRight = new Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
-    this.rebuildSlicePlaneAxes(cameraRight);
-    this.sliceReferenceNormal.copy(normal);
+  private alignSlicePlaneToWorld(): void {
+    this.sliceNormal.set(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+    this.rebuildSlicePlaneAxes(new Vector3(1, 0, 0));
+    this.sliceReferenceNormal.copy(this.sliceNormal);
     this.sliceCenter = null;
     this.setSliceCenterFromOffset(this.sliceOffset);
   }
@@ -3531,11 +3555,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private getCurrentMeasurementTargetObject(): Object3D | null {
     if (!this.rootObject) return null;
-    const candidate = this.focusedObject
-      ?? this.highlightedObject
-      ?? (isThreeObject3D(this._lastPickResult.mesh) ? this._lastPickResult.mesh : null);
-    if (!candidate || !this.isObjectInLoadedRoot(candidate)) return null;
-    return candidate;
+    if (
+      this.focusSelectionEnabled &&
+      this.focusedObject &&
+      this.isObjectInLoadedRoot(this.focusedObject)
+    ) {
+      return this.focusedObject;
+    }
+    return this.rootObject;
   }
 
   private isObjectInLoadedRoot(object: Object3D): boolean {

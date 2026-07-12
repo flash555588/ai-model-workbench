@@ -55,11 +55,11 @@ Use the measurement tool when the selected renderer exposes the measurement
 contract. Measurements are calibrated, include per-axis deltas, and can be copied
 as Markdown for notes.
 
-By default, measurement locks onto the currently selected object and snaps
-endpoints to that object's mesh vertices and triangle edges for short-distance
-work. If no object is selected, the first measurement click selects the target;
-hold `Alt`/`Option` while placing an endpoint to use the free surface pick
-backup.
+By default, measurement covers the entire model so endpoints can be placed on
+different parts. To restrict measurement to one component, focus that component
+before enabling measurement; the measurement tool captures the focused scope and
+then exits focus mode. Hold `Alt`/`Option` while placing an endpoint to use the
+free surface pick backup.
 
 Completed measurements render as orthographic drawing-style dimension callouts:
 thin offset dimension lines, extension lines from the measured feature points,

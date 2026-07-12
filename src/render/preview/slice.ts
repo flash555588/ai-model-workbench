@@ -10,10 +10,10 @@ import {
   normalizePreviewWorldPoint,
   scalePreviewWorldPoint,
 } from "./geometry";
-import type { PreviewAxis, SliceInteractionMode, SliceState } from "./types";
+import type { PreviewAxis, PreviewEulerDegrees, SliceInteractionMode, SliceState } from "./types";
 
-export const DEFAULT_SLICE_AXIS: PreviewAxis = "z";
-export const DEFAULT_SLICE_NORMAL = { x: 0, y: 0, z: 1 };
+export const DEFAULT_SLICE_AXIS: PreviewAxis = "y";
+export const DEFAULT_SLICE_NORMAL = { x: 0, y: 1, z: 0 };
 export const DEFAULT_SLICE_OFFSET = 0.5;
 export const DEFAULT_SLICE_INTERACTION_MODE: SliceInteractionMode = "move";
 export const DEFAULT_SLICE_POSITION = DEFAULT_SLICE_OFFSET;
@@ -184,6 +184,70 @@ export function normalizeSliceRotationRadians(radians: number): number {
   const full = Math.PI * 2;
   const normalized = ((finiteRadians(radians) + Math.PI) % full + full) % full - Math.PI;
   return normalized === -Math.PI ? Math.PI : normalized;
+}
+
+function normalizeEulerDegrees(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return normalized === -180 ? 180 : normalized;
+}
+
+export function normalizeSliceEulerDegrees(rotation: Partial<PreviewEulerDegrees> | undefined): PreviewEulerDegrees {
+  return {
+    x: normalizeEulerDegrees(Number(rotation?.x)),
+    y: normalizeEulerDegrees(Number(rotation?.y)),
+    z: normalizeEulerDegrees(Number(rotation?.z)),
+  };
+}
+
+export function createSlicePlaneAxesFromEulerDegrees(
+  rotation: Partial<PreviewEulerDegrees> | undefined,
+): SlicePlaneAxes {
+  const normalized = normalizeSliceEulerDegrees(rotation);
+  const x = normalized.x * Math.PI / 180;
+  const y = normalized.y * Math.PI / 180;
+  const z = normalized.z * Math.PI / 180;
+  const cx = Math.cos(x);
+  const sx = Math.sin(x);
+  const cy = Math.cos(y);
+  const sy = Math.sin(y);
+  const cz = Math.cos(z);
+  const sz = Math.sin(z);
+  const matrix = {
+    m11: cy * cz,
+    m12: -cy * sz,
+    m13: sy,
+    m21: cx * sz + sx * sy * cz,
+    m22: cx * cz - sx * sy * sz,
+    m23: -sx * cy,
+    m31: sx * sz - cx * sy * cz,
+    m32: sx * cz + cx * sy * sz,
+    m33: cx * cy,
+  };
+  return {
+    x: { x: matrix.m11, y: matrix.m21, z: matrix.m31 },
+    y: { x: -matrix.m13, y: -matrix.m23, z: -matrix.m33 },
+    z: { x: matrix.m12, y: matrix.m22, z: matrix.m32 },
+  };
+}
+
+export function getSliceEulerDegreesFromPlaneAxes(axes: SlicePlaneAxes): PreviewEulerDegrees {
+  const normalized = normalizeSlicePlaneAxes(axes, axes.z);
+  const m11 = normalized.x.x;
+  const m12 = normalized.z.x;
+  const m13 = -normalized.y.x;
+  const m22 = normalized.z.y;
+  const m23 = -normalized.y.y;
+  const m32 = normalized.z.z;
+  const m33 = -normalized.y.z;
+  const y = Math.asin(Math.max(-1, Math.min(1, m13)));
+  const x = Math.abs(m13) < 0.9999999 ? Math.atan2(-m23, m33) : Math.atan2(m32, m22);
+  const z = Math.abs(m13) < 0.9999999 ? Math.atan2(-m12, m11) : 0;
+  return normalizeSliceEulerDegrees({
+    x: x * 180 / Math.PI,
+    y: y * 180 / Math.PI,
+    z: z * 180 / Math.PI,
+  });
 }
 
 export function snapSliceRotationRadians(radians: number, radiusRatio: number): number {
@@ -564,22 +628,6 @@ function createSliceRotationHandle(
   return [
     ...createSliceArcArrowhead(center, axis, radius, normalized, 1, arrowLength, arrowWidth, axes),
     ...createSliceArcArrowhead(center, axis, radius, normalized, -1, arrowLength, arrowWidth, axes),
-  ];
-}
-
-function createSliceArcArrowheads(
-  center: SlicePoint,
-  axis: PreviewAxis,
-  radius: number,
-  startTurn: number,
-  endTurn: number,
-  axes: SlicePlaneAxes,
-): Array<[SlicePoint, SlicePoint]> {
-  const arrowLength = radius * 0.12;
-  const arrowWidth = radius * 0.055;
-  return [
-    ...createSliceArcArrowhead(center, axis, radius, startTurn * Math.PI * 2, 1, arrowLength, arrowWidth, axes),
-    ...createSliceArcArrowhead(center, axis, radius, endTurn * Math.PI * 2, -1, arrowLength, arrowWidth, axes),
   ];
 }
 

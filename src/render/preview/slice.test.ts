@@ -5,12 +5,14 @@ import {
   createSliceGizmoGeometry,
   createSlicePlaneGeometry,
   createSliceOffsetForPoint,
+  createSlicePlaneAxesFromEulerDegrees,
   createSliceRange,
   createSliceState,
   DEFAULT_SLICE_AXIS,
   DEFAULT_SLICE_OFFSET,
   DEFAULT_SLICE_THICKNESS,
   isPointClippedBySlicePlanes,
+  getSliceEulerDegreesFromPlaneAxes,
   normalizeSliceAxis,
   normalizeSliceNormal,
   normalizeSliceOffset,
@@ -25,7 +27,7 @@ import {
 describe("slice helpers", () => {
   it("normalizes invalid slice state values", () => {
     expect(normalizeSliceAxis("bad")).toBe(DEFAULT_SLICE_AXIS);
-    expect(normalizeSliceNormal({ x: Number.NaN, y: 0, z: 0 })).toEqual({ x: 0, y: 0, z: 1 });
+    expect(normalizeSliceNormal({ x: Number.NaN, y: 0, z: 0 })).toEqual({ x: 0, y: 1, z: 0 });
     expect(normalizeSliceNormal({ x: 2, y: 0, z: 0 })).toEqual({ x: 1, y: 0, z: 0 });
     expect(normalizeSliceOffset(Number.NaN)).toBe(DEFAULT_SLICE_OFFSET);
     expect(normalizeSliceOffset(2)).toBe(1);
@@ -54,6 +56,17 @@ describe("slice helpers", () => {
       thickness: 0.08,
       bounds: { x: 2, y: 4, z: 6 },
     });
+  });
+
+  it("centers the default world-horizontal plane on the placed model bounds", () => {
+    const bounds = createPreviewBounds({ x: -4, y: 10, z: 2 }, { x: 8, y: 30, z: 14 });
+    const state = createSliceState(true, undefined, DEFAULT_SLICE_OFFSET, bounds);
+
+    expect(state.normal).toEqual({ x: 0, y: 1, z: 0 });
+    expect(state.axis).toBe("y");
+    expect(state.offset).toBe(0.5);
+    expect(state.tiltDegrees).toBe(0);
+    expect(state.point).toEqual({ x: 2, y: 20, z: 8 });
   });
 
   it("rotates the cutting board and keeps its anchor point stable", () => {
@@ -119,6 +132,25 @@ describe("slice helpers", () => {
     expect(rotatedPlaneX.y).toBeCloseTo(1);
     expect(rotatedPlaneY.x).toBeCloseTo(-1);
     expect(rotatedPlaneY.y).toBeCloseTo(0);
+  });
+
+  it("maps XYZ rotation inputs to a horizontal zero-degree plane and round-trips the frame", () => {
+    const zero = createSlicePlaneAxesFromEulerDegrees({ x: 0, y: 0, z: 0 });
+    expect(zero.x.x).toBeCloseTo(1);
+    expect(zero.x.y).toBeCloseTo(0);
+    expect(zero.x.z).toBeCloseTo(0);
+    expect(zero.y.x).toBeCloseTo(0);
+    expect(zero.y.y).toBeCloseTo(0);
+    expect(zero.y.z).toBeCloseTo(-1);
+    expect(zero.z.x).toBeCloseTo(0);
+    expect(zero.z.y).toBeCloseTo(1);
+    expect(zero.z.z).toBeCloseTo(0);
+
+    const rotation = { x: 20, y: -30, z: 40 };
+    const restored = getSliceEulerDegreesFromPlaneAxes(createSlicePlaneAxesFromEulerDegrees(rotation));
+    expect(restored.x).toBeCloseTo(rotation.x);
+    expect(restored.y).toBeCloseTo(rotation.y);
+    expect(restored.z).toBeCloseTo(rotation.z);
   });
 
   it("snaps rotation to coarse and fine ruler regions", () => {

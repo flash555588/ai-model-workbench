@@ -409,6 +409,7 @@ export function createMeasurementState(options: {
   bounds: PreviewWorldPoint | null;
   targetLocked?: boolean;
   targetName?: string | null;
+  targetScope?: "model" | "part";
   snapKind?: MeasurementSnapKind | null;
 }): MeasurementState {
   const phase: MeasurementState["phase"] = options.active
@@ -423,6 +424,7 @@ export function createMeasurementState(options: {
     bounds: options.bounds,
     targetLocked: !!options.targetLocked,
     targetName: options.targetName ?? null,
+    targetScope: options.targetScope,
     snapKind: options.snapKind ?? null,
   };
 }
