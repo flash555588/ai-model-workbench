@@ -1869,7 +1869,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const startedAt = performance.now();
 
     if (this.focusWorldPointFrame) {
-      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      window.cancelAnimationFrame(this.focusWorldPointFrame);
       this.focusWorldPointFrame = 0;
     }
 
@@ -2024,7 +2024,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   destroy() {
     this.engine.stopRenderLoop();
     if (this.focusWorldPointFrame) {
-      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      window.cancelAnimationFrame(this.focusWorldPointFrame);
       this.focusWorldPointFrame = 0;
     }
     this._onPickCallbacks = [];
@@ -2062,7 +2062,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.viewportObserver = null;
     this.resizeObs.disconnect();
     if (this.sliceMoveFrame) {
-      activeWindow.cancelAnimationFrame(this.sliceMoveFrame);
+      window.cancelAnimationFrame(this.sliceMoveFrame);
       this.sliceMoveFrame = 0;
     }
     this.pendingSliceMove = null;
@@ -2382,7 +2382,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       clientY: event.clientY,
     };
     if (!this.sliceMoveFrame) {
-      this.sliceMoveFrame = activeWindow.requestAnimationFrame(() => {
+      this.sliceMoveFrame = window.requestAnimationFrame(() => {
         this.sliceMoveFrame = 0;
         this.flushSliceDragUpdate();
       });
@@ -2392,7 +2392,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private flushSliceDragUpdate(): void {
     if (this.sliceMoveFrame) {
-      activeWindow.cancelAnimationFrame(this.sliceMoveFrame);
+      window.cancelAnimationFrame(this.sliceMoveFrame);
       this.sliceMoveFrame = 0;
     }
     const sample = this.pendingSliceMove;
@@ -2479,7 +2479,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private stabilizeCameraForSliceDrag(): void {
     if (this.focusWorldPointFrame) {
-      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      window.cancelAnimationFrame(this.focusWorldPointFrame);
       this.focusWorldPointFrame = 0;
     }
     this.camera.inertialAlphaOffset = 0;

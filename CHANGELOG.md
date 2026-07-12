@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.6 - 2026-07-12
+
+- Review: use `window.requestAnimationFrame()` and `window.cancelAnimationFrame()` for Babylon preview frame scheduling so Obsidian source review accepts the timer calls.
+
 ## 0.7.5 - 2026-07-12
 
 - Stability: gate conversion-backed direct file views behind an explicit Load model action even when Obsidian restores them through `onLoadFile`, preventing STEP/STP workspace restore loops from freezing the vault.
