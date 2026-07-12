@@ -445,6 +445,15 @@ async function getToolbarButton(page, label) {
   return button;
 }
 
+async function readToolbarInteractionState(page) {
+  return page.locator(".ai3d-helper-toolbar").first().evaluate((toolbar) => ({
+    mode: toolbar.getAttribute("data-ai3d-interaction-mode"),
+    activeButtons: Array.from(toolbar.querySelectorAll("button.ai3d-btn-active"))
+      .map((button) => button.getAttribute("data-ai3d-action"))
+      .filter(Boolean),
+  }));
+}
+
 async function dispatchCanvasClick(page, clientX, clientY, modifiers = {}) {
   await page.evaluate(({ clientX, clientY, modifiers }) => {
     const canvas = document.querySelector("#preview-canvas");
@@ -774,6 +783,11 @@ async function verifyHelperToolbar(page) {
     await sliceBtn.evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
     "Slice toolbar button did not show active state",
   );
+  const sliceInteractionState = await readToolbarInteractionState(page);
+  assert(
+    sliceInteractionState.mode === "slice" && sliceInteractionState.activeButtons.includes("toggle-slice"),
+    `Slice activation did not synchronize the shared interaction mode: ${JSON.stringify(sliceInteractionState)}`,
+  );
   let sliceOverlayState = await page.evaluate(() => ({
     planes: window.__ai3dPreview?.sliceOverlayPlanes?.length ?? 0,
     lines: window.__ai3dPreview?.sliceOverlayLines?.length ?? 0,
@@ -791,15 +805,55 @@ async function verifyHelperToolbar(page) {
     `Slice inspector still exposed axis/progress controls: ${JSON.stringify({ planeButtons, rangeInputs, numericInputs, presetButtons })}`,
   );
   const offsetText = (await sliceDetails.locator(".ai3d-slice-offset-value").textContent()) ?? "";
-  const normalText = (await sliceDetails.locator(".ai3d-slice-normal-value").textContent()) ?? "";
+  const tiltText = (await sliceDetails.locator(".ai3d-slice-tilt-value").textContent()) ?? "";
   assert(
-    offsetText.includes("50%") && normalText.split(",").length === 3,
-    `Slice plane status was incomplete: ${JSON.stringify({ offsetText, normalText })}`,
+    offsetText.includes("50%") && tiltText.includes("°") && await sliceDetails.locator(".ai3d-slice-mode-btn").count() === 0,
+    `Slice gizmo status was incomplete: ${JSON.stringify({ offsetText, tiltText })}`,
   );
 
   const sliceOffsetBeforeDrag = sliceState.offset;
   const canvasBox = await page.locator("canvas").first().boundingBox();
   assert(canvasBox, "Preview canvas bounding box was unavailable for slice drag");
+  const normalBeforeCameraDrag = { ...sliceState.normal };
+  await page.locator("canvas").first().evaluate((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const options = {
+      pointerId: 40,
+      pointerType: "mouse",
+      isPrimary: true,
+      clientX: rect.left + 8,
+      clientY: rect.top + 8,
+      button: 0,
+      buttons: 1,
+      bubbles: true,
+      cancelable: true,
+    };
+    canvas.dispatchEvent(new PointerEvent("pointerdown", options));
+    canvas.dispatchEvent(new PointerEvent("pointermove", {
+      ...options,
+      clientX: rect.left + 70,
+      clientY: rect.top + 42,
+    }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", {
+      ...options,
+      clientX: rect.left + 70,
+      clientY: rect.top + 42,
+      buttons: 0,
+    }));
+  });
+  await page.waitForTimeout(100);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  const cameraDragNormalDelta = sliceState?.normal
+    ? Math.hypot(
+      sliceState.normal.x - normalBeforeCameraDrag.x,
+      sliceState.normal.y - normalBeforeCameraDrag.y,
+      sliceState.normal.z - normalBeforeCameraDrag.z,
+    )
+    : Number.POSITIVE_INFINITY;
+  assert(
+    Math.abs((sliceState?.offset ?? Number.NaN) - sliceOffsetBeforeDrag) <= 0.0005 && cameraDragNormalDelta <= 0.0005,
+    `Dragging away from the gizmo changed the slice: ${JSON.stringify(sliceState)}`,
+  );
   const startX = Math.round(canvasBox.x + canvasBox.width * 0.5);
   const startY = Math.round(canvasBox.y + canvasBox.height * 0.5);
   await page.locator("canvas").first().evaluate((canvas, point) => {
@@ -826,6 +880,171 @@ async function verifyHelperToolbar(page) {
       Math.abs(sliceState.offset - sliceOffsetBeforeDrag) > 0.01,
     `Touch drag did not move the cutting plane: ${JSON.stringify({ before: sliceOffsetBeforeDrag, after: sliceState })}`,
   );
+  const normalBeforeRotate = { ...sliceState.normal };
+  const centerBeforeRotate = sliceState.point ? { ...sliceState.point } : null;
+  const rotationDragResult = await page.locator("canvas").first().evaluate((canvas) => {
+    const preview = window.__ai3dPreview;
+    const babylonCamera = preview?.camera && typeof preview.camera.inertialAlphaOffset === "number"
+      ? preview.camera
+      : null;
+    if (babylonCamera) {
+      preview.applyConfig?.({ scene: { autoRotate: true, autoRotateSpeed: 2 } });
+      babylonCamera.inertialAlphaOffset = 0.08;
+      babylonCamera.inertialBetaOffset = -0.04;
+      babylonCamera.inertialRadiusOffset = 0.03;
+      babylonCamera.inertialPanningX = 0.02;
+      babylonCamera.inertialPanningY = -0.02;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const centerX = rect.left + rect.width * 0.5;
+    const centerY = rect.top + rect.height * 0.5;
+    const maxRadius = Math.min(rect.width, rect.height) * 0.46;
+    let pointerId = 42;
+    for (let radius = 28; radius <= maxRadius; radius += 12) {
+      for (let degrees = 0; degrees < 360; degrees += 10) {
+        const radians = degrees * Math.PI / 180;
+        const clientX = centerX + Math.cos(radians) * radius;
+        const clientY = centerY + Math.sin(radians) * radius;
+        const options = {
+          pointerId: pointerId++,
+          pointerType: "touch",
+          isPrimary: true,
+          clientX,
+          clientY,
+          button: 0,
+          buttons: 1,
+          bubbles: true,
+          cancelable: true,
+        };
+        canvas.dispatchEvent(new PointerEvent("pointerdown", options));
+        const state = window.__ai3dPreview?.getSliceState?.();
+        if (state?.dragging && state.interactionMode === "rotate") {
+          const startNormal = { ...state.normal };
+          const startPlaneX = window.__ai3dPreview?.slicePlaneX
+            ? {
+              x: window.__ai3dPreview.slicePlaneX.x,
+              y: window.__ai3dPreview.slicePlaneX.y,
+              z: window.__ai3dPreview.slicePlaneX.z,
+            }
+            : null;
+          const moves = [[96, 0], [-96, 0], [0, 96], [0, -96], [72, 72], [-72, 72], [72, -72], [-72, -72]];
+          for (const [dx, dy] of moves) {
+            canvas.dispatchEvent(new PointerEvent("pointermove", {
+              ...options,
+              clientX: clientX + dx,
+              clientY: clientY + dy,
+            }));
+            window.__ai3dPreview?.flushSliceDragUpdate?.();
+            const movedState = window.__ai3dPreview?.getSliceState?.();
+            const normalDelta = movedState?.normal
+              ? Math.hypot(
+                movedState.normal.x - startNormal.x,
+                movedState.normal.y - startNormal.y,
+                movedState.normal.z - startNormal.z,
+              )
+              : 0;
+            const movedPlaneX = window.__ai3dPreview?.slicePlaneX;
+            const planeAxisDelta = startPlaneX && movedPlaneX
+              ? Math.hypot(
+                movedPlaneX.x - startPlaneX.x,
+                movedPlaneX.y - startPlaneX.y,
+                movedPlaneX.z - startPlaneX.z,
+              )
+              : 0;
+            if (Math.max(normalDelta, planeAxisDelta) > 0.02) {
+              const stableNormal = { ...movedState.normal };
+              const stablePlaneX = movedPlaneX
+                ? { x: movedPlaneX.x, y: movedPlaneX.y, z: movedPlaneX.z }
+                : null;
+              canvas.dispatchEvent(new PointerEvent("pointermove", {
+                ...options,
+                clientX: clientX + dx,
+                clientY: clientY + dy,
+              }));
+              window.__ai3dPreview?.flushSliceDragUpdate?.();
+              const repeatedState = window.__ai3dPreview?.getSliceState?.();
+              const repeatedDelta = repeatedState?.normal
+                ? Math.hypot(
+                  repeatedState.normal.x - stableNormal.x,
+                  repeatedState.normal.y - stableNormal.y,
+                  repeatedState.normal.z - stableNormal.z,
+                )
+                : Number.POSITIVE_INFINITY;
+              const repeatedPlaneX = window.__ai3dPreview?.slicePlaneX;
+              const repeatedPlaneDelta = stablePlaneX && repeatedPlaneX
+                ? Math.hypot(
+                  repeatedPlaneX.x - stablePlaneX.x,
+                  repeatedPlaneX.y - stablePlaneX.y,
+                  repeatedPlaneX.z - stablePlaneX.z,
+                )
+                : 0;
+              const cameraStable = !babylonCamera || (
+                babylonCamera.inertialAlphaOffset === 0 &&
+                babylonCamera.inertialBetaOffset === 0 &&
+                babylonCamera.inertialRadiusOffset === 0 &&
+                babylonCamera.inertialPanningX === 0 &&
+                babylonCamera.inertialPanningY === 0 &&
+                preview.sliceAutoRotatePaused === true
+              );
+              canvas.dispatchEvent(new PointerEvent("pointerup", {
+                ...options,
+                clientX: clientX + dx,
+                clientY: clientY + dy,
+                buttons: 0,
+              }));
+              return {
+                grabbed: true,
+                repeatedDelta: Math.max(repeatedDelta, repeatedPlaneDelta),
+                normalDelta,
+                planeAxisDelta,
+                cameraStable,
+              };
+            }
+          }
+          canvas.dispatchEvent(new PointerEvent("pointerup", { ...options, buttons: 0 }));
+          continue;
+        }
+        canvas.dispatchEvent(new PointerEvent("pointerup", { ...options, buttons: 0 }));
+      }
+    }
+    return {
+      grabbed: false,
+      repeatedDelta: Number.POSITIVE_INFINITY,
+      normalDelta: 0,
+      planeAxisDelta: 0,
+      cameraStable: !babylonCamera,
+    };
+  });
+  await page.evaluate(() => window.__ai3dPreview?.applyConfig?.({ scene: { autoRotate: false } }));
+  assert(
+    rotationDragResult.grabbed &&
+      rotationDragResult.repeatedDelta <= 0.000001 &&
+      rotationDragResult.cameraStable === true,
+    `Rotation ring was unstable at a fixed pointer position: ${JSON.stringify(rotationDragResult)}`,
+  );
+  await page.waitForTimeout(150);
+  sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  const normalRotationDelta = sliceState?.normal
+    ? Math.hypot(
+      sliceState.normal.x - normalBeforeRotate.x,
+      sliceState.normal.y - normalBeforeRotate.y,
+      sliceState.normal.z - normalBeforeRotate.z,
+    )
+    : 0;
+  const rotationCenterDelta = sliceState?.point && centerBeforeRotate
+    ? Math.hypot(
+      sliceState.point.x - centerBeforeRotate.x,
+      sliceState.point.y - centerBeforeRotate.y,
+      sliceState.point.z - centerBeforeRotate.z,
+    )
+    : Number.POSITIVE_INFINITY;
+  assert(
+    sliceState?.interactionMode === "rotate" &&
+      Math.max(normalRotationDelta, rotationDragResult.planeAxisDelta) > 0.02 &&
+      (normalRotationDelta <= 0.02 || sliceState.tiltDegrees > 1) &&
+      rotationCenterDelta <= 0.0005,
+    `Touch drag did not rotate around the cutting-board center: ${JSON.stringify({ normalBeforeRotate, centerBeforeRotate, rotationCenterDelta, after: sliceState })}`,
+  );
   const afterSliceSnapshot = await page.evaluate(() => window.__ai3dPreview?.captureSnapshot?.() ?? "");
   assert(
     beforeSliceSnapshot.startsWith("data:image/png;base64,") &&
@@ -834,11 +1053,16 @@ async function verifyHelperToolbar(page) {
     "Slice activation did not change the rendered preview snapshot",
   );
   const sliceSummary = (await sliceDetails.locator(".ai3d-slice-summary").textContent()) ?? "";
-  assert(sliceSummary.includes("Plane"), `Slice summary did not reflect plane state: ${sliceSummary}`);
+  assert(sliceSummary.includes("axis ring"), `Slice summary did not reflect gizmo state: ${sliceSummary}`);
   await sliceBtn.click();
   await page.waitForTimeout(100);
   sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
   assert(sliceState?.active === false, `Slice mode did not turn off: ${JSON.stringify(sliceState)}`);
+  const idleInteractionState = await readToolbarInteractionState(page);
+  assert(
+    idleInteractionState.mode === "idle" && !idleInteractionState.activeButtons.includes("toggle-slice"),
+    `Slice deactivation did not restore idle interaction state: ${JSON.stringify(idleInteractionState)}`,
+  );
   sliceOverlayState = await page.evaluate(() => ({
     planes: window.__ai3dPreview?.sliceOverlayPlanes?.length ?? 0,
     lines: window.__ai3dPreview?.sliceOverlayLines?.length ?? 0,
@@ -881,6 +1105,19 @@ async function verifyMeasurementTool(page, box, firstPick) {
   assert(
     await measureBtn.evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
     "Measurement toolbar button did not show active state",
+  );
+  const measurementInteractionState = await page.evaluate(() => ({
+    toolbar: document.querySelector(".ai3d-helper-toolbar")?.getAttribute("data-ai3d-interaction-mode") ?? null,
+    focus: window.__ai3dPreview?.isFocusSelectionEnabled?.() ?? false,
+    disassembly: window.__ai3dPreview?.isDisassemblyEnabled?.() ?? false,
+    slice: window.__ai3dPreview?.isSliceActive?.() ?? false,
+  }));
+  assert(
+    measurementInteractionState.toolbar === "measurement" &&
+      measurementInteractionState.focus === false &&
+      measurementInteractionState.disassembly === false &&
+      measurementInteractionState.slice === false,
+    `Measurement activation did not exclude conflicting modes: ${JSON.stringify(measurementInteractionState)}`,
   );
   assert(
     await page.locator("#preview-canvas").evaluate((canvas) => canvas.classList.contains("ai3d-measurement-focus-aggregation")),
@@ -1214,8 +1451,14 @@ async function verifyFocusSelectionBlankClickPreservesFocus(page, box, selectedP
   await dispatchCanvasClick(page, box.x + 12, box.y + 12);
   await page.waitForTimeout(150);
 
-  const afterFocus = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
-  assert(afterFocus === selectedPartMarkdown, "Blank click cleared or changed the focused part");
+  const afterFocus = await page.evaluate(() => ({
+    markdown: window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "",
+    enabled: window.__ai3dPreview?.isFocusSelectionEnabled?.() ?? true,
+  }));
+  assert(
+    afterFocus.markdown === selectedPartMarkdown && afterFocus.enabled === true,
+    `Blank click cleared or changed the focused part: ${JSON.stringify(afterFocus)}`,
+  );
 }
 
 async function verifyOcclusionUpdatesWhileRotating(page) {
@@ -1517,10 +1760,6 @@ async function verifyDisassemblyDragResponsive(page, pickPoint) {
       return { skipped: true };
     }
     const after = canvas.toDataURL("image/png");
-    preview.resetDisassembly?.();
-    if (typeof preview.isDisassemblyEnabled === "function" && preview.isDisassemblyEnabled()) {
-      preview.toggleDisassembly();
-    }
     return {
       skipped: false,
       after,
@@ -1529,6 +1768,48 @@ async function verifyDisassemblyDragResponsive(page, pickPoint) {
 
   assert(!result.skipped, "Disassembly verification could not read the canvas after drag");
   assert(setup.before !== result.after, "Disassembly drag did not refresh the canvas immediately");
+
+  const switched = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    if (!preview || typeof preview.toggleMeasurement !== "function") return { skipped: true };
+    const measurement = preview.toggleMeasurement();
+    const originals = preview.disassembly?.originals;
+    const restored = originals instanceof Map && originals.size > 0 && Array.from(originals.values()).every(({ part, transform }) => {
+      const node = part.object ?? part.node;
+      if (!node || !transform) return false;
+      const positionDelta = Math.hypot(
+        node.position.x - transform.position.x,
+        node.position.y - transform.position.y,
+        node.position.z - transform.position.z,
+      );
+      const scale = node.scale ?? node.scaling;
+      const originalScale = transform.scale ?? transform.scaling;
+      const scaleDelta = scale && originalScale
+        ? Math.hypot(scale.x - originalScale.x, scale.y - originalScale.y, scale.z - originalScale.z)
+        : 0;
+      const parentMatches = node.parent === transform.parent;
+      return positionDelta <= 0.000001 && scaleDelta <= 0.000001 && parentMatches;
+    });
+    return {
+      skipped: false,
+      measurement,
+      disassembly: preview.isDisassemblyEnabled?.() ?? true,
+      restored,
+    };
+  });
+  await page.waitForTimeout(120);
+  await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    if (preview?.isMeasurementActive?.()) preview.toggleMeasurement();
+  });
+  assert(
+    !switched.skipped && switched.measurement === true && switched.disassembly === false,
+    `Switching from disassembly to measurement did not update linked mode state: ${JSON.stringify(switched)}`,
+  );
+  assert(
+    switched.restored === true,
+    "Switching away from disassembly did not restore moved-part transforms",
+  );
 }
 
 async function waitForCanvasNonBlank(page, locator, label) {

@@ -98,6 +98,7 @@ import type {
   MeasurementState,
   CameraZoomState,
   WorkbenchPreview,
+  SliceInteractionMode,
   SliceState,
 } from "../preview/types";
 import {
@@ -130,16 +131,26 @@ import {
 } from "../preview/measurement";
 import {
   createSlicePlaneGeometry,
+  createSliceGizmoGeometry,
+  createSliceOffsetForPoint,
   createSliceRange,
   createSliceClipPlanes,
   createSliceState,
+  DEFAULT_SLICE_INTERACTION_MODE,
   DEFAULT_SLICE_NORMAL,
   DEFAULT_SLICE_OFFSET,
   DEFAULT_SLICE_THICKNESS,
+  normalizeSliceInteractionMode,
   normalizeSliceAxis,
   normalizeSliceNormal,
   normalizeSliceOffset,
   normalizeSliceThickness,
+  normalizeSliceRotationRadians,
+  resolveSliceRotationSnapMode,
+  rotateSliceNormalAroundAxis,
+  shouldUseSliceScreenRotation,
+  snapSliceRotationRadiansForMode,
+  type SliceRotationSnapMode,
   type SlicePlaneGeometry,
   type SliceRange,
 } from "../preview/slice";
@@ -158,18 +169,72 @@ const MEASUREMENT_PREVIEW_COLOR = new Color3(0.9, 0.91, 0.92);
 const SLICE_PLANE_COLOR = new Color3(0.22, 0.74, 0.97);
 const SLICE_FRAME_COLOR = new Color3(0.58, 0.77, 0.99);
 const SLICE_CENTER_FRAME_COLOR = new Color3(0.88, 0.95, 1);
-const SLICE_PLANE_ALPHA = 0.16;
+const SLICE_ROTATE_PLANE_COLOR = new Color3(0.96, 0.62, 0.04);
+const SLICE_ROTATE_FRAME_COLOR = new Color3(0.99, 0.83, 0.3);
+const SLICE_GIZMO_X_COLOR = new Color3(0.94, 0.27, 0.27);
+const SLICE_GIZMO_Y_COLOR = new Color3(0.13, 0.77, 0.37);
+const SLICE_GIZMO_Z_COLOR = new Color3(0.23, 0.51, 0.96);
+const SLICE_GIZMO_ACTIVE_COLOR = new Color3(0.97, 0.98, 0.99);
+const SLICE_MOVE_COLOR = new Color3(0.98, 0.8, 0.08);
+const SLICE_PLANE_ALPHA = 0.32;
 
 type BabylonMeasurementSegment = { start: Vector3; end: Vector3; line: LinesMesh; label: Mesh };
-type BabylonSliceDragState = {
+type BabylonSliceDragStateBase = {
   pointerId: number;
   startX: number;
   startY: number;
+  mode: SliceInteractionMode;
+  moved: boolean;
+};
+type BabylonSliceDragState = BabylonSliceDragStateBase & ({
+  mode: "move";
   startOffset: number;
   screenAxis: { x: number; y: number };
   pixelsToOffset: number;
-  moved: boolean;
+} | {
+  mode: "rotate";
+  axis: PreviewAxis;
+  startNormal: PreviewWorldPoint;
+  anchorPoint: PreviewWorldPoint;
+  rotationAxis: PreviewWorldPoint;
+  startPlaneX: PreviewWorldPoint;
+  startPlaneY: PreviewWorldPoint;
+  screenTangent: { x: number; y: number };
+  radiansPerPixel: number;
+  rotationRadians: number;
+  startPointerAngle: number;
+  currentPointerAngle: number;
+  snapMode: SliceRotationSnapMode;
+  useScreenRotation: boolean;
+  labelPoint: PreviewWorldPoint;
+});
+type BabylonSlicePointerTarget = {
+  mode: "move";
+} | {
+  mode: "rotate";
+  axis: PreviewAxis;
+  screenTangent: { x: number; y: number };
+  radiansPerPixel: number;
+  labelPoint: PreviewWorldPoint;
 };
+type BabylonSlicePointerSample = {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+};
+
+function distanceToScreenSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= Number.EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const amount = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (start.x + dx * amount), point.y - (start.y + dy * amount));
+}
 type BabylonMaterialClippingSnapshot = {
   material: Material;
   clipPlane: Material["clipPlane"];
@@ -324,15 +389,26 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private gridMesh: Mesh | null = null;
   private axisMeshes: Mesh[] = [];
   private autoRotateBehavior: AutoRotationBehavior | null = null;
+  private sliceAutoRotatePaused = false;
   private wireframeEnabled = false;
   private sliceActive = false;
   private sliceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+  private slicePlaneX = new Vector3(1, 0, 0);
+  private slicePlaneY = new Vector3(0, 1, 0);
+  private sliceCenter: Vector3 | null = null;
+  private sliceReferenceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private sliceOffset = DEFAULT_SLICE_OFFSET;
+  private sliceInteractionMode: SliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
   private sliceThickness = DEFAULT_SLICE_THICKNESS;
   private slicePlane: Plane | null = null;
   private sliceOverlayPlanes: Mesh[] = [];
   private sliceOverlayLines: LinesMesh[] = [];
+  private sliceOverlayLabels: Mesh[] = [];
+  private sliceRotationLabel: Mesh | null = null;
+  private sliceRotationLabelText = "";
   private sliceDragState: BabylonSliceDragState | null = null;
+  private pendingSliceMove: BabylonSlicePointerSample | null = null;
+  private sliceMoveFrame = 0;
   private readonly sliceObservers = new Set<() => void>();
   private readonly sliceOriginalMaterialClipping = new Map<number, BabylonMaterialClippingSnapshot>();
   private gizmo: OrientationGizmo | null = null;
@@ -417,6 +493,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private readonly handlePointerCancel = (event: PointerEvent) => {
     this.endSliceDrag(event, true);
   };
+  private readonly handlePointerCaptureLost = (event: PointerEvent) => {
+    this.endSliceDrag(event, true);
+  };
   private readonly preventCanvasWheelScroll = (event: WheelEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -427,6 +506,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   };
   private readonly handleMeasurementModifierBlur = () => {
     this.updateMeasurementModifierAltKey(false);
+    this.endSliceDrag(null, true);
   };
 
   private canRender(): boolean {
@@ -504,10 +584,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.notifyCameraZoomChanged();
     });
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
-    canvas.addEventListener("pointerdown", this.handlePointerDown);
-    canvas.addEventListener("pointerup", this.handlePointerUp);
-    canvas.addEventListener("pointermove", this.handlePointerMove);
-    canvas.addEventListener("pointercancel", this.handlePointerCancel);
+    canvas.addEventListener("pointerdown", this.handlePointerDown, true);
+    canvas.addEventListener("pointerup", this.handlePointerUp, true);
+    canvas.addEventListener("pointermove", this.handlePointerMove, true);
+    canvas.addEventListener("pointercancel", this.handlePointerCancel, true);
+    canvas.addEventListener("lostpointercapture", this.handlePointerCaptureLost, true);
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
     canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
     window.addEventListener("keydown", this.handleMeasurementModifierKey);
@@ -543,7 +624,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     throwIfPreviewLoadInterrupted(options);
 
     if (this.rootMesh) {
-      this.engine.getRenderingCanvas()?.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
+      this.engine.getRenderingCanvas()?.classList.remove("ai3d-slice-active", "ai3d-slice-dragging", "ai3d-slice-rotate");
       this.restoreSliceMaterialClipping();
       this.disposeSliceOverlay(false);
       disposeBabylonLoadedNodes(this.loadedMeshes, this.loadedTransformNodes);
@@ -815,8 +896,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
         this.addMeasurementPoint(this.resolveMeasurementPickPoint(targetPoint, false));
         return;
       }
-      if (this.focusSelectionEnabled && selectable) {
-        this.setFocusedNode(selectable);
+      if (this.focusSelectionEnabled) {
+        if (selectable) {
+          this.setFocusedNode(selectable);
+        } else {
+          this.cleanupPicking?.clearHighlight();
+        }
       }
       this._onPickCallbacks.forEach(cb => cb(previewResult));
     }, () => !this.focusSelectionEnabled && !this.measurementActive && !this.sliceActive, (mesh) => this.resolvePickHighlightMeshes(mesh));
@@ -979,16 +1064,26 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.scene.clearColor = c;
     }
 
-    if (config.autoRotate) {
+    if (config.autoRotate === true) {
       if (!this.autoRotateBehavior) {
         this.autoRotateBehavior = new AutoRotationBehavior();
         this.autoRotateBehavior.idleRotationSpeed = config.autoRotateSpeed ?? 0.5;
         this.autoRotateBehavior.idleRotationWaitTime = 1000;
         this.autoRotateBehavior.idleRotationSpinupTime = 500;
-        this.camera.addBehavior(this.autoRotateBehavior);
+        if (this.sliceDragState) {
+          this.sliceAutoRotatePaused = true;
+        } else {
+          this.camera.addBehavior(this.autoRotateBehavior);
+        }
       } else {
         this.autoRotateBehavior.idleRotationSpeed = config.autoRotateSpeed ?? 0.5;
       }
+    } else if (config.autoRotate === false && this.autoRotateBehavior) {
+      if (!this.sliceAutoRotatePaused) {
+        this.camera.removeBehavior(this.autoRotateBehavior);
+      }
+      this.autoRotateBehavior = null;
+      this.sliceAutoRotatePaused = false;
     }
 
     if (config.groundShadow && this.rootMesh) {
@@ -1112,7 +1207,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       return false;
     }
     if (this.isDisassemblyActive()) {
-      this.disassembly?.setEnabled(false);
+      this.disableDisassemblyAndReset();
     }
     this.deactivateSliceMode();
     const measurementTarget = this.getCurrentMeasurementTargetNode();
@@ -1180,6 +1275,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.measurementScale = sanitizeMeasurementScale(scale);
     this.invalidateMeasurementSnapInputCache();
     this.applyMeasurementModelScale();
+    if (this.sliceActive) {
+      this.setSliceCenterFromOffset(this.sliceOffset);
+      this.syncSliceClipping();
+    }
     this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
     this.notifyMeasurementsChanged();
@@ -1502,7 +1601,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.deactivateSliceMode();
       return false;
     }
-    this.disassembly?.setEnabled(false);
+    this.disableDisassemblyAndReset();
     this.deactivateMeasurementMode();
     if (this.focusSelectionEnabled) {
       this.focusSelectionEnabled = false;
@@ -1510,6 +1609,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.cleanupPicking?.clearHighlight();
     }
     this.alignSlicePlaneToCamera();
+    this.sliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
     this.sliceActive = true;
     this.syncSliceClipping();
     this.notifySliceChanged();
@@ -1523,7 +1623,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
   setSlicePlane(normal: PreviewWorldPoint, offset = this.sliceOffset): SliceState {
     const normalized = normalizeSliceNormal(normal);
     this.sliceNormal.set(normalized.x, normalized.y, normalized.z);
+    this.rebuildSlicePlaneAxes();
     this.sliceOffset = normalizeSliceOffset(offset);
+    this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -1531,6 +1633,17 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   setSliceOffset(offset: number): SliceState {
     this.sliceOffset = normalizeSliceOffset(offset);
+    this.setSliceCenterFromOffset(this.sliceOffset);
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  setSliceInteractionMode(mode: SliceInteractionMode): SliceState {
+    const nextMode = normalizeSliceInteractionMode(mode);
+    if (nextMode === this.sliceInteractionMode) return this.getSliceState();
+    this.endSliceDrag(null, true);
+    this.sliceInteractionMode = nextMode;
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -1539,6 +1652,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   resetSlicePlane(): SliceState {
     this.alignSlicePlaneToCamera();
     this.sliceOffset = DEFAULT_SLICE_OFFSET;
+    this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -1564,14 +1678,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   getSliceState(): SliceState {
-    return createSliceState(
+    const state = createSliceState(
       this.sliceActive,
       toPreviewWorldPoint(this.sliceNormal),
       this.sliceOffset,
       this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null,
       !!this.sliceDragState,
       this.sliceThickness,
+      this.sliceInteractionMode,
+      toPreviewWorldPoint(this.sliceReferenceNormal),
     );
+    const range = this.getSliceRange();
+    return range ? { ...state, offset: range.offset, position: range.offset, point: { ...range.point } } : state;
   }
 
   observeSlice(callback: () => void): () => void {
@@ -1585,7 +1703,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   toggleFocusSelection(): boolean {
     const nextEnabled = !this.focusSelectionEnabled;
     if (nextEnabled && this.isDisassemblyActive()) {
-      this.disassembly?.setEnabled(false);
+      this.disableDisassemblyAndReset();
     }
     if (nextEnabled) {
       this.deactivateMeasurementMode();
@@ -1614,11 +1732,19 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.deactivateMeasurementMode();
       this.deactivateSliceMode();
     }
-    return controller.setEnabled(nextEnabled);
+    const enabled = controller.setEnabled(nextEnabled);
+    if (!enabled) controller.reset();
+    return enabled;
   }
 
   resetDisassembly(): void {
     this.disassembly?.reset();
+  }
+
+  private disableDisassemblyAndReset(): void {
+    if (!this.isDisassemblyActive()) return;
+    this.disassembly?.setEnabled(false);
+    this.resetDisassembly();
   }
 
   isDisassemblyEnabled(): boolean {
@@ -1889,12 +2015,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.bboxMesh = null;
     this.camera.detachControl();
     const canvas = this.engine.getRenderingCanvas();
-    canvas?.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
+    canvas?.classList.remove("ai3d-slice-active", "ai3d-slice-dragging", "ai3d-slice-rotate");
     canvas?.removeEventListener("wheel", this.preventCanvasWheelScroll);
-    canvas?.removeEventListener("pointerdown", this.handlePointerDown);
-    canvas?.removeEventListener("pointerup", this.handlePointerUp);
-    canvas?.removeEventListener("pointermove", this.handlePointerMove);
-    canvas?.removeEventListener("pointercancel", this.handlePointerCancel);
+    canvas?.removeEventListener("pointerdown", this.handlePointerDown, true);
+    canvas?.removeEventListener("pointerup", this.handlePointerUp, true);
+    canvas?.removeEventListener("pointermove", this.handlePointerMove, true);
+    canvas?.removeEventListener("pointercancel", this.handlePointerCancel, true);
+    canvas?.removeEventListener("lostpointercapture", this.handlePointerCaptureLost, true);
     canvas?.removeEventListener("webglcontextlost", this.handleContextLost);
     canvas?.removeEventListener("webglcontextrestored", this.handleContextRestored);
     window.removeEventListener("keydown", this.handleMeasurementModifierKey);
@@ -1903,6 +2030,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.viewportObserver?.disconnect();
     this.viewportObserver = null;
     this.resizeObs.disconnect();
+    if (this.sliceMoveFrame) {
+      activeWindow.cancelAnimationFrame(this.sliceMoveFrame);
+      this.sliceMoveFrame = 0;
+    }
+    this.pendingSliceMove = null;
     this.invalidateMeshCache();
     this.rootMesh = null;
     this.loadedMeshes = [];
@@ -1984,10 +2116,24 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private getSliceRange(): SliceRange | null {
-    return createSliceRange(this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null, {
+    const range = createSliceRange(this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null, {
       normal: toPreviewWorldPoint(this.sliceNormal),
       offset: this.sliceOffset,
     });
+    if (!range || !this.sliceCenter) return range;
+    const distance = Vector3.Dot(this.sliceCenter, this.sliceNormal);
+    const offset = normalizeSliceOffset((distance - range.min) / range.span);
+    this.sliceOffset = offset;
+    return { ...range, offset, distance, point: toPreviewWorldPoint(this.sliceCenter) };
+  }
+
+  private setSliceCenterFromOffset(offset: number): void {
+    if (!this.rootMesh) return;
+    const range = createSliceRange(this.getRenderableBounds(this.rootMesh), {
+      normal: toPreviewWorldPoint(this.sliceNormal),
+      offset,
+    });
+    if (range) this.sliceCenter = new Vector3(range.point.x, range.point.y, range.point.z);
   }
 
   private alignSlicePlaneToCamera(): void {
@@ -1997,6 +2143,23 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
     normal.normalize();
     this.sliceNormal.copyFrom(normal);
+    this.rebuildSlicePlaneAxes(this.camera.getDirection(new Vector3(1, 0, 0)).normalize());
+    this.sliceReferenceNormal.copyFrom(normal);
+    this.sliceCenter = null;
+    this.setSliceCenterFromOffset(this.sliceOffset);
+  }
+
+  private rebuildSlicePlaneAxes(preferredX = this.slicePlaneX): void {
+    const normal = this.sliceNormal.clone().normalize();
+    const x = preferredX.clone().subtract(normal.scale(Vector3.Dot(preferredX, normal)));
+    if (x.lengthSquared() <= 0.000001) {
+      x.copyFrom(Math.abs(normal.y) < 0.92 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0));
+      x.subtractInPlace(normal.scale(Vector3.Dot(x, normal)));
+    }
+    x.normalize();
+    this.slicePlaneX.copyFrom(x);
+    Vector3.CrossToRef(normal, x, this.slicePlaneY);
+    this.slicePlaneY.normalize();
   }
 
   private deactivateSliceMode(): boolean {
@@ -2010,19 +2173,57 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private beginSliceDrag(event: PointerEvent): boolean {
     if (!this.rootMesh || !this.sliceActive) return false;
+    const target = this.getSlicePointerTarget(event);
+    if (!target) return false;
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas) return false;
     const rect = canvas.getBoundingClientRect();
-    this.sliceDragState = {
+    const mode = target.mode;
+    this.sliceInteractionMode = mode;
+    const commonState: BabylonSliceDragStateBase = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      startOffset: this.sliceOffset,
-      screenAxis: this.getSliceScreenAxis(),
-      pixelsToOffset: 1 / Math.max(Math.min(rect.width, rect.height) * 0.72, 1),
+      mode,
       moved: false,
     };
+    if (mode === "rotate") {
+      const range = this.getSliceRange();
+      if (!range) return false;
+      const pointerPolar = this.getSlicePointerPolar(event, target.axis);
+      if (!pointerPolar) return false;
+      this.sliceDragState = {
+        ...commonState,
+        mode,
+        axis: target.axis,
+        startNormal: toPreviewWorldPoint(this.sliceNormal),
+        anchorPoint: { ...range.point },
+        rotationAxis: toPreviewWorldPoint(
+          target.axis === "x" ? this.slicePlaneX : target.axis === "y" ? this.slicePlaneY : this.sliceNormal,
+        ),
+        startPlaneX: toPreviewWorldPoint(this.slicePlaneX),
+        startPlaneY: toPreviewWorldPoint(this.slicePlaneY),
+        screenTangent: target.screenTangent,
+        radiansPerPixel: target.radiansPerPixel,
+        rotationRadians: 0,
+        startPointerAngle: pointerPolar.angle,
+        currentPointerAngle: pointerPolar.angle,
+        snapMode: resolveSliceRotationSnapMode(pointerPolar.radiusRatio),
+        useScreenRotation: shouldUseSliceScreenRotation(pointerPolar.rayPlaneAlignment),
+        labelPoint: target.labelPoint,
+      };
+    } else {
+      this.sliceDragState = {
+        ...commonState,
+        mode,
+        startOffset: this.sliceOffset,
+        screenAxis: this.getSliceScreenAxis(),
+        pixelsToOffset: 1 / Math.max(Math.min(rect.width, rect.height) * 0.72, 1),
+      };
+    }
+    this.syncSliceClipping();
     canvas.classList.add("ai3d-slice-dragging");
+    this.stabilizeCameraForSliceDrag();
     this.camera.detachControl();
     try {
       canvas.setPointerCapture(event.pointerId);
@@ -2030,37 +2231,210 @@ export class BabylonModelPreview implements WorkbenchPreview {
       // Programmatic or canceled touch sequences may not have a capturable pointer.
     }
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     this.notifySliceChanged();
     this.startRenderLoop();
     return true;
   }
 
+  private getSlicePointerPolar(
+    event: Pick<PointerEvent, "clientX" | "clientY">,
+    axis: PreviewAxis,
+    frozenAxes?: { x: PreviewWorldPoint; y: PreviewWorldPoint; z: PreviewWorldPoint },
+    frozenCenter?: PreviewWorldPoint,
+  ): { angle: number; radiusRatio: number; rayPlaneAlignment: number } | null {
+    const canvas = this.engine.getRenderingCanvas();
+    const range = this.getSliceRange();
+    if (!canvas || !this.rootMesh || !range) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const ray = this.scene.createPickingRay(
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      Matrix.Identity(),
+      this.camera,
+    );
+    const centerPoint = frozenCenter ?? range.point;
+    const center = new Vector3(centerPoint.x, centerPoint.y, centerPoint.z);
+    const axes = frozenAxes
+      ? {
+        x: new Vector3(frozenAxes.x.x, frozenAxes.x.y, frozenAxes.x.z),
+        y: new Vector3(frozenAxes.y.x, frozenAxes.y.y, frozenAxes.y.z),
+        z: new Vector3(frozenAxes.z.x, frozenAxes.z.y, frozenAxes.z.z),
+      }
+      : { x: this.slicePlaneX, y: this.slicePlaneY, z: this.sliceNormal };
+    const axisVector = (axis === "x" ? axes.x : axis === "y" ? axes.y : axes.z).clone().normalize();
+    const first = (axis === "x" ? axes.y : axis === "y" ? axes.z : axes.x).clone().normalize();
+    const second = (axis === "x" ? axes.z : axis === "y" ? axes.x : axes.y).clone().normalize();
+    const denominator = Vector3.Dot(axisVector, ray.direction);
+    if (Math.abs(denominator) <= 0.000001) return null;
+    const distance = Vector3.Dot(center.subtract(ray.origin), axisVector) / denominator;
+    const hit = ray.origin.add(ray.direction.scale(distance));
+    const local = hit.subtract(center);
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    const radius = Math.max(getPreviewBoundsRadius(bounds) * 0.62, range.span * 0.16, Number.EPSILON);
+    return {
+      angle: Math.atan2(Vector3.Dot(local, second), Vector3.Dot(local, first)),
+      radiusRatio: local.length() / radius,
+      rayPlaneAlignment: Math.abs(denominator),
+    };
+  }
+
+  private getSlicePointerTarget(event: PointerEvent): BabylonSlicePointerTarget | null {
+    if (event.altKey || !this.rootMesh) return null;
+    const canvas = this.engine.getRenderingCanvas();
+    const range = this.getSliceRange();
+    if (!canvas || !range) return null;
+    const bounds = this.getRenderableBounds(this.rootMesh);
+    const rect = canvas.getBoundingClientRect();
+    const renderWidth = this.engine.getRenderWidth();
+    const renderHeight = this.engine.getRenderHeight();
+    if (rect.width <= 0 || rect.height <= 0 || renderWidth <= 0 || renderHeight <= 0) return null;
+    const viewport = this.camera.viewport.toGlobal(renderWidth, renderHeight);
+    const project = (point: PreviewWorldPoint) => {
+      const projected = Vector3.Project(
+        new Vector3(point.x, point.y, point.z),
+        Matrix.Identity(),
+        this.scene.getTransformMatrix(),
+        viewport,
+      );
+      return {
+        x: rect.left + (projected.x / renderWidth) * rect.width,
+        y: rect.top + (projected.y / renderHeight) * rect.height,
+      };
+    };
+    const pointer = { x: event.clientX, y: event.clientY };
+    const threshold = event.pointerType === "touch" ? 28 : 14;
+    const center = project(range.point);
+    if (Math.hypot(pointer.x - center.x, pointer.y - center.y) <= threshold * 1.35) return { mode: "move" };
+
+    const gizmo = createSliceGizmoGeometry(bounds, range, 64, {
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    });
+    if (gizmo.moveGuide.some(([start, end]) => {
+      const screenStart = project(start);
+      const screenEnd = project(end);
+      return distanceToScreenSegment(pointer, screenStart, screenEnd) <= threshold;
+    })) return { mode: "move" };
+
+    let best: BabylonSlicePointerTarget & { mode: "rotate" } | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const axis of ["x", "y", "z"] as const) {
+      const projectedSegments = gizmo.rotationRings[axis].map(([start, end]) => [project(start), project(end)] as const);
+      const circumference = projectedSegments.reduce(
+        (total, [start, end]) => total + Math.hypot(end.x - start.x, end.y - start.y),
+        0,
+      );
+      for (const [start, end] of projectedSegments) {
+        const distance = distanceToScreenSegment(pointer, start, end);
+        if (distance > threshold || distance >= bestDistance) continue;
+        const length = Math.hypot(end.x - start.x, end.y - start.y);
+        if (length <= Number.EPSILON) continue;
+        bestDistance = distance;
+        best = {
+          mode: "rotate",
+          axis,
+          screenTangent: { x: (end.x - start.x) / length, y: (end.y - start.y) / length },
+          radiansPerPixel: (Math.PI * 2) / Math.max(circumference, 80),
+          labelPoint: { ...range.point },
+        };
+      }
+    }
+    return best;
+  }
+
   private updateSliceDrag(event: PointerEvent): boolean {
     const state = this.sliceDragState;
     if (!state || state.pointerId !== event.pointerId) return false;
-    const dx = event.clientX - state.startX;
-    const dy = event.clientY - state.startY;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.pendingSliceMove = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    if (!this.sliceMoveFrame) {
+      this.sliceMoveFrame = activeWindow.requestAnimationFrame(() => {
+        this.sliceMoveFrame = 0;
+        this.flushSliceDragUpdate();
+      });
+    }
+    return true;
+  }
+
+  private flushSliceDragUpdate(): void {
+    if (this.sliceMoveFrame) {
+      activeWindow.cancelAnimationFrame(this.sliceMoveFrame);
+      this.sliceMoveFrame = 0;
+    }
+    const sample = this.pendingSliceMove;
+    this.pendingSliceMove = null;
+    const state = this.sliceDragState;
+    if (!sample || !state || state.pointerId !== sample.pointerId) return;
+    const dx = sample.clientX - state.startX;
+    const dy = sample.clientY - state.startY;
+    state.moved = state.moved || Math.hypot(dx, dy) > 2;
+    if (state.mode === "rotate") {
+      const pointerPolar = this.getSlicePointerPolar(sample, state.axis, {
+        x: state.startPlaneX,
+        y: state.startPlaneY,
+        z: state.startNormal,
+      }, state.anchorPoint);
+      if (!pointerPolar) return;
+      const screenDelta = (dx * state.screenTangent.x + dy * state.screenTangent.y) * state.radiansPerPixel;
+      const rawDelta = normalizeSliceRotationRadians(state.useScreenRotation
+        ? screenDelta
+        : pointerPolar.angle - state.startPointerAngle);
+      if (!state.useScreenRotation) {
+        state.snapMode = resolveSliceRotationSnapMode(pointerPolar.radiusRatio, state.snapMode);
+      }
+      state.rotationRadians = snapSliceRotationRadiansForMode(rawDelta, state.snapMode);
+      state.currentPointerAngle = state.startPointerAngle + state.rotationRadians;
+      const nextNormal = rotateSliceNormalAroundAxis(
+        state.startNormal,
+        state.rotationAxis,
+        state.rotationRadians,
+      );
+      const nextPlaneX = rotateSliceNormalAroundAxis(state.startPlaneX, state.rotationAxis, state.rotationRadians);
+      const nextPlaneY = rotateSliceNormalAroundAxis(state.startPlaneY, state.rotationAxis, state.rotationRadians);
+      const normalDelta = Vector3.DistanceSquared(this.sliceNormal, new Vector3(nextNormal.x, nextNormal.y, nextNormal.z));
+      const planeAxesDelta = Vector3.DistanceSquared(this.slicePlaneX, new Vector3(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z))
+        + Vector3.DistanceSquared(this.slicePlaneY, new Vector3(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z));
+      if (normalDelta <= 0.000001 && planeAxesDelta <= 0.000001) return;
+      if (normalDelta > 0.000001) {
+        const bounds = this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null;
+        this.sliceNormal.set(nextNormal.x, nextNormal.y, nextNormal.z);
+        this.sliceCenter = new Vector3(state.anchorPoint.x, state.anchorPoint.y, state.anchorPoint.z);
+        this.sliceOffset = createSliceOffsetForPoint(bounds, nextNormal, state.anchorPoint);
+      }
+      this.slicePlaneX.set(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z);
+      this.slicePlaneY.set(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z);
+      this.syncSliceClipping();
+      this.notifySliceChanged();
+      return;
+    }
     const delta = dx * state.screenAxis.x + dy * state.screenAxis.y;
     const nextOffset = normalizeSliceOffset(state.startOffset + delta * state.pixelsToOffset);
-    state.moved = state.moved || Math.hypot(dx, dy) > 2;
-    event.preventDefault();
-    event.stopPropagation();
-    if (Math.abs(nextOffset - this.sliceOffset) <= 0.0005) return true;
+    if (Math.abs(nextOffset - this.sliceOffset) <= 0.0005) return;
     this.sliceOffset = nextOffset;
+    this.setSliceCenterFromOffset(nextOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
-    return true;
   }
 
   private endSliceDrag(event: PointerEvent | null, cancelled = false): boolean {
     const state = this.sliceDragState;
     if (!state) return false;
     if (event && state.pointerId !== event.pointerId) return false;
+    this.flushSliceDragUpdate();
     const canvas = this.engine.getRenderingCanvas();
     this.sliceDragState = null;
     canvas?.classList.remove("ai3d-slice-dragging");
+    this.syncSliceClipping();
     this.camera.attachControl(canvas, true);
+    this.resumeCameraAfterSliceDrag();
     if (event && canvas) {
       try {
         canvas.releasePointerCapture(event.pointerId);
@@ -2068,13 +2442,35 @@ export class BabylonModelPreview implements WorkbenchPreview {
         // Pointer capture may already be gone after canceled touch/pointer sequences.
       }
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
     }
     if (!cancelled || state.moved) {
       this.notifySliceChanged();
     }
     this.startRenderLoop();
     return true;
+  }
+
+  private stabilizeCameraForSliceDrag(): void {
+    if (this.focusWorldPointFrame) {
+      activeWindow.cancelAnimationFrame(this.focusWorldPointFrame);
+      this.focusWorldPointFrame = 0;
+    }
+    this.camera.inertialAlphaOffset = 0;
+    this.camera.inertialBetaOffset = 0;
+    this.camera.inertialRadiusOffset = 0;
+    this.camera.inertialPanningX = 0;
+    this.camera.inertialPanningY = 0;
+    if (this.autoRotateBehavior && !this.sliceAutoRotatePaused) {
+      this.camera.removeBehavior(this.autoRotateBehavior);
+      this.sliceAutoRotatePaused = true;
+    }
+  }
+
+  private resumeCameraAfterSliceDrag(): void {
+    if (!this.autoRotateBehavior || !this.sliceAutoRotatePaused) return;
+    this.camera.addBehavior(this.autoRotateBehavior);
+    this.sliceAutoRotatePaused = false;
   }
 
   private getSliceScreenAxis(): { x: number; y: number } {
@@ -2101,27 +2497,35 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return { x: axis.x / length, y: axis.y / length };
   }
 
-  private createBabylonSlicePlane(range = this.getSliceRange()): Plane | null {
+  private updateBabylonSlicePlane(range: SliceRange | null): Plane | null {
     const planes = createSliceClipPlanes(range, "babylon");
-    if (!planes) return null;
-    return new Plane(planes[0].normal.x, planes[0].normal.y, planes[0].normal.z, planes[0].constant);
+    if (!planes?.length) return null;
+    const source = planes[0];
+    if (!this.slicePlane) {
+      this.slicePlane = new Plane(source.normal.x, source.normal.y, source.normal.z, source.constant);
+    } else {
+      this.slicePlane.normal.set(source.normal.x, source.normal.y, source.normal.z);
+      this.slicePlane.d = source.constant;
+    }
+    return this.slicePlane;
   }
 
   private syncSliceClipping(): void {
     const canvas = this.engine.getRenderingCanvas();
     canvas?.classList.toggle("ai3d-slice-active", this.sliceActive);
+    canvas?.classList.toggle("ai3d-slice-rotate", this.sliceActive && this.sliceInteractionMode === "rotate");
     if (!this.rootMesh || !this.sliceActive) {
       this.restoreSliceMaterialClipping();
       this.disposeSliceOverlay(false);
       this.slicePlane = null;
       canvas?.classList.remove("ai3d-slice-dragging");
+      canvas?.classList.remove("ai3d-slice-rotate");
       this.startRenderLoop();
       return;
     }
 
     const range = this.getSliceRange();
-    const plane = this.createBabylonSlicePlane(range);
-    this.slicePlane = plane;
+    const plane = this.updateBabylonSlicePlane(range);
     if (!plane) {
       this.restoreSliceMaterialClipping();
       this.disposeSliceOverlay(false);
@@ -2135,15 +2539,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
       const material = mesh.material;
       if (!material) continue;
       activeMaterialIds.add(material.uniqueId);
-      if (!this.sliceOriginalMaterialClipping.has(material.uniqueId)) {
+      const firstBinding = !this.sliceOriginalMaterialClipping.has(material.uniqueId);
+      if (firstBinding) {
         this.sliceOriginalMaterialClipping.set(material.uniqueId, {
           material,
           clipPlane: material.clipPlane,
           clipPlane2: material.clipPlane2,
         });
       }
-      material.clipPlane = plane;
-      material.markDirty(true);
+      if (firstBinding || material.clipPlane !== plane) {
+        material.clipPlane = plane;
+        material.markDirty(true);
+      }
     }
 
     for (const [id, snapshot] of Array.from(this.sliceOriginalMaterialClipping.entries())) {
@@ -2167,16 +2574,69 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private syncSliceOverlay(range: SliceRange | null): void {
-    this.disposeSliceOverlay(false);
+    this.disposeSliceOverlay(false, true);
     const bounds = this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null;
     if (!bounds || !range) return;
 
-    const planeGeometry = createSlicePlaneGeometry(bounds, range);
+    const sliceAxes = {
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    };
+    const planeGeometry = createSlicePlaneGeometry(bounds, range, 0.12, sliceAxes);
     const plane = this.createSliceOverlayPlane(planeGeometry);
-    const frame = this.createSliceOverlayLines(planeGeometry.segments, SLICE_FRAME_COLOR);
+    const frameColor = this.sliceInteractionMode === "rotate" ? SLICE_ROTATE_FRAME_COLOR : SLICE_FRAME_COLOR;
+    const frame = this.createSliceOverlayLines(planeGeometry.segments, frameColor);
     const normalGuide = this.createSliceOverlayLines(this.createSliceNormalGuide(bounds, range), SLICE_CENTER_FRAME_COLOR);
+    const rotationAngles = this.sliceDragState?.mode === "rotate"
+      ? { [this.sliceDragState.axis]: this.sliceDragState.currentPointerAngle }
+      : undefined;
+    const gizmoAxes = this.sliceDragState?.mode === "rotate"
+      ? { x: this.sliceDragState.startPlaneX, y: this.sliceDragState.startPlaneY, z: this.sliceDragState.startNormal }
+      : sliceAxes;
+    const gizmo = createSliceGizmoGeometry(bounds, range, 64, gizmoAxes, rotationAngles);
+    const activeAxis = this.sliceDragState?.mode === "rotate" ? this.sliceDragState.axis : null;
+    const moveActive = this.sliceDragState?.mode === "move";
+    const ringStyle = (axis: PreviewAxis, color: Color3) => ({
+      color: activeAxis === axis ? SLICE_GIZMO_ACTIVE_COLOR : color,
+      alpha: activeAxis ? (activeAxis === axis ? 0.98 : 0) : moveActive ? 0.1 : 0.34,
+      tickAlpha: activeAxis ? (activeAxis === axis ? 0.82 : 0) : moveActive ? 0.04 : 0.14,
+    });
+    const styleX = ringStyle("x", SLICE_GIZMO_X_COLOR);
+    const styleY = ringStyle("y", SLICE_GIZMO_Y_COLOR);
+    const styleZ = ringStyle("z", SLICE_GIZMO_Z_COLOR);
+    const ringX = this.createSliceOverlayLines(gizmo.rotationRings.x, styleX.color, styleX.alpha);
+    const ringY = this.createSliceOverlayLines(gizmo.rotationRings.y, styleY.color, styleY.alpha);
+    const ringZ = this.createSliceOverlayLines(gizmo.rotationRings.z, styleZ.color, styleZ.alpha);
+    const ticksX = this.createSliceOverlayLines(gizmo.rotationTicks.x, styleX.color, styleX.tickAlpha);
+    const ticksY = this.createSliceOverlayLines(gizmo.rotationTicks.y, styleY.color, styleY.tickAlpha);
+    const ticksZ = this.createSliceOverlayLines(gizmo.rotationTicks.z, styleZ.color, styleZ.tickAlpha);
+    const moveGuide = this.createSliceOverlayLines(gizmo.moveGuide, SLICE_MOVE_COLOR, activeAxis ? 0.22 : 0.96);
+    const activeColor = activeAxis === "x"
+      ? SLICE_GIZMO_X_COLOR
+      : activeAxis === "y" ? SLICE_GIZMO_Y_COLOR : SLICE_GIZMO_Z_COLOR;
+    const activeArc = activeAxis ? this.createSliceOverlayLines(gizmo.rotationArcs[activeAxis], activeColor, 1) : null;
+    const activeArrowheads = activeAxis
+      ? this.createSliceOverlayLines(gizmo.rotationArrowheads[activeAxis], activeColor, 1)
+      : null;
     this.sliceOverlayPlanes.push(plane);
-    this.sliceOverlayLines.push(frame, normalGuide);
+    this.sliceOverlayLines.push(frame, normalGuide, ringX, ringY, ringZ, ticksX, ticksY, ticksZ, moveGuide);
+    if (activeAxis && activeArc && activeArrowheads) {
+      this.sliceOverlayLines.push(activeArc, activeArrowheads);
+      const drag = this.sliceDragState;
+      if (drag?.mode === "rotate") {
+        const degrees = ((drag.currentPointerAngle * 180 / Math.PI) % 360 + 360) % 360;
+        const arc = gizmo.rotationArcs[activeAxis];
+        const labelPoint = arc[arc.length - 1]?.[1] ?? drag.labelPoint;
+        this.updateSliceRotationLabel(
+          `${activeAxis.toUpperCase()}: ${degrees.toFixed(1)}°`,
+          new Vector3(labelPoint.x, labelPoint.y, labelPoint.z),
+          this.getMeasurementMarkerSize() * 2.5,
+        );
+      }
+    } else {
+      this.disposeSliceRotationLabel();
+    }
   }
 
   private createSliceOverlayPlane(plane: SlicePlaneGeometry): Mesh {
@@ -2198,8 +2658,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
     vertexData.applyToMesh(mesh);
 
     const material = new StandardMaterial("slice-plane-mat", this.scene);
-    material.diffuseColor = SLICE_PLANE_COLOR.clone();
-    material.emissiveColor = SLICE_PLANE_COLOR.scale(0.75);
+    const planeColor = this.sliceInteractionMode === "rotate" ? SLICE_ROTATE_PLANE_COLOR : SLICE_PLANE_COLOR;
+    material.diffuseColor = planeColor.clone();
+    material.emissiveColor = planeColor.scale(0.75);
     material.specularColor = new Color3(0, 0, 0);
     material.alpha = SLICE_PLANE_ALPHA;
     material.backFaceCulling = false;
@@ -2214,6 +2675,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private createSliceOverlayLines(
     segments: Array<[PreviewWorldPoint, PreviewWorldPoint]>,
     color: Color3,
+    alpha = 0.88,
   ): LinesMesh {
     const line = MeshBuilder.CreateLineSystem("ai3d-slice-frame", {
       lines: segments.map(([start, end]) => [
@@ -2223,7 +2685,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       updatable: false,
     }, this.scene);
     line.color = color.clone();
-    line.alpha = 0.88;
+    line.alpha = alpha;
     line.isPickable = false;
     line.renderingGroupId = 2;
     return line;
@@ -2241,18 +2703,61 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return [[start, end]];
   }
 
-  private disposeSliceOverlay(startLoop = true): void {
+  private disposeSliceOverlay(startLoop = true, preserveRotationLabel = false): void {
     for (const plane of this.sliceOverlayPlanes) {
       plane.dispose(false, true);
     }
     for (const line of this.sliceOverlayLines) {
       line.dispose(false, true);
     }
+    for (const label of this.sliceOverlayLabels) {
+      label.dispose(false, true);
+    }
     this.sliceOverlayPlanes = [];
     this.sliceOverlayLines = [];
+    this.sliceOverlayLabels = [];
+    if (!preserveRotationLabel) this.disposeSliceRotationLabel();
     if (startLoop) {
       this.startRenderLoop();
     }
+  }
+
+  private updateSliceRotationLabel(text: string, position: Vector3, scale: number): void {
+    if (!this.sliceRotationLabel) {
+      this.sliceRotationLabel = this.createMeasurementLabelMesh(
+        { primary: text, secondary: "" },
+        position,
+        scale,
+      );
+      this.sliceRotationLabelText = text;
+      return;
+    }
+    this.sliceRotationLabel.position.copyFrom(position);
+    if (text === this.sliceRotationLabelText) return;
+    const material = this.sliceRotationLabel.material;
+    const texture = material instanceof StandardMaterial && material.diffuseTexture instanceof DynamicTexture
+      ? material.diffuseTexture
+      : null;
+    if (!texture) {
+      this.disposeSliceRotationLabel();
+      this.updateSliceRotationLabel(text, position, scale);
+      return;
+    }
+    const ctx = texture.getContext() as CanvasRenderingContext2D;
+    drawMeasurementLabelCanvas(
+      ctx,
+      { primary: text, secondary: "" },
+      MEASUREMENT_LABEL_CANVAS.width,
+      MEASUREMENT_LABEL_CANVAS.height,
+    );
+    texture.update();
+    this.sliceRotationLabelText = text;
+  }
+
+  private disposeSliceRotationLabel(): void {
+    this.sliceRotationLabel?.dispose(false, true);
+    this.sliceRotationLabel = null;
+    this.sliceRotationLabelText = "";
   }
 
   private notifySliceChanged(): void {

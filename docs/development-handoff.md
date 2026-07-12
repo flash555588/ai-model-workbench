@@ -119,6 +119,7 @@ Spec docs:
 | `docs/0.6.0-plus-upgrade-plan.md` | `0.6.0+` reliability, workflow, maintainability, and release sequencing |
 | `docs/requirements-tracker.md` | Stable product requirements, acceptance criteria, and verification mapping |
 | `docs/preview-routing-matrix.md` | Any renderer route or rollout change |
+| `docs/preview-interaction-matrix.md` | Preview tool mutual exclusion, picking, camera, overlay, and transform linkage |
 | `docs/workbench-3dgrid-feasibility-note.md` | Workbench or `3dgrid` migration decisions |
 | `docs/threejs-migration-roadmap.md` | Historical Three migration rationale and reopen conditions |
 | `FORMAT_SUPPORT_DESIGN.md` | Format support, conversion strategy, external tool boundaries |

@@ -87,6 +87,7 @@ import type {
   MeasurementState,
   CameraZoomState,
   PreviewQualitySnapshot,
+  SliceInteractionMode,
   SliceState,
 } from "../preview/types";
 import {
@@ -131,16 +132,26 @@ import {
 } from "../preview/measurement";
 import {
   createSlicePlaneGeometry,
+  createSliceGizmoGeometry,
+  createSliceOffsetForPoint,
   createSliceRange,
   createSliceClipPlanes,
   createSliceState,
+  DEFAULT_SLICE_INTERACTION_MODE,
   DEFAULT_SLICE_NORMAL,
   DEFAULT_SLICE_OFFSET,
   DEFAULT_SLICE_THICKNESS,
+  normalizeSliceInteractionMode,
   normalizeSliceAxis,
   normalizeSliceNormal,
   normalizeSliceOffset,
   normalizeSliceThickness,
+  normalizeSliceRotationRadians,
+  resolveSliceRotationSnapMode,
+  rotateSliceNormalAroundAxis,
+  shouldUseSliceScreenRotation,
+  snapSliceRotationRadiansForMode,
+  type SliceRotationSnapMode,
   type SlicePlaneGeometry,
   type SliceRange,
 } from "../preview/slice";
@@ -201,19 +212,68 @@ const MEASUREMENT_PREVIEW_COLOR = 0xe5e7eb;
 const SLICE_PLANE_COLOR = 0x38bdf8;
 const SLICE_FRAME_COLOR = 0x93c5fd;
 const SLICE_CENTER_FRAME_COLOR = 0xe0f2fe;
-const SLICE_PLANE_OPACITY = 0.12;
+const SLICE_ROTATE_PLANE_COLOR = 0xf59e0b;
+const SLICE_ROTATE_FRAME_COLOR = 0xfcd34d;
+const SLICE_GIZMO_X_COLOR = 0xef4444;
+const SLICE_GIZMO_Y_COLOR = 0x22c55e;
+const SLICE_GIZMO_Z_COLOR = 0x3b82f6;
+const SLICE_GIZMO_ACTIVE_COLOR = 0xf8fafc;
+const SLICE_MOVE_COLOR = 0xfacc15;
+const SLICE_PLANE_OPACITY = 0.32;
 const SLICE_FRAME_OPACITY = 0.84;
 
 type ThreeMeasurementSegment = { start: Vector3; end: Vector3; line: LineSegments; label: Sprite };
-type ThreeSliceDragState = {
+type ThreeSliceDragStateBase = {
   pointerId: number;
   startX: number;
   startY: number;
+  mode: SliceInteractionMode;
+  moved: boolean;
+};
+type ThreeSliceDragState = ThreeSliceDragStateBase & ({
+  mode: "move";
   startOffset: number;
   screenAxis: Vector2;
   pixelsToOffset: number;
-  moved: boolean;
+} | {
+  mode: "rotate";
+  axis: PreviewAxis;
+  startNormal: PreviewWorldPoint;
+  anchorPoint: PreviewWorldPoint;
+  rotationAxis: PreviewWorldPoint;
+  startPlaneX: PreviewWorldPoint;
+  startPlaneY: PreviewWorldPoint;
+  screenTangent: Vector2;
+  radiansPerPixel: number;
+  rotationRadians: number;
+  startPointerAngle: number;
+  currentPointerAngle: number;
+  snapMode: SliceRotationSnapMode;
+  useScreenRotation: boolean;
+  labelPoint: PreviewWorldPoint;
+});
+type ThreeSlicePointerTarget = {
+  mode: "move";
+} | {
+  mode: "rotate";
+  axis: PreviewAxis;
+  screenTangent: Vector2;
+  radiansPerPixel: number;
+  labelPoint: PreviewWorldPoint;
 };
+
+function distanceToScreenSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= Number.EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const amount = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (start.x + dx * amount), point.y - (start.y + dy * amount));
+}
 type ThreeMaterialClippingSnapshot = {
   material: Material;
   clippingPlanes: Material["clippingPlanes"];
@@ -322,11 +382,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private wireframeOriginalMaterials = new Map<number, Material | Material[]>();
   private sliceActive = false;
   private sliceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
+  private slicePlaneX = new Vector3(1, 0, 0);
+  private slicePlaneY = new Vector3(0, 1, 0);
+  private sliceCenter: Vector3 | null = null;
+  private sliceReferenceNormal = new Vector3(DEFAULT_SLICE_NORMAL.x, DEFAULT_SLICE_NORMAL.y, DEFAULT_SLICE_NORMAL.z);
   private sliceOffset = DEFAULT_SLICE_OFFSET;
+  private sliceInteractionMode: SliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
   private sliceThickness = DEFAULT_SLICE_THICKNESS;
   private slicePlanes: ThreePlane[] = [];
   private sliceOverlayPlanes: Mesh[] = [];
   private sliceOverlayLines: LineSegments[] = [];
+  private sliceOverlayLabels: Sprite[] = [];
   private sliceDragState: ThreeSliceDragState | null = null;
   private readonly sliceObservers = new Set<() => void>();
   private readonly sliceOriginalMaterialClipping = new Map<string, ThreeMaterialClippingSnapshot>();
@@ -435,6 +501,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!down) return;
     if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4) return;
     if (this.disassembly?.isEnabled()) return;
+    if (this.sliceActive) return;
     this.dispatchPick(event);
   };
   private readonly handlePointerMove = (event: PointerEvent) => {
@@ -525,10 +592,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.viewportObserver.observe(canvas);
     }
     canvas.addEventListener("wheel", this.preventCanvasWheelScroll, { passive: false });
-    canvas.addEventListener("pointerdown", this.handlePointerDown);
-    canvas.addEventListener("pointerup", this.handlePointerUp);
-    canvas.addEventListener("pointermove", this.handlePointerMove);
-    canvas.addEventListener("pointercancel", this.handlePointerCancel);
+    canvas.addEventListener("pointerdown", this.handlePointerDown, true);
+    canvas.addEventListener("pointerup", this.handlePointerUp, true);
+    canvas.addEventListener("pointermove", this.handlePointerMove, true);
+    canvas.addEventListener("pointercancel", this.handlePointerCancel, true);
     canvas.addEventListener("webglcontextlost", this.handleContextLost);
     canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
     window.addEventListener("keydown", this.handleMeasurementModifierKey);
@@ -670,12 +737,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.controls.removeEventListener("change", this.handleControlsChange);
     this.controls.dispose();
     const canvas = this.renderer.domElement;
-    canvas.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
+    canvas.classList.remove("ai3d-slice-active", "ai3d-slice-dragging", "ai3d-slice-rotate");
     canvas.removeEventListener("wheel", this.preventCanvasWheelScroll);
-    canvas.removeEventListener("pointerdown", this.handlePointerDown);
-    canvas.removeEventListener("pointerup", this.handlePointerUp);
-    canvas.removeEventListener("pointermove", this.handlePointerMove);
-    canvas.removeEventListener("pointercancel", this.handlePointerCancel);
+    canvas.removeEventListener("pointerdown", this.handlePointerDown, true);
+    canvas.removeEventListener("pointerup", this.handlePointerUp, true);
+    canvas.removeEventListener("pointermove", this.handlePointerMove, true);
+    canvas.removeEventListener("pointercancel", this.handlePointerCancel, true);
     canvas.removeEventListener("webglcontextlost", this.handleContextLost);
     canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
     window.removeEventListener("keydown", this.handleMeasurementModifierKey);
@@ -825,7 +892,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   toggleFocusSelection(): boolean {
     const nextEnabled = !this.focusSelectionEnabled;
     if (nextEnabled && this.disassembly?.isEnabled()) {
-      this.disassembly.setEnabled(false);
+      this.disableDisassemblyAndReset();
     }
     if (nextEnabled) {
       this.deactivateMeasurementMode();
@@ -938,7 +1005,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return false;
     }
     if (this.disassembly?.isEnabled()) {
-      this.disassembly.setEnabled(false);
+      this.disableDisassemblyAndReset();
     }
     this.deactivateMeasurementMode();
     if (this.focusSelectionEnabled) {
@@ -947,6 +1014,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.clearSelectionHighlight();
     }
     this.alignSlicePlaneToCamera();
+    this.sliceInteractionMode = DEFAULT_SLICE_INTERACTION_MODE;
     this.sliceActive = true;
     this.syncSliceClipping();
     this.notifySliceChanged();
@@ -960,7 +1028,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
   setSlicePlane(normal: PreviewWorldPoint, offset = this.sliceOffset): SliceState {
     const normalized = normalizeSliceNormal(normal);
     this.sliceNormal.set(normalized.x, normalized.y, normalized.z);
+    this.rebuildSlicePlaneAxes();
     this.sliceOffset = normalizeSliceOffset(offset);
+    this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -968,6 +1038,17 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   setSliceOffset(offset: number): SliceState {
     this.sliceOffset = normalizeSliceOffset(offset);
+    this.setSliceCenterFromOffset(this.sliceOffset);
+    this.syncSliceClipping();
+    this.notifySliceChanged();
+    return this.getSliceState();
+  }
+
+  setSliceInteractionMode(mode: SliceInteractionMode): SliceState {
+    const nextMode = normalizeSliceInteractionMode(mode);
+    if (nextMode === this.sliceInteractionMode) return this.getSliceState();
+    this.endSliceDrag(null, true);
+    this.sliceInteractionMode = nextMode;
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -976,6 +1057,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   resetSlicePlane(): SliceState {
     this.alignSlicePlaneToCamera();
     this.sliceOffset = DEFAULT_SLICE_OFFSET;
+    this.setSliceCenterFromOffset(this.sliceOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
     return this.getSliceState();
@@ -1001,14 +1083,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   getSliceState(): SliceState {
-    return createSliceState(
+    const state = createSliceState(
       this.sliceActive,
       toPreviewWorldPoint(this.sliceNormal),
       this.sliceOffset,
       this.getRootPreviewBounds(),
       !!this.sliceDragState,
       this.sliceThickness,
+      this.sliceInteractionMode,
+      toPreviewWorldPoint(this.sliceReferenceNormal),
     );
+    const range = this.getSliceRange();
+    return range ? { ...state, offset: range.offset, position: range.offset, point: { ...range.point } } : state;
   }
 
   observeSlice(callback: () => void): () => void {
@@ -1037,7 +1123,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return false;
     }
     if (this.disassembly?.isEnabled()) {
-      this.disassembly.setEnabled(false);
+      this.disableDisassemblyAndReset();
     }
     this.deactivateSliceMode();
     const measurementTarget = this.getCurrentMeasurementTargetObject();
@@ -1118,6 +1204,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.measurementScale = sanitizeMeasurementScale(scale);
     this.invalidateMeasurementSnapInputCache();
     this.applyMeasurementModelScale();
+    if (this.sliceActive) {
+      this.setSliceCenterFromOffset(this.sliceOffset);
+      this.syncSliceClipping();
+    }
+    this.selectionHelper?.update();
+    this.focusHelper?.update();
     this.updateMeasurementOverlayPositions();
     this.updateMeasurementLabels();
     this.notifyMeasurementsChanged();
@@ -1470,6 +1562,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!this.disassembly) return;
     this.disassembly.reset();
     this.invalidateRootBoundsCache();
+  }
+
+  private disableDisassemblyAndReset(): void {
+    if (!this.disassembly?.isEnabled()) return;
+    this.disassembly.setEnabled(false);
+    this.resetDisassembly();
   }
 
   isDisassemblyEnabled(): boolean {
@@ -2382,7 +2480,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.invalidateMeshCache();
     this.markDirty();
     this.clearFocusedMesh();
-    this.renderer.domElement.classList.remove("ai3d-slice-active", "ai3d-slice-dragging");
+    this.renderer.domElement.classList.remove("ai3d-slice-active", "ai3d-slice-dragging", "ai3d-slice-rotate");
     this.restoreSliceMaterialClipping();
     this.restoreSliceLocalClippingEnabled();
     this.disposeSliceOverlay(false);
@@ -2676,10 +2774,28 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private getSliceRange(): SliceRange | null {
-    return createSliceRange(this.getRootPreviewBounds(), {
+    const range = createSliceRange(this.getRootPreviewBounds(), {
       normal: toPreviewWorldPoint(this.sliceNormal),
       offset: this.sliceOffset,
     });
+    if (!range || !this.sliceCenter) return range;
+    const distance = this.sliceCenter.dot(this.sliceNormal);
+    const offset = normalizeSliceOffset((distance - range.min) / range.span);
+    this.sliceOffset = offset;
+    return {
+      ...range,
+      offset,
+      distance,
+      point: toPreviewWorldPoint(this.sliceCenter),
+    };
+  }
+
+  private setSliceCenterFromOffset(offset: number): void {
+    const range = createSliceRange(this.getRootPreviewBounds(), {
+      normal: toPreviewWorldPoint(this.sliceNormal),
+      offset,
+    });
+    if (range) this.sliceCenter = new Vector3(range.point.x, range.point.y, range.point.z);
   }
 
   private alignSlicePlaneToCamera(): void {
@@ -2690,6 +2806,23 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     normal.normalize();
     this.sliceNormal.copy(normal);
+    const cameraRight = new Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion).normalize();
+    this.rebuildSlicePlaneAxes(cameraRight);
+    this.sliceReferenceNormal.copy(normal);
+    this.sliceCenter = null;
+    this.setSliceCenterFromOffset(this.sliceOffset);
+  }
+
+  private rebuildSlicePlaneAxes(preferredX = this.slicePlaneX): void {
+    const normal = this.sliceNormal.clone().normalize();
+    const x = preferredX.clone().addScaledVector(normal, -preferredX.dot(normal));
+    if (x.lengthSq() <= 0.000001) {
+      x.copy(Math.abs(normal.y) < 0.92 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0));
+      x.addScaledVector(normal, -x.dot(normal));
+    }
+    x.normalize();
+    this.slicePlaneX.copy(x);
+    this.slicePlaneY.crossVectors(normal, x).normalize();
   }
 
   private deactivateSliceMode(): boolean {
@@ -2703,17 +2836,53 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private beginSliceDrag(event: PointerEvent): boolean {
     if (!this.rootObject || !this.sliceActive) return false;
+    const target = this.getSlicePointerTarget(event);
+    if (!target) return false;
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const pixelsToOffset = 1 / Math.max(Math.min(rect.width, rect.height) * 0.72, 1);
-    this.sliceDragState = {
+    const mode = target.mode;
+    this.sliceInteractionMode = mode;
+    const commonState: ThreeSliceDragStateBase = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      startOffset: this.sliceOffset,
-      screenAxis: this.getSliceScreenAxis(),
-      pixelsToOffset,
+      mode,
       moved: false,
     };
+    if (mode === "rotate") {
+      const range = this.getSliceRange();
+      if (!range) return false;
+      const pointerPolar = this.getSlicePointerPolar(event, target.axis);
+      if (!pointerPolar) return false;
+      this.sliceDragState = {
+        ...commonState,
+        mode,
+        axis: target.axis,
+        startNormal: toPreviewWorldPoint(this.sliceNormal),
+        anchorPoint: { ...range.point },
+        rotationAxis: toPreviewWorldPoint(
+          target.axis === "x" ? this.slicePlaneX : target.axis === "y" ? this.slicePlaneY : this.sliceNormal,
+        ),
+        startPlaneX: toPreviewWorldPoint(this.slicePlaneX),
+        startPlaneY: toPreviewWorldPoint(this.slicePlaneY),
+        screenTangent: target.screenTangent,
+        radiansPerPixel: target.radiansPerPixel,
+        rotationRadians: 0,
+        startPointerAngle: pointerPolar.angle,
+        currentPointerAngle: pointerPolar.angle,
+        snapMode: resolveSliceRotationSnapMode(pointerPolar.radiusRatio),
+        useScreenRotation: shouldUseSliceScreenRotation(pointerPolar.rayPlaneAlignment),
+        labelPoint: target.labelPoint,
+      };
+    } else {
+      this.sliceDragState = {
+        ...commonState,
+        mode,
+        startOffset: this.sliceOffset,
+        screenAxis: this.getSliceScreenAxis(),
+        pixelsToOffset: 1 / Math.max(Math.min(rect.width, rect.height) * 0.72, 1),
+      };
+    }
+    this.syncSliceClipping();
     this.lastPointerDown = null;
     this.controls.enabled = false;
     this.renderer.domElement.classList.add("ai3d-slice-dragging");
@@ -2723,10 +2892,104 @@ export class ThreeModelPreview implements WorkbenchPreview {
       // Programmatic or canceled touch sequences may not have a capturable pointer.
     }
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     this.prepareInteractiveFrameBudget();
     this.notifySliceChanged();
     return true;
+  }
+
+  private getSlicePointerPolar(
+    event: PointerEvent,
+    axis: PreviewAxis,
+    frozenAxes?: { x: PreviewWorldPoint; y: PreviewWorldPoint; z: PreviewWorldPoint },
+    frozenCenter?: PreviewWorldPoint,
+  ): { angle: number; radiusRatio: number; rayPlaneAlignment: number } | null {
+    const range = this.getSliceRange();
+    const bounds = this.getRootPreviewBounds();
+    if (!range || !bounds) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const centerPoint = frozenCenter ?? range.point;
+    const center = new Vector3(centerPoint.x, centerPoint.y, centerPoint.z);
+    const axes = frozenAxes
+      ? {
+        x: new Vector3(frozenAxes.x.x, frozenAxes.x.y, frozenAxes.x.z),
+        y: new Vector3(frozenAxes.y.x, frozenAxes.y.y, frozenAxes.y.z),
+        z: new Vector3(frozenAxes.z.x, frozenAxes.z.y, frozenAxes.z.z),
+      }
+      : { x: this.slicePlaneX, y: this.slicePlaneY, z: this.sliceNormal };
+    const axisVector = (axis === "x" ? axes.x : axis === "y" ? axes.y : axes.z).clone().normalize();
+    const first = (axis === "x" ? axes.y : axis === "y" ? axes.z : axes.x).clone().normalize();
+    const second = (axis === "x" ? axes.z : axis === "y" ? axes.x : axes.y).clone().normalize();
+    const plane = new ThreePlane(axisVector, -axisVector.dot(center));
+    const hit = this.raycaster.ray.intersectPlane(plane, new Vector3());
+    if (!hit) return null;
+    const local = hit.sub(center);
+    const radius = Math.max(getPreviewBoundsRadius(bounds) * 0.62, range.span * 0.16, Number.EPSILON);
+    return {
+      angle: Math.atan2(local.dot(second), local.dot(first)),
+      radiusRatio: local.length() / radius,
+      rayPlaneAlignment: Math.abs(this.raycaster.ray.direction.dot(axisVector)),
+    };
+  }
+
+  private getSlicePointerTarget(event: PointerEvent): ThreeSlicePointerTarget | null {
+    if (event.altKey) return null;
+    const bounds = this.getRootPreviewBounds();
+    const range = this.getSliceRange();
+    if (!bounds || !range) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const project = (point: PreviewWorldPoint) => {
+      const projected = new Vector3(point.x, point.y, point.z).project(this.camera);
+      return {
+        x: rect.left + (projected.x + 1) * rect.width * 0.5,
+        y: rect.top + (1 - projected.y) * rect.height * 0.5,
+      };
+    };
+    const pointer = { x: event.clientX, y: event.clientY };
+    const threshold = event.pointerType === "touch" ? 28 : 14;
+    const center = project(range.point);
+    if (Math.hypot(pointer.x - center.x, pointer.y - center.y) <= threshold * 1.35) return { mode: "move" };
+
+    const gizmo = createSliceGizmoGeometry(bounds, range, 64, {
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    });
+    if (gizmo.moveGuide.some(([start, end]) => {
+      const screenStart = project(start);
+      const screenEnd = project(end);
+      return distanceToScreenSegment(pointer, screenStart, screenEnd) <= threshold;
+    })) return { mode: "move" };
+
+    let best: ThreeSlicePointerTarget & { mode: "rotate" } | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const axis of ["x", "y", "z"] as const) {
+      const projectedSegments = gizmo.rotationRings[axis].map(([start, end]) => [project(start), project(end)] as const);
+      const circumference = projectedSegments.reduce(
+        (total, [start, end]) => total + Math.hypot(end.x - start.x, end.y - start.y),
+        0,
+      );
+      for (const [start, end] of projectedSegments) {
+        const distance = distanceToScreenSegment(pointer, start, end);
+        if (distance > threshold || distance >= bestDistance) continue;
+        const tangent = new Vector2(end.x - start.x, end.y - start.y);
+        if (tangent.lengthSq() <= Number.EPSILON) continue;
+        bestDistance = distance;
+        best = {
+          mode: "rotate",
+          axis,
+          screenTangent: tangent.normalize(),
+          radiansPerPixel: (Math.PI * 2) / Math.max(circumference, 80),
+          labelPoint: { ...range.point },
+        };
+      }
+    }
+    return best;
   }
 
   private updateSliceDrag(event: PointerEvent): boolean {
@@ -2734,15 +2997,55 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (!state || state.pointerId !== event.pointerId) return false;
     const dx = event.clientX - state.startX;
     const dy = event.clientY - state.startY;
-    const delta = dx * state.screenAxis.x + dy * state.screenAxis.y;
-    const nextOffset = normalizeSliceOffset(state.startOffset + delta * state.pixelsToOffset);
     const moved = Math.hypot(dx, dy) > 2;
     state.moved = state.moved || moved;
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     this.prepareInteractiveFrameBudget();
+    if (state.mode === "rotate") {
+      const pointerPolar = this.getSlicePointerPolar(event, state.axis, {
+        x: state.startPlaneX,
+        y: state.startPlaneY,
+        z: state.startNormal,
+      }, state.anchorPoint);
+      if (!pointerPolar) return true;
+      const screenDelta = (dx * state.screenTangent.x + dy * state.screenTangent.y) * state.radiansPerPixel;
+      const rawDelta = normalizeSliceRotationRadians(state.useScreenRotation
+        ? screenDelta
+        : pointerPolar.angle - state.startPointerAngle);
+      if (!state.useScreenRotation) {
+        state.snapMode = resolveSliceRotationSnapMode(pointerPolar.radiusRatio, state.snapMode);
+      }
+      state.rotationRadians = snapSliceRotationRadiansForMode(rawDelta, state.snapMode);
+      state.currentPointerAngle = state.startPointerAngle + state.rotationRadians;
+      const nextNormal = rotateSliceNormalAroundAxis(
+        state.startNormal,
+        state.rotationAxis,
+        state.rotationRadians,
+      );
+      const nextPlaneX = rotateSliceNormalAroundAxis(state.startPlaneX, state.rotationAxis, state.rotationRadians);
+      const nextPlaneY = rotateSliceNormalAroundAxis(state.startPlaneY, state.rotationAxis, state.rotationRadians);
+      const normalDelta = this.sliceNormal.distanceToSquared(new Vector3(nextNormal.x, nextNormal.y, nextNormal.z));
+      const planeAxesDelta = this.slicePlaneX.distanceToSquared(new Vector3(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z))
+        + this.slicePlaneY.distanceToSquared(new Vector3(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z));
+      if (normalDelta <= 0.000001 && planeAxesDelta <= 0.000001) return true;
+      if (normalDelta > 0.000001) {
+        const bounds = this.getRootPreviewBounds();
+        this.sliceNormal.set(nextNormal.x, nextNormal.y, nextNormal.z);
+        this.sliceCenter = new Vector3(state.anchorPoint.x, state.anchorPoint.y, state.anchorPoint.z);
+        this.sliceOffset = createSliceOffsetForPoint(bounds, nextNormal, state.anchorPoint);
+      }
+      this.slicePlaneX.set(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z);
+      this.slicePlaneY.set(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z);
+      this.syncSliceClipping();
+      this.notifySliceChanged();
+      return true;
+    }
+    const delta = dx * state.screenAxis.x + dy * state.screenAxis.y;
+    const nextOffset = normalizeSliceOffset(state.startOffset + delta * state.pixelsToOffset);
     if (Math.abs(nextOffset - this.sliceOffset) <= 0.0005) return true;
     this.sliceOffset = nextOffset;
+    this.setSliceCenterFromOffset(nextOffset);
     this.syncSliceClipping();
     this.notifySliceChanged();
     return true;
@@ -2755,6 +3058,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.sliceDragState = null;
     this.controls.enabled = true;
     this.renderer.domElement.classList.remove("ai3d-slice-dragging");
+    this.syncSliceClipping();
     if (event) {
       try {
         this.renderer.domElement.releasePointerCapture(event.pointerId);
@@ -2762,7 +3066,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
         // Pointer capture may already be gone after canceled touch/pointer sequences.
       }
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
     }
     if (!cancelled || state.moved) {
       this.notifySliceChanged();
@@ -2790,29 +3094,38 @@ export class ThreeModelPreview implements WorkbenchPreview {
     return axis.normalize();
   }
 
-  private createThreeSlicePlanes(range: SliceRange | null): ThreePlane[] {
+  private updateThreeSlicePlanes(range: SliceRange | null): boolean {
     const planes = createSliceClipPlanes(range, "three");
-    return planes?.map((plane) => new ThreePlane(
-      new Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
-      plane.constant,
-    )) ?? [];
+    if (!planes?.length) return false;
+    const source = planes[0];
+    if (this.slicePlanes.length === 1) {
+      this.slicePlanes[0].normal.set(source.normal.x, source.normal.y, source.normal.z);
+      this.slicePlanes[0].constant = source.constant;
+    } else {
+      this.slicePlanes = [new ThreePlane(
+        new Vector3(source.normal.x, source.normal.y, source.normal.z),
+        source.constant,
+      )];
+    }
+    return true;
   }
 
   private syncSliceClipping(): void {
     this.renderer.domElement.classList.toggle("ai3d-slice-active", this.sliceActive);
+    this.renderer.domElement.classList.toggle("ai3d-slice-rotate", this.sliceActive && this.sliceInteractionMode === "rotate");
     if (!this.rootObject || !this.sliceActive) {
       this.restoreSliceMaterialClipping();
       this.disposeSliceOverlay();
       this.slicePlanes = [];
       this.restoreSliceLocalClippingEnabled();
       this.renderer.domElement.classList.remove("ai3d-slice-dragging");
+      this.renderer.domElement.classList.remove("ai3d-slice-rotate");
       this.markDirty();
       return;
     }
 
     const range = this.getSliceRange();
-    this.slicePlanes = this.createThreeSlicePlanes(range);
-    if (this.slicePlanes.length === 0) {
+    if (!this.updateThreeSlicePlanes(range)) {
       this.restoreSliceMaterialClipping();
       this.disposeSliceOverlay();
       this.restoreSliceLocalClippingEnabled();
@@ -2829,7 +3142,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     for (const mesh of this.getRenderableMeshes(this.rootObject)) {
       for (const material of materialList(mesh.material)) {
         activeMaterialIds.add(material.uuid);
-        if (!this.sliceOriginalMaterialClipping.has(material.uuid)) {
+        const firstBinding = !this.sliceOriginalMaterialClipping.has(material.uuid);
+        if (firstBinding) {
           this.sliceOriginalMaterialClipping.set(material.uuid, {
             material,
             clippingPlanes: material.clippingPlanes,
@@ -2837,10 +3151,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
             clipShadows: material.clipShadows,
           });
         }
-        material.clippingPlanes = this.slicePlanes;
-        material.clipIntersection = false;
-        material.clipShadows = true;
-        material.needsUpdate = true;
+        if (firstBinding || material.clippingPlanes !== this.slicePlanes) {
+          material.clippingPlanes = this.slicePlanes;
+          material.clipIntersection = false;
+          material.clipShadows = true;
+          material.needsUpdate = true;
+        }
       }
     }
 
@@ -2877,13 +3193,70 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const bounds = this.getRootPreviewBounds();
     if (!bounds || !range) return;
 
-    const planeGeometry = createSlicePlaneGeometry(bounds, range);
+    const sliceAxes = {
+      x: toPreviewWorldPoint(this.slicePlaneX),
+      y: toPreviewWorldPoint(this.slicePlaneY),
+      z: toPreviewWorldPoint(this.sliceNormal),
+    };
+    const planeGeometry = createSlicePlaneGeometry(bounds, range, 0.12, sliceAxes);
     const plane = this.createSliceOverlayPlane(planeGeometry);
-    const frame = this.createSliceOverlayLines(planeGeometry.segments, SLICE_FRAME_COLOR, SLICE_FRAME_OPACITY);
+    const frameColor = this.sliceInteractionMode === "rotate" ? SLICE_ROTATE_FRAME_COLOR : SLICE_FRAME_COLOR;
+    const frame = this.createSliceOverlayLines(planeGeometry.segments, frameColor, SLICE_FRAME_OPACITY);
     const normalGuide = this.createSliceOverlayLines(this.createSliceNormalGuide(bounds, range), SLICE_CENTER_FRAME_COLOR, 0.92);
+    const rotationAngles = this.sliceDragState?.mode === "rotate"
+      ? { [this.sliceDragState.axis]: this.sliceDragState.currentPointerAngle }
+      : undefined;
+    const gizmoAxes = this.sliceDragState?.mode === "rotate"
+      ? { x: this.sliceDragState.startPlaneX, y: this.sliceDragState.startPlaneY, z: this.sliceDragState.startNormal }
+      : sliceAxes;
+    const gizmo = createSliceGizmoGeometry(bounds, range, 64, gizmoAxes, rotationAngles);
+    const activeAxis = this.sliceDragState?.mode === "rotate" ? this.sliceDragState.axis : null;
+    const moveActive = this.sliceDragState?.mode === "move";
+    const ringStyle = (axis: PreviewAxis, color: number) => ({
+      color: activeAxis === axis ? SLICE_GIZMO_ACTIVE_COLOR : color,
+      opacity: activeAxis ? (activeAxis === axis ? 0.98 : 0) : moveActive ? 0.1 : 0.34,
+      tickOpacity: activeAxis ? (activeAxis === axis ? 0.82 : 0) : moveActive ? 0.04 : 0.14,
+    });
+    const styleX = ringStyle("x", SLICE_GIZMO_X_COLOR);
+    const styleY = ringStyle("y", SLICE_GIZMO_Y_COLOR);
+    const styleZ = ringStyle("z", SLICE_GIZMO_Z_COLOR);
+    const ringX = this.createSliceOverlayLines(gizmo.rotationRings.x, styleX.color, styleX.opacity);
+    const ringY = this.createSliceOverlayLines(gizmo.rotationRings.y, styleY.color, styleY.opacity);
+    const ringZ = this.createSliceOverlayLines(gizmo.rotationRings.z, styleZ.color, styleZ.opacity);
+    const ticksX = this.createSliceOverlayLines(gizmo.rotationTicks.x, styleX.color, styleX.tickOpacity);
+    const ticksY = this.createSliceOverlayLines(gizmo.rotationTicks.y, styleY.color, styleY.tickOpacity);
+    const ticksZ = this.createSliceOverlayLines(gizmo.rotationTicks.z, styleZ.color, styleZ.tickOpacity);
+    const moveGuide = this.createSliceOverlayLines(gizmo.moveGuide, SLICE_MOVE_COLOR, activeAxis ? 0.22 : 0.96);
+    const activeArc = activeAxis
+      ? this.createSliceOverlayLines(gizmo.rotationArcs[activeAxis], activeAxis === "x"
+        ? SLICE_GIZMO_X_COLOR
+        : activeAxis === "y" ? SLICE_GIZMO_Y_COLOR : SLICE_GIZMO_Z_COLOR, 1)
+      : null;
+    const activeArrowheads = activeAxis
+      ? this.createSliceOverlayLines(gizmo.rotationArrowheads[activeAxis], activeAxis === "x"
+        ? SLICE_GIZMO_X_COLOR
+        : activeAxis === "y" ? SLICE_GIZMO_Y_COLOR : SLICE_GIZMO_Z_COLOR, 1)
+      : null;
     this.sliceOverlayPlanes.push(plane);
-    this.sliceOverlayLines.push(frame, normalGuide);
-    this.scene.add(plane, frame, normalGuide);
+    this.sliceOverlayLines.push(frame, normalGuide, ringX, ringY, ringZ, ticksX, ticksY, ticksZ, moveGuide);
+    this.scene.add(plane, frame, normalGuide, ringX, ringY, ringZ, ticksX, ticksY, ticksZ, moveGuide);
+    if (activeAxis && activeArc && activeArrowheads) {
+      this.sliceOverlayLines.push(activeArc, activeArrowheads);
+      this.scene.add(activeArc, activeArrowheads);
+      const drag = this.sliceDragState;
+      if (drag?.mode === "rotate") {
+        const degrees = ((drag.currentPointerAngle * 180 / Math.PI) % 360 + 360) % 360;
+        const arc = gizmo.rotationArcs[activeAxis];
+        const labelPoint = arc[arc.length - 1]?.[1] ?? drag.labelPoint;
+        const label = this.createMeasurementLabelSprite(
+          { primary: `${activeAxis.toUpperCase()}: ${degrees.toFixed(1)}°`, secondary: "" },
+          new Vector3(labelPoint.x, labelPoint.y, labelPoint.z),
+          this.getMeasurementMarkerSize() * 2.5,
+        );
+        this.sliceOverlayLabels.push(label);
+        this.scene.add(label);
+      }
+    }
   }
 
   private createSliceOverlayPlane(plane: SlicePlaneGeometry): Mesh {
@@ -2899,7 +3272,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     ], 3));
     geometry.computeVertexNormals();
     const material = new MeshBasicMaterial({
-      color: SLICE_PLANE_COLOR,
+      color: this.sliceInteractionMode === "rotate" ? SLICE_ROTATE_PLANE_COLOR : SLICE_PLANE_COLOR,
       transparent: true,
       opacity: SLICE_PLANE_OPACITY,
       side: DoubleSide,
@@ -2963,8 +3336,14 @@ export class ThreeModelPreview implements WorkbenchPreview {
         material.dispose();
       }
     }
+    for (const label of this.sliceOverlayLabels) {
+      label.removeFromParent();
+      label.material.map?.dispose();
+      label.material.dispose();
+    }
     this.sliceOverlayPlanes = [];
     this.sliceOverlayLines = [];
+    this.sliceOverlayLabels = [];
     if (markDirty) {
       this.markDirty();
     }

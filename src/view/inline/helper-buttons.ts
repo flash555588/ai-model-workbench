@@ -43,6 +43,11 @@ import {
   formatMeasurementValue,
 } from "../../render/preview/measurement";
 import { createCameraZoomControl } from "./zoom-control";
+import {
+  isPreviewInteractionModeActive,
+  resolvePreviewInteractionMode,
+  type PreviewInteractionMode,
+} from "../../render/preview/interaction";
 
 /** Create an SVG icon that follows its button color via currentColor. */
 function createSvgIcon(inner: string): SVGSVGElement {
@@ -163,6 +168,7 @@ export function createHelperButtons(
   const viewGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-view" });
   const inspectGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-inspect" });
   const outputGroup = toolbar.createDiv({ cls: "ai3d-helper-group ai3d-helper-group-output" });
+  const interactionStatus = toolbar.createSpan({ cls: "ai3d-interaction-status is-hidden" });
   const stopToolbarEvent = (event: Event): void => {
     event.stopPropagation();
   };
@@ -190,6 +196,8 @@ export function createHelperButtons(
   let releaseMeasurementObserver: (() => void) | null = null;
   let boundSlicePreview: SlicePreview | null = null;
   let releaseSliceObserver: (() => void) | null = null;
+  let annotationActive = false;
+  let lastInteractionMode: PreviewInteractionMode = "idle";
 
   const markSecondary = <T extends HTMLButtonElement>(button: T): T => {
     button.classList.add("is-secondary");
@@ -255,6 +263,52 @@ export function createHelperButtons(
   };
 
   let lastSyncedPreview: unknown = null;
+  const interactionModeLabel = (mode: PreviewInteractionMode): string => {
+    switch (mode) {
+      case "annotation": return t("helper.interactionModeAnnotation");
+      case "focus": return t("helper.interactionModeFocus");
+      case "disassembly": return t("helper.interactionModeDisassembly");
+      case "measurement": return t("helper.interactionModeMeasurement");
+      case "slice": return t("helper.interactionModeSlice");
+      case "idle": return "";
+    }
+  };
+
+  const syncInteractionPresentation = (
+    focusPreview: FocusSelectionPreview | null,
+    disassemblyPreview: DisassemblyPreview | null,
+    measurementPreview: MeasurementPreview | null,
+    slicePreview: SlicePreview | null,
+  ): void => {
+    const mode = resolvePreviewInteractionMode({
+      annotation: annotationActive,
+      focus: !!focusPreview?.isFocusSelectionEnabled(),
+      disassembly: !!disassemblyPreview?.isDisassemblyEnabled(),
+      measurement: !!measurementPreview?.isMeasurementActive(),
+      slice: !!slicePreview?.isSliceActive(),
+    });
+    toolbar.dataset.ai3dInteractionMode = mode;
+    previewHost.dataset.ai3dInteractionMode = mode;
+    previewHost.classList.toggle("ai3d-interaction-active", isPreviewInteractionModeActive(mode));
+    if (lastInteractionMode !== mode) {
+      previewHost.classList.remove(`ai3d-interaction-${lastInteractionMode}`);
+      if (mode !== "idle") previewHost.classList.add(`ai3d-interaction-${mode}`);
+      lastInteractionMode = mode;
+    }
+    interactionStatus.textContent = interactionModeLabel(mode);
+    interactionStatus.classList.toggle("is-hidden", mode === "idle");
+    const linkedButtons: Array<[PreviewInteractionMode, HTMLButtonElement]> = [
+      ["annotation", annotBtn],
+      ["focus", focusBtn],
+      ["disassembly", disassembleBtn],
+      ["measurement", measureBtn],
+      ["slice", sliceBtn],
+    ];
+    for (const [buttonMode, button] of linkedButtons) {
+      button.classList.toggle("ai3d-linked-inactive", mode !== "idle" && mode !== buttonMode);
+    }
+  };
+
   const syncToggleStates = (): void => {
     const preview = getPreview();
     const focusPreview = preview && supportsFocusSelectionPreview(preview) ? preview : null;
@@ -265,9 +319,26 @@ export function createHelperButtons(
     setTogglePressed(disassembleBtn, !!disassemblyPreview?.isDisassemblyEnabled());
     setTogglePressed(measureBtn, !!measurementPreview?.isMeasurementActive());
     setTogglePressed(sliceBtn, !!slicePreview?.isSliceActive());
+    setTogglePressed(annotBtn, annotationActive);
     if (preview && supportsOrientationGizmoPreview(preview)) {
       setTogglePressed(gizmoBtn, !!preview.isOrientationGizmoEnabled?.());
     }
+    syncInteractionPresentation(focusPreview, disassemblyPreview, measurementPreview, slicePreview);
+  };
+
+  const deactivateAnnotationForPreviewMode = (): void => {
+    if (!annotationActive || !onToggleAnnotate) return;
+    annotationActive = onToggleAnnotate();
+    setTogglePressed(annotBtn, annotationActive);
+  };
+
+  const deactivatePreviewModesForAnnotation = (): void => {
+    const preview = getPreview();
+    if (!preview) return;
+    if (supportsSlicePreview(preview) && preview.isSliceActive()) preview.toggleSlice();
+    if (supportsMeasurementPreview(preview) && preview.isMeasurementActive()) preview.toggleMeasurement();
+    if (supportsDisassemblyPreview(preview) && preview.isDisassemblyEnabled()) preview.toggleDisassembly();
+    if (supportsFocusSelectionPreview(preview) && preview.isFocusSelectionEnabled()) preview.toggleFocusSelection();
   };
 
   const syncCapabilities = (): void => {
@@ -416,6 +487,7 @@ export function createHelperButtons(
   focusBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsFocusSelectionPreview(preview)) return;
+    if (!preview.isFocusSelectionEnabled()) deactivateAnnotationForPreviewMode();
     const on = preview.toggleFocusSelection();
     syncCapabilities();
     showTooltip(focusBtn, on ? t("helper.focusSelectionOn") : t("helper.focusSelectionOff"));
@@ -431,6 +503,7 @@ export function createHelperButtons(
   disassembleBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsDisassemblyPreview(preview)) return;
+    if (!preview.isDisassemblyEnabled()) deactivateAnnotationForPreviewMode();
     const on = preview.toggleDisassembly();
     syncCapabilities();
     showTooltip(disassembleBtn, on ? t("helper.disassemblyOn") : t("helper.disassemblyOff"));
@@ -447,6 +520,7 @@ export function createHelperButtons(
   sliceBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsSlicePreview(preview)) return;
+    if (!preview.isSliceActive()) deactivateAnnotationForPreviewMode();
     const active = preview.toggleSlice();
     syncCapabilities();
     showTooltip(sliceBtn, active ? t("helper.sliceOn") : t("helper.sliceOff"));
@@ -505,6 +579,7 @@ export function createHelperButtons(
   measureBtn.addEventListener("click", () => {
     const preview = getPreview();
     if (!preview || !supportsMeasurementPreview(preview)) return;
+    if (!preview.isMeasurementActive()) deactivateAnnotationForPreviewMode();
     const active = preview.toggleMeasurement();
     syncCapabilities();
     showTooltip(measureBtn, active ? t("helper.measurementOn") : t("helper.measurementOff"));
@@ -784,8 +859,10 @@ export function createHelperButtons(
   const annotBadge = annotBtn.createSpan({ cls: "ai3d-pin-badge is-hidden" });
   annotBtn.addEventListener("click", () => {
     if (!onToggleAnnotate) return;
+    if (!annotationActive) deactivatePreviewModesForAnnotation();
     const active = onToggleAnnotate();
-    setTogglePressed(annotBtn, active);
+    annotationActive = active;
+    syncCapabilities();
     showTooltip(
       annotBtn,
       active ? t(resolvedAnnotationCopy.activeTooltipKey) : t(resolvedAnnotationCopy.inactiveTooltipKey),
@@ -1064,23 +1141,19 @@ export function createHelperButtons(
   const sliceOffsetRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
   sliceOffsetRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceOffsetLabel") });
   const sliceOffsetValue = sliceOffsetRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-offset-value" });
-  const sliceNormalRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
-  sliceNormalRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceNormalLabel") });
-  const sliceNormalValue = sliceNormalRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-normal-value" });
+  const sliceTiltRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-status-row" });
+  sliceTiltRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceTiltLabel") });
+  const sliceTiltValue = sliceTiltRow.createSpan({ cls: "ai3d-slice-value ai3d-slice-tilt-value" });
 
   function formatSlicePercent(value: number): string {
     const percent = Math.round(Math.max(0, Math.min(value, 1)) * 1000) / 10;
     return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(1)}%`;
   }
 
-  function formatSliceNumber(value: number): string {
-    if (!Number.isFinite(value)) return "0.00";
-    const rounded = Math.round(value * 100) / 100;
-    return rounded.toFixed(2);
-  }
-
-  function formatSliceNormal(state: SliceState): string {
-    return `${formatSliceNumber(state.normal.x)}, ${formatSliceNumber(state.normal.y)}, ${formatSliceNumber(state.normal.z)}`;
+  function formatSliceTilt(value: number): string {
+    if (!Number.isFinite(value)) return "0°";
+    const rounded = Math.round(Math.max(0, Math.min(value, 180)) * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded}°` : `${rounded.toFixed(1)}°`;
   }
 
   function getSlicePreview(): SlicePreview | null {
@@ -1119,8 +1192,10 @@ export function createHelperButtons(
     setTogglePressed(sliceBtn, state.active);
     sliceDetails.classList.toggle("is-hidden", !state.active);
     sliceOffsetValue.textContent = formatSlicePercent(state.offset);
-    sliceNormalValue.textContent = formatSliceNormal(state);
-    sliceSummary.textContent = state.dragging ? t("helper.sliceDragging") : t("helper.sliceReady");
+    sliceTiltValue.textContent = formatSliceTilt(state.tiltDegrees);
+    sliceSummary.textContent = state.dragging
+      ? t(state.interactionMode === "rotate" ? "helper.sliceRotating" : "helper.sliceMoving")
+      : t("helper.sliceGizmoReady");
   }
 
   sliceResetBtn.addEventListener("click", resetSliceControls);

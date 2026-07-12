@@ -244,17 +244,22 @@ export interface SliceState {
   offset: number;
   point: PreviewWorldPoint | null;
   dragging?: boolean;
+  interactionMode: SliceInteractionMode;
+  tiltDegrees: number;
   axis: PreviewAxis;
   position: number;
   thickness: number;
   bounds: PreviewWorldPoint | null;
 }
 
+export type SliceInteractionMode = "move" | "rotate";
+
 export interface SlicePreview {
   toggleSlice(): boolean;
   isSliceActive(): boolean;
   setSlicePlane(normal: PreviewWorldPoint, offset?: number): SliceState;
   setSliceOffset(offset: number): SliceState;
+  setSliceInteractionMode?(mode: SliceInteractionMode): SliceState;
   resetSlicePlane(): SliceState;
   getSliceState(): SliceState;
   observeSlice?(callback: () => void): () => void;
