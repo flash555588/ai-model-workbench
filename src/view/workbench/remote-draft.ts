@@ -68,11 +68,19 @@ function stripGeometrySummary(input: AnalysisDraftingInput): AnalysisDraftingInp
     model: {
       ...input.model,
       summary: undefined,
+      // Data minimization: when geometry is withheld, also withhold the vault
+      // path (reduce to basename), user notes, and user tags — none of these
+      // are required to draft a note and they leak vault layout and free text.
+      path: vaultPathBasename(input.model.path),
+      notes: "",
+      tags: [],
     },
     partCandidates: [],
     annotationLinks: input.annotationLinks.map((link) => ({
       ...link,
       notePath: undefined,
+      headingRef: undefined,
+      label: "",
       position: [0, 0, 0],
       nearestPartId: undefined,
       nearestPartName: undefined,
@@ -85,6 +93,11 @@ function stripGeometrySummary(input: AnalysisDraftingInput): AnalysisDraftingInp
       relatedPartIds: [],
     })),
   };
+}
+
+function vaultPathBasename(path: string): string {
+  const segments = path.split(/[\\/]/);
+  return segments[segments.length - 1] ?? "";
 }
 
 function sanitizeDraftingInput(settings: PluginSettings, input: AnalysisDraftingInput): AnalysisDraftingInput {

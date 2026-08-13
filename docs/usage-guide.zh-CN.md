@@ -7,10 +7,10 @@
 
 | 入口 | 适合场景 | 渲染契约 |
 |------|----------|----------|
-| Wikilink 嵌入 | 在笔记里快速预览模型 | `GLB/GLTF/STL/PLY/OBJ` 默认走 Three.js |
-| `3d` 代码块 | 单模型预览，并自定义相机、灯光、场景 | 直读单模型格式走 Three.js |
+| Wikilink 嵌入 | 在笔记里快速预览模型 | `GLB/GLTF/STL/PLY/OBJ` 默认走 Babylon.js，Three.js 可显式启用 |
+| `3d` 代码块 | 单模型预览，并自定义相机、灯光、场景 | 直读单模型格式默认走 Babylon.js，Three.js 可显式启用 |
 | `3dgrid` 代码块 | 多模型对比或预设布局 | 保留 Babylon.js grid 后端 |
-| 直接文件视图 | 检查、标注、测量、截图、生成知识笔记 | 直读格式走 Three.js；转换和保守 workbench 路线保留 fallback |
+| 直接文件视图 | 检查、标注、测量、截图、生成知识笔记 | 直读格式默认走 Babylon.js；转换 GLB 走 Three.js 快速路径并自动回退 Babylon.js |
 
 优先使用直读格式：`GLB`、`GLTF`、`STL`、`PLY`、`OBJ`。桌面端安装对应工具后，可以把
 `STEP`、`STP`、`IGES`、`IGS`、`BREP`、`SLDPRT`、`3MF`、`DAE`、`FBX`
@@ -29,8 +29,10 @@
 5. 复制模型/部件信息，或保存当前视口截图。
 6. 证据足够后生成知识笔记。
 
-默认情况下，`GLB/GLTF/STL/PLY/OBJ` 直接文件视图走 Three.js。转换格式和保守
-workbench 路线保留 Babylon.js fallback，除非显式启用实验性 Three workbench 路径。
+默认情况下，`GLB/GLTF/STL/PLY/OBJ` 直接文件视图走 Babylon.js 兼容模式，可在设置中
+显式启用 Three.js 路线。启用「Converted GLB Three fast path」时，转换生成的 GLB 会
+先走 Three.js 快速路径并在失败时静默回退 Babylon.js；保守 workbench 路线仍保留在
+Babylon.js，除非显式启用实验性 Three workbench 路径。
 
 ## 标注
 
@@ -53,7 +55,7 @@ workbench 路线保留 Babylon.js fallback，除非显式启用实验性 Three w
 - 模型难以取点时先重置视图。
 - 重复测量优先使用直接文件视图。
 - 清空测量前先把需要的记录复制到分析笔记。
-- 对极小零件，依赖当前 Three.js 的相机和标记尺寸自适应，不要手动放大模型数据。
+- 对极小零件，依赖当前渲染器的相机和标记尺寸自适应，不要手动放大模型数据。
 
 ## 截图和 Markdown 导出
 
@@ -89,6 +91,8 @@ drafting input；原始模型上传会被阻止。
 - 螺丝、针脚、连接器、电子元件等语义明确的小零件会尽量保留为独立候选。
 - 大量无语义的极小碎片会合并为低置信度 detail cluster，避免切得过碎。
 - 报告、sidecar、draft input、部件笔记和注册 profile 会保留格式血缘，例如 `STEP -> GLB (convert)`，但不会把转换后的绝对文件路径写进笔记。
+- 直接工作台会列出可能的跨模型零件匹配。确认同一可复用零件时选择“确认”，误匹配时选择“非同一零件”以从生成知识中排除，选择“撤销”可恢复为待审核状态。审核决定会在重新加载和重新生成报告后继续保留。
+- 已审核关系会优先显示；候选超过 12 项时，可选择“显示全部”查看其余匹配。
 
 从其它建模软件导出时，尽量保留对象名、组件层级、材质名和装配标签。不要把所有 mesh 合并成一个匿名对象，否则小零件证据会明显变弱。
 

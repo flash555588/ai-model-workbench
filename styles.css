@@ -66,12 +66,91 @@ body {
   overflow: hidden;
   background: var(--background-secondary);
   position: relative;
+  transition: box-shadow 0.15s ease;
 }
 
 .ai3d-preview-host canvas {
   width: 100%;
   height: 100%;
   display: block;
+  cursor: grab;
+}
+
+.ai3d-preview-host canvas:active {
+  cursor: grabbing;
+}
+
+/* Keyboard focus ring for canvases (they are tabbable and support R/W/G/B/M keys). */
+.ai3d-preview-host canvas:focus-visible,
+.ai3d-grid-host canvas:focus-visible,
+.ai3d-embed-canvas:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+/* Floating model caption: identifies the previewed asset inside the note. */
+.ai3d-inline-caption {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 3px 8px;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--background-primary) 72%, transparent);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+/* Hide the caption while an interaction mode (measure/slice/focus/disassembly)
+   is active so it does not obscure the region being worked on. */
+.ai3d-preview-host.ai3d-interaction-active .ai3d-inline-caption,
+.ai3d-grid-host.ai3d-interaction-active .ai3d-inline-caption {
+  opacity: 0;
+}
+
+.ai3d-inline-caption-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai3d-inline-caption-badge {
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* One-time interaction hint shown after a model loads. */
+.ai3d-interaction-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 4px 12px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--background-primary) 78%, transparent);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  transition: opacity 0.4s ease;
+}
+
+.ai3d-interaction-hint.is-hidden {
+  opacity: 0;
 }
 
 .ai3d-zoom-control {
@@ -1030,6 +1109,11 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+  cursor: grab;
+}
+
+.ai3d-grid-host canvas:active {
+  cursor: grabbing;
 }
 
 /* --- JSON Config Error --- */
@@ -1223,7 +1307,7 @@ body {
 }
 .ai3d-sidebar-content .ai3d-direct-workbench-match {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   gap: 6px;
   align-items: center;
   padding: 6px 8px;
@@ -1244,6 +1328,8 @@ body {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
 }
 .ai3d-sidebar-content .ai3d-direct-workbench-match-title,
 .ai3d-sidebar-content .ai3d-direct-workbench-match-source,
@@ -1507,6 +1593,36 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ai3d-direct-workbench-match-review {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai3d-direct-workbench-match-review-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.ai3d-direct-workbench-match-review-status.is-confirmed {
+  color: var(--text-success);
+}
+
+.ai3d-direct-workbench-match-review-status.is-rejected {
+  color: var(--text-error);
+}
+
+.ai3d-direct-workbench-match-review-action {
+  white-space: nowrap;
+}
+
+.ai3d-direct-workbench-match-show-all {
+  width: 100%;
+  margin-top: 6px;
 }
 
 .ai3d-direct-workbench-match-title,
@@ -1661,6 +1777,11 @@ body {
   width: 100%;
   height: var(--ai3d-embed-height, 300px);
   touch-action: pan-y pinch-zoom;
+  cursor: grab;
+}
+
+.ai3d-embed-canvas:active {
+  cursor: grabbing;
 }
 
 .ai3d-mobile-mode-bar {

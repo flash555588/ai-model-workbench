@@ -27,7 +27,7 @@ future agent notes can refer to the same requirement over time.
 
 | ID | Requirement | Priority | Status | Verification |
 |----|-------------|----------|--------|--------------|
-| REQ-001 | Single-model previews use Three.js by default while Babylon remains fallback/capability backend | P0 | Verified | `npm run verify:preview`, `npm run verify:preview:success` |
+| REQ-001 | Single-model previews use Babylon.js compatibility mode by default while Three.js stays an explicit opt-in rollout | P0 | Verified | `npm test -- --run src/render/preview/routing.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-002 | `3dgrid` and conservative workbench routes remain on Babylon until workflow evidence justifies migration | P0 | Verified | `docs/preview-routing-matrix.md`, `npm test -- --run src/render/preview/routing.test.ts`, `npm run verify:preview`, `npm run verify:preview:success` |
 | REQ-003 | Knowledge generation remains local-first and records report, sidecar, index, preview evidence, and part notes | P0 | Verified | `npm run verify:knowledge-index` |
 | REQ-004 | Direct file view auto-registers captured part candidates for later cross-model reuse matching | P1 | Verified | `npm run verify:knowledge-index`, `npm test -- --run src/render/preview/evidence.test.ts src/view/workbench/analysis-result.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`, `node scripts/verify-preview.mjs --model "models/resource-fixtures/grouped-parts/grouped parts.gltf" --expect-group-parts`, AstroInk STEP component conversion probe |
@@ -41,7 +41,8 @@ future agent notes can refer to the same requirement over time.
 | REQ-012 | Conversion diagnostics explain missing, disabled, stale, timed out, and unsafe converter paths without leaking local command details | P1 | Verified | `npm run typecheck`, `npm test -- --run src/io/conversion/command-discovery.test.ts src/io/conversion/manager.test.ts src/io/cache/converted-asset-cache.test.ts src/io/conversion/adapters/freecad-converter.test.ts src/io/conversion/adapters/freecad-script-builder.test.ts src/diagnostics/report.test.ts`, `npm run verify:diagnostics` |
 | REQ-013 | Knowledge generation writes pending, failed, and success state consistently across partial artifact writes | P0 | Verified | `npm run typecheck`, `npm test -- --run src/view/workbench/knowledge-note.test.ts src/view/workbench/remote-draft.test.ts`, `npm run verify:knowledge-index`, `npm run verify:remote-draft` |
 | REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run build`, `npm run verify:release` |
-| REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release` |
+| REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release`, `npm run verify:obsidian -- --clean` |
+| REQ-016 | Cross-model registered-part matches support persistent human confirmation and rejection | P1 | Verified | `npm run typecheck`, `npm test`, `npm run lint`, `npm run build`, `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
 
 ## Active Requirement Details
 
@@ -335,6 +336,10 @@ future agent notes can refer to the same requirement over time.
   - PLY point clouds participate in Three.js summary, part evidence, picking, measurement, material audit, and disposal without fake triangle geometry.
   - OBJ color textures use sRGB without forcing non-color maps into sRGB.
   - Tiny model camera fit, orthographic framing, shadow, and grid helpers use the real model span instead of a unit-size floor.
+  - Perspective and orthographic camera framing fit the limiting viewport axis, so a pane narrower than it is tall does not clip the model horizontally.
+  - Changing the viewport aspect re-frames the default camera pose without overriding a user-moved camera or an explicit `camera:` block config.
+  - Block-config `scene:` and `stl:` options produce the same result on the Three.js path as on the Babylon.js path, including `autoRotate`, `axis`, format-scoped `stl:` handling, and camera-attached lights across projection changes.
+  - Camera framing, block-config style state, toolbar toggle state, and STL-to-GLB format scoping are read back off a live Three.js scene by the preview success suite, not only by unit tests.
   - Small-part evidence keeps named details separate while clustering generic tiny fragments that would create over-cut part lists.
   - Color, small-part, and smoothness snapshot checks are covered by the preview success suite.
 - Verification:
@@ -345,11 +350,53 @@ future agent notes can refer to the same requirement over time.
   - `npm run verify:diagnostics`
   - `npm run build`
   - `npm run verify:release`
+  - `npm run verify:obsidian -- --clean`
 - Related files:
   - `src/render/preview/capabilities.ts`
   - `src/render/preview/types.ts`
+  - `src/render/preview/camera-fit.ts`
+  - `src/render/preview/viewport-fit.ts`
+  - `src/render/preview/axis-visibility.ts`
   - `src/render/three/loaders.ts`
   - `src/render/three/scene.ts`
+  - `scripts/verify-preview.mjs`
+
+### REQ-016: Human-Reviewed Part Reuse Decisions
+
+- Status: Verified
+- Priority: P1
+- User value: Cross-model reuse suggestions should become trustworthy knowledge only after a user can confirm or dismiss them, and that judgment should survive reloads and regenerated reports.
+- Scope:
+  - Confirm, reject, and clear a detected registered-part match from the direct workbench.
+  - Persist the decision as a current-part/source-part relationship without persisting the derived match cache.
+  - Prefer confirmed relationships during match ranking and knowledge generation.
+  - Keep rejected relationships out of reports, part notes, indexes, and drafting input while leaving an undo path in the review UI.
+- Out of scope:
+  - Manual creation of an arbitrary relationship when no candidate was detected.
+  - Renaming or merging registered part records.
+  - Broad workbench routing changes or `3dgrid` migration.
+- Acceptance criteria:
+  - Review decisions are keyed by current part ID, source asset ID, and source part ID and are bounded during state normalization.
+  - Confirm, Not same, and Undo controls expose pending, confirmed, and rejected states in the direct workbench.
+  - The direct workbench retains multiple candidates for one current part, sorts reviewed relationships ahead of pending suggestions, and offers a bounded initial queue with an explicit Show all path.
+  - Confirmed matches rank ahead of unreviewed candidates even when their automatic score is lower.
+  - Rejected matches stay reviewable and auditable but are not presented as reuse in reports, part notes, indexes, or local and remote drafting input.
+  - Profile loading preserves valid reviews, removes malformed or duplicate reviews, and still strips transient `registeredMatches` from persisted parts.
+- Verification:
+  - `npm run typecheck`
+  - `npm test -- --run src/utils/registered-match-review.test.ts src/view/workbench/analysis-result.test.ts src/view/workbench/knowledge-note.test.ts src/store/plugin-store.test.ts`
+  - `npm run verify:knowledge-index`
+  - `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three`
+  - `npm run verify:preview:success`
+  - `npm run verify:obsidian -- --clean`
+- Related files:
+  - `src/utils/registered-match-review.ts`
+  - `src/store/plugin-store.ts`
+  - `src/view/workbench/analysis-result.ts`
+  - `src/view/workbench/knowledge-note.ts`
+  - `src/view/direct-view.ts`
+  - `src/view/direct-workbench-registered-match.ts`
+  - `scripts/visual-preview-entry.ts`
   - `scripts/verify-preview.mjs`
 
 ## New Requirement Template

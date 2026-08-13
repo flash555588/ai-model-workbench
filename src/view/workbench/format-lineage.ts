@@ -16,6 +16,12 @@ const SUPPORTED_ANALYSIS_FORMATS = new Set<ModelAssetFormat>([
   "sldprt",
   "3mf",
   "dae",
+  "off",
+  "msh",
+  "x_t",
+  "x_b",
+  "catpart",
+  "catproduct",
 ]);
 
 const SUPPORTED_LOAD_STRATEGIES = new Set(["direct", "convert"]);

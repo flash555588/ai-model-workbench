@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from "../../domain/constants";
 import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, ModelEvidence, PartRecord, PluginState } from "../../domain/models";
 import type { PluginStore } from "../../store/plugin-store";
 import { createDefaultProfile } from "../../store/plugin-store";
-import { collectRegisteredPartsFromProfiles, generateKnowledgeNote, stripTransientRegisteredPartData } from "./knowledge-note";
+import { buildKnowledgeNoteContent, collectRegisteredPartsFromProfiles, generateKnowledgeNote, stripTransientRegisteredPartData } from "./knowledge-note";
 
 const noticeMessages = vi.hoisted((): string[] => []);
 
@@ -431,6 +431,70 @@ describe("collectRegisteredPartsFromProfiles", () => {
     expect(parts).toHaveLength(8);
     expect(parts.some((part) => part.partId === "reviewed")).toBe(true);
     expect(parts.some((part) => part.partId === "component")).toBe(true);
+  });
+});
+
+describe("registered match review output", () => {
+  function createMatchedPart(
+    partId: string,
+    sourcePartName: string,
+    reviewDecision: "confirmed" | "rejected",
+  ): PartRecord {
+    return {
+      partId,
+      assetId: "models/current.glb",
+      name: `Current ${partId}`,
+      meshRefs: [partId],
+      materialRefs: [],
+      confidence: 0.8,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      registeredMatches: [{
+        sourceAssetId: "models/source.glb",
+        sourcePartId: `source:${partId}`,
+        sourcePartName,
+        matchScore: 0.9,
+        confidence: 0.85,
+        reasons: ["same component id"],
+        reviewDecision,
+      }],
+      reviewed: false,
+    };
+  }
+
+  it("promotes confirmed reuse and omits rejected matches from report knowledge", () => {
+    const analysis: AnalysisResult = {
+      asset: {
+        assetId: "models/current.glb",
+        title: "current",
+        sourcePath: "models/current.glb",
+        format: "glb",
+        importedAt: "2026-08-04T00:00:00.000Z",
+        updatedAt: "2026-08-04T00:00:00.000Z",
+        status: "ready",
+      },
+      parts: [
+        createMatchedPart("confirmed-part", "Confirmed Source Part", "confirmed"),
+        createMatchedPart("rejected-part", "Rejected Source Part", "rejected"),
+      ],
+      knowledgeNodes: [],
+      previewImages: [],
+      warnings: [],
+      pipeline: [],
+    };
+
+    const report = buildKnowledgeNoteContent({
+      baseName: "current",
+      notePath: "Analysis/3D Reports/current Report.md",
+      sourcePath: "models/current.glb",
+      preview: null,
+      analysis,
+    });
+
+    expect(report).toContain("Confirmed Source Part");
+    expect(report).toContain("Confirmed");
+    expect(report).not.toContain("Rejected Source Part");
   });
 });
 

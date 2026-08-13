@@ -108,6 +108,11 @@ await writeFile(entryPath, `
   assert(stripped.request.draftingInput.knowledgeNodes[0].summary === "Geometry details were withheld by privacy settings.", "Knowledge node geometry summary was not stripped");
   assert(stripped.request.draftingInput.knowledgeNodes[0].relatedPartIds.length === 0, "Knowledge node part links were not stripped");
   assert(stripped.request.draftingInput.evidence.rawModelIncluded === false, "Raw model flag must stay false");
+  assert(stripped.request.draftingInput.model.path === "example.glb", "Vault path was not reduced to basename");
+  assert(stripped.request.draftingInput.model.notes === "", "User notes were not stripped");
+  assert(stripped.request.draftingInput.model.tags.length === 0, "User tags were not stripped");
+  assert(stripped.request.draftingInput.annotationLinks[0].label === "", "Annotation label was not stripped");
+  assert(stripped.request.draftingInput.annotationLinks[0].headingRef === undefined, "Annotation heading reference was not stripped");
 
   const included = createRemoteDraftDecision({
     ...DEFAULT_SETTINGS,

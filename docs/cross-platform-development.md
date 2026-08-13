@@ -167,7 +167,7 @@ Before merging code that touches conversion, IO, or path handling, check all of 
 
 These are known portability debts still present in the repository:
 
-1. `src/io/conversion/command-discovery.ts` still keeps platform-specific candidate heuristics for converters such as FreeCAD, `obj2gltf`, and `FBX2glTF`, but they are now environment-derived rather than hardcoded to a specific drive. Future discovery code should keep following that pattern instead of reintroducing fixed absolute paths.
+1. `src/io/conversion/command-discovery.ts` still keeps platform-specific candidate heuristics for converters such as FreeCAD, `obj2gltf`, and `FBX2glTF`, but they are now environment-derived rather than hardcoded to a specific drive. FreeCAD discovery now also includes Linux AppImage heuristics (`~/Applications` and `~/Downloads` scanning for `FreeCAD_*.AppImage`) plus a `freecad` console-binary fallback alongside `freecadcmd`; environment-variable overrides remain the highest priority. Future discovery code should keep following that pattern instead of reintroducing fixed absolute paths.
 2. Shared helpers now cover the main basename, dirname, and Python path-literal cases, but future path handling should keep converging on those helpers instead of adding fresh string parsing in feature code.
 
 These are not release blockers by themselves, but they are the main places where future Windows-first regressions are likely to reappear.

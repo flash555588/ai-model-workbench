@@ -14,6 +14,7 @@ import type {
 } from "../../domain/models";
 import { getPortableStem } from "../../utils/resolve-path";
 import { compactPersistedNumberTuple } from "../../utils/compact-number";
+import { applyRegisteredPartMatchReviews } from "../../utils/registered-match-review";
 export { inferModelAssetFormat, normalizeModelLoadStrategy } from "./format-lineage";
 import { inferModelAssetFormat, normalizeModelLoadStrategy } from "./format-lineage";
 
@@ -197,18 +198,31 @@ function buildRegisteredPartMatches(part: PartRecord, candidates: readonly Regis
         reasons,
       }];
     })
-    .sort((left, right) => right.matchScore - left.matchScore)
-    .slice(0, MAX_REGISTERED_MATCHES_PER_PART);
+    .sort((left, right) => right.matchScore - left.matchScore);
   return matches;
 }
 
-function attachRegisteredPartMatches(parts: readonly PartRecord[], registeredParts: readonly PartRecord[]): PartRecord[] {
+function attachRegisteredPartMatches(
+  parts: readonly PartRecord[],
+  registeredParts: readonly PartRecord[],
+  profile: ModelAssetProfile | undefined,
+): PartRecord[] {
   if (registeredParts.length === 0) {
     return parts.map((part) => ({ ...part }));
   }
   const candidates = createRegisteredPartMatchCandidates(registeredParts);
   return parts.map((part) => {
-    const registeredMatches = buildRegisteredPartMatches(part, candidates);
+    const rankedMatches = applyRegisteredPartMatchReviews(
+      part.partId,
+      buildRegisteredPartMatches(part, candidates),
+      profile?.registeredMatchReviews,
+    );
+    const reviewedMatches = rankedMatches.filter((match) => match.reviewDecision !== undefined);
+    const pendingMatches = rankedMatches
+      .filter((match) => match.reviewDecision === undefined)
+      .slice(0, MAX_REGISTERED_MATCHES_PER_PART);
+    const retainedMatches = new Set([...reviewedMatches, ...pendingMatches]);
+    const registeredMatches = rankedMatches.filter((match) => retainedMatches.has(match));
     return registeredMatches.length > 0 ? { ...part, registeredMatches } : { ...part };
   });
 }
@@ -456,7 +470,9 @@ function buildDraftingInput(options: {
       childCount: part.childCount,
       triangleCount: part.triangleCount,
       materialName: part.materialName,
-      registeredMatches: part.registeredMatches?.map((match) => ({ ...match, reasons: [...match.reasons] })),
+      registeredMatches: part.registeredMatches
+        ?.filter((match) => match.reviewDecision !== "rejected")
+        .map((match) => ({ ...match, reasons: [...match.reasons] })),
       observations: part.observations,
     })),
     annotationLinks: [...options.annotationLinks],
@@ -481,6 +497,7 @@ export function buildLocalAnalysisResult(options: BuildLocalAnalysisOptions): An
   const parts = attachRegisteredPartMatches(
     buildPartRecordsFromEvidence(options.modelPath, options.evidence?.parts ?? [], evidenceLineage),
     options.registeredParts ?? [],
+    options.profile,
   );
   const importedAt = new Date().toISOString();
   const warnings = collectWarnings(options.preview, options.evidence);

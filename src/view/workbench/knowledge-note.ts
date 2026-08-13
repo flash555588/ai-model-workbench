@@ -4,9 +4,7 @@ import type {
   AnnotationPin,
   KnowledgeGenerationRecord,
   LocalDraftResult,
-  ModelAssetFormat,
   ModelAssetProfile,
-  ModelLoadStrategy,
   ModelPreviewSummary,
   PartRecord,
   RegisteredPartMatch,
@@ -14,15 +12,24 @@ import type {
 import type { PluginStore } from "../../store/plugin-store";
 import { createPreviewSummaryTableLines } from "../../render/preview/report";
 import type { ModelPreview } from "../../render/preview/types";
+import {
+  getBestActionableRegisteredPartMatch,
+  hasActionableRegisteredPartMatch,
+} from "../../utils/registered-match-review";
 import { escapeHtml } from "../../utils/escape-html";
 import { createLogger } from "../../utils/log";
 import { getPortableBasename, getPortableStem } from "../../utils/resolve-path";
 import { compactPersistedNumberTuple } from "../../utils/compact-number";
+import { dataUrlToArrayBuffer } from "../../utils/base64";
 import {
   compactRegisteredPartForPersistence,
   MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS,
   MAX_PERSISTED_REGISTERED_PART_MESH_REFS,
   MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS,
+  normalizeModelAssetFormat,
+  normalizeModelLoadStrategy,
+  normalizePartSource,
+  rankRegisteredPart,
 } from "../../utils/registered-part-persistence";
 
 const log = createLogger("knowledge-note");
@@ -346,17 +353,18 @@ function summarizeTopParts(parts: readonly PartRecord[]): string {
 }
 
 function summarizeRegisteredPartMatches(parts: readonly PartRecord[]): string {
-  const matchedParts = parts.filter((part) => part.registeredMatches?.length);
+  const matchedParts = parts.flatMap((part) => {
+    const match = getBestActionableRegisteredPartMatch(part.registeredMatches);
+    return match ? [{ part, match }] : [];
+  });
   if (matchedParts.length === 0) {
     return "No previously registered parts were matched across other analyzed models in this pass.";
   }
   return matchedParts
     .slice(0, 6)
-    .map((part) => {
-      const best = part.registeredMatches?.[0];
-      return best
-        ? `- ${escapeHtml(part.name)}: possible reuse of ${escapeHtml(best.sourcePartName)} from ${escapeHtml(best.sourceAssetId)} (${Math.round(best.confidence * 100)}% confidence).`
-        : "";
+    .map(({ part, match }) => {
+      const reuseLabel = match.reviewDecision === "confirmed" ? "confirmed reuse" : "possible reuse";
+      return `- ${escapeHtml(part.name)}: ${reuseLabel} of ${escapeHtml(match.sourcePartName)} from ${escapeHtml(match.sourceAssetId)} (${Math.round(match.confidence * 100)}% confidence).`;
     })
     .filter(Boolean)
     .join("\n");
@@ -604,7 +612,10 @@ function buildPartCandidateSection(analysis?: AnalysisResult): string[] {
 }
 
 function buildRegisteredPartMatchSection(analysis?: AnalysisResult): string[] {
-  const matchedParts = (analysis?.parts ?? []).filter((part) => part.registeredMatches?.length);
+  const matchedParts = (analysis?.parts ?? []).flatMap((part) => {
+    const match = getBestActionableRegisteredPartMatch(part.registeredMatches);
+    return match ? [{ part, match }] : [];
+  });
   if (matchedParts.length === 0) {
     return [
       "## Registered Part Matches",
@@ -617,19 +628,18 @@ function buildRegisteredPartMatchSection(analysis?: AnalysisResult): string[] {
   const lines = [
     "## Registered Part Matches",
     "",
-    "| Current Part | Best Existing Part | Source Model | Confidence | Reasons |",
-    "|--------------|--------------------|--------------|------------|---------|",
+    "| Current Part | Best Existing Part | Source Model | Confidence | Review | Reasons |",
+    "|--------------|--------------------|--------------|------------|--------|---------|",
   ];
-  for (const part of matchedParts.slice(0, 32)) {
-    const match = part.registeredMatches?.[0];
-    if (!match) continue;
+  for (const { part, match } of matchedParts.slice(0, 32)) {
     const existing = match.sourceNotePath
       ? `[[${match.sourceNotePath}|${match.sourcePartName}]]`
       : match.sourcePartName;
-    lines.push(`| ${escapeTableCell(part.name)} | ${escapeTableCell(existing)} | ${escapeTableCell(match.sourceAssetId)} | ${Math.round(match.confidence * 100)}% | ${escapeTableCell(match.reasons.join(", "))} |`);
+    const review = match.reviewDecision === "confirmed" ? "Confirmed" : "Suggested";
+    lines.push(`| ${escapeTableCell(part.name)} | ${escapeTableCell(existing)} | ${escapeTableCell(match.sourceAssetId)} | ${Math.round(match.confidence * 100)}% | ${review} | ${escapeTableCell(match.reasons.join(", "))} |`);
   }
   if (matchedParts.length > 32) {
-    lines.push(`| ... | ${matchedParts.length - 32} more matched parts omitted | - | - | See sidecar JSON |`);
+    lines.push(`| ... | ${matchedParts.length - 32} more matched parts omitted | - | - | - | See sidecar JSON |`);
   }
   lines.push("");
   return lines;
@@ -780,16 +790,6 @@ function escapeTableCell(value: string): string {
   return escapeHtml(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
-function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
-  const [, base64 = ""] = dataUrl.split(",", 2);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
 async function ensureFolder(app: App, folder: string): Promise<void> {
   const normalized = normalizeVaultFolder(folder);
   if (!normalized) {
@@ -876,24 +876,6 @@ function normalizeNumberTuple(value: unknown): [number, number, number] | undefi
   return tuple.every(Number.isFinite) ? compactPersistedNumberTuple(tuple) : undefined;
 }
 
-function normalizePartSource(value: unknown): PartRecord["source"] {
-  return value === "group" || value === "mesh" || value === "component" || value === "detail-cluster"
-    ? value
-    : undefined;
-}
-
-function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined {
-  return value === "glb" || value === "gltf" || value === "stl" || value === "obj" || value === "splat" ||
-    value === "ply" || value === "fbx" || value === "step" || value === "stp" || value === "iges" ||
-    value === "igs" || value === "brep" || value === "sldprt" || value === "3mf" || value === "dae"
-    ? value
-    : undefined;
-}
-
-function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefined {
-  return value === "direct" || value === "convert" ? value : undefined;
-}
-
 function normalizeRegisteredPartRecord(value: unknown, fallbackAssetId: string): PartRecord | null {
   if (!isRecord(value)) return null;
   const partId = typeof value.partId === "string" ? value.partId : "";
@@ -938,17 +920,9 @@ export interface CollectRegisteredPartsOptions {
   perProfileLimit?: number;
 }
 
-function getRegisteredPartCollectionRank(part: PartRecord): number {
-  if (part.reviewed || part.notePath) return 0;
-  if (part.source === "component") return 1;
-  if (part.source === "group") return 2;
-  if (part.source === "detail-cluster") return 3;
-  return 4;
-}
-
 function sortRegisteredPartsForReuse(parts: readonly PartRecord[]): PartRecord[] {
   return [...parts].sort((left, right) => {
-    const rankDelta = getRegisteredPartCollectionRank(left) - getRegisteredPartCollectionRank(right);
+    const rankDelta = rankRegisteredPart(left) - rankRegisteredPart(right);
     if (rankDelta !== 0) return rankDelta;
     const confidenceDelta = (right.confidence ?? 0) - (left.confidence ?? 0);
     if (confidenceDelta !== 0) return confidenceDelta;
@@ -1013,15 +987,15 @@ function getPartNoteCandidateIds(analysis: AnalysisResult): Set<string> {
   const linkedPartIds = new Set((analysis.annotationLinks ?? []).flatMap((link) => link.nearestPartId ? [link.nearestPartId] : []));
   return new Set(
     [...analysis.parts]
-      .filter((part) => part.source !== "detail-cluster" || linkedPartIds.has(part.partId) || !!part.registeredMatches?.length)
+      .filter((part) => part.source !== "detail-cluster" || linkedPartIds.has(part.partId) || hasActionableRegisteredPartMatch(part.registeredMatches))
       .sort((left, right) => {
         const leftLinked = linkedPartIds.has(left.partId) ? 1 : 0;
         const rightLinked = linkedPartIds.has(right.partId) ? 1 : 0;
         if (leftLinked !== rightLinked) {
           return rightLinked - leftLinked;
         }
-        const leftRegistered = left.registeredMatches?.length ? 1 : 0;
-        const rightRegistered = right.registeredMatches?.length ? 1 : 0;
+        const leftRegistered = hasActionableRegisteredPartMatch(left.registeredMatches) ? 1 : 0;
+        const rightRegistered = hasActionableRegisteredPartMatch(right.registeredMatches) ? 1 : 0;
         if (leftRegistered !== rightRegistered) {
           return rightRegistered - leftRegistered;
         }
@@ -1047,6 +1021,7 @@ function buildPartNoteContent(options: {
   analysis: AnalysisResult;
 }): string {
   const annotationLinks = (options.analysis.annotationLinks ?? []).filter((link) => link.nearestPartId === options.part.partId);
+  const registeredMatch = getBestActionableRegisteredPartMatch(options.part.registeredMatches);
   const frontmatter = [
     "---",
     `source_model: ${markdownQuote(options.sourcePath)}`,
@@ -1088,8 +1063,8 @@ function buildPartNoteContent(options: {
     `- Material: ${options.part.materialName ? escapeHtml(options.part.materialName) : "-"}`,
     `- Bounding size: ${formatVectorTuple(options.part.bbox)}`,
     `- Center: ${formatVectorTuple(options.part.center)}`,
-    ...(options.part.registeredMatches?.length
-      ? [`- Possible registered match: ${formatRegisteredMatch(options.part.registeredMatches[0])}`]
+    ...(registeredMatch
+      ? [`- ${registeredMatch.reviewDecision === "confirmed" ? "Confirmed" : "Possible"} registered match: ${formatRegisteredMatch(registeredMatch)}`]
       : []),
     "",
     "## Renderer Observations",
@@ -1198,8 +1173,9 @@ export function buildKnowledgeIndexManagedSection(options: {
     "",
     ...(partNotes.length > 0
       ? partNotes.map((part) => {
-          const match = part.registeredMatches?.[0];
-          const matchText = match ? `, matches ${escapeHtml(match.sourcePartName)} (${Math.round(match.confidence * 100)}%)` : "";
+          const match = getBestActionableRegisteredPartMatch(part.registeredMatches);
+          const matchLabel = match?.reviewDecision === "confirmed" ? "confirmed match" : "matches";
+          const matchText = match ? `, ${matchLabel} ${escapeHtml(match.sourcePartName)} (${Math.round(match.confidence * 100)}%)` : "";
           return `- [[${part.notePath}|${escapeHtml(part.name)}]] - ${part.category ?? "unclassified"}, ${formatMetricCount(part.triangleCount, "triangle")}${matchText}`;
         })
       : ["- No part note drafts were created in this pass."]),

@@ -62,8 +62,8 @@ describe("diagnostics report", () => {
     });
 
     expect(report).toContain("Current route: babylon");
-    expect(report).toContain("Route capability profile: babylon; formats=glb/gltf/stl/ply/obj/splat/converted-glb");
-    expect(report).toContain("Route color pipeline: Babylon material pipeline with conservative fallback behavior");
+    expect(report).toContain("Route capability profile: babylon; formats=glb/gltf/stl/ply/obj/converted-glb");
+    expect(report).toContain("Route color pipeline: sRGB output, no tone mapping, PBR material preservation with local IBL");
   });
 
   it("includes renderer route capability and color pipeline context", () => {

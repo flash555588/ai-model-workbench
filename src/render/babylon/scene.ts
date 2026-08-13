@@ -16,6 +16,7 @@ import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import type { Material } from "@babylonjs/core/Materials/material.js";
+import type { BaseTexture } from "@babylonjs/core/Materials/Textures/baseTexture.js";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture.js";
 import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator.js";
@@ -42,8 +43,10 @@ import { setExplode, resetExplode } from "./explode";
 import { setupPicking, type PickingCleanup } from "./picking";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
+import { getDirectLoaderKind } from "../../io/formats/registry";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { OrientationGizmo } from "./orientation-gizmo";
+import { createBabylonStudioEnvironment } from "./environment";
 import { createBabylonDisassemblyController } from "./disassembly";
 import {
   collectBabylonGltfComponentMetadata,
@@ -69,6 +72,8 @@ import {
   type PreviewBounds,
 } from "../preview/bounds";
 import { createPreviewOrbitCameraFit } from "../preview/camera-fit";
+import { PreviewSmoothnessTracker } from "../preview/smoothness";
+import { ENVIRONMENT_INTENSITY, FOCUS_ANIMATION_MS, FRAME_BUDGET_SLOW_MS } from "../preview/tuning";
 import type { PreviewDisassemblyController } from "../preview/disassembly";
 import {
   createAnnotationViewportProvider,
@@ -163,7 +168,6 @@ let objMtlLock: Promise<void> | null = null;
 const OBJ_IMAGE_EXTS = ["jpg", "jpeg", "png", "bmp", "tga", "webp", "tif", "tiff"];
 const OBJ_TEXTURE_RE = /^\s*(map_Kd|map_Ka|map_Ks|map_Ns|map_d|map_bump|bump|disp|decal)\s+(.+)/i;
 const FOCUS_DIM_VISIBILITY = 0.242;
-const FOCUS_WORLD_POINT_ANIMATION_MS = 320;
 const MEASUREMENT_LINE_COLOR = new Color3(0.97, 0.98, 0.99);
 const MEASUREMENT_MARKER_COLOR = new Color3(0.97, 0.98, 0.99);
 const MEASUREMENT_PENDING_COLOR = new Color3(0.96, 0.62, 0.04);
@@ -405,8 +409,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private sliceThickness = DEFAULT_SLICE_THICKNESS;
   private slicePlane: Plane | null = null;
   private sliceOverlayPlanes: Mesh[] = [];
-  private sliceOverlayLines: LinesMesh[] = [];
+  private sliceOverlayLinePool = new Map<string, LinesMesh>();
+  private sliceOverlayVariableLines: LinesMesh[] = [];
   private sliceOverlayLabels: Mesh[] = [];
+
+  /** Diagnostic surface: all live slice overlay line meshes (pooled + variable). */
+  get sliceOverlayLines(): LinesMesh[] {
+    return [...this.sliceOverlayLinePool.values(), ...this.sliceOverlayVariableLines];
+  }
   private sliceRotationLabel: Mesh | null = null;
   private sliceRotationLabelText = "";
   private sliceDragState: BabylonSliceDragState | null = null;
@@ -424,6 +434,9 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private bboxEnabled = false;
   private currentQuality: "low" | "medium" | "high" = "high";
   private renderScale = 1;
+  private environmentTexture: BaseTexture | null = null;
+  private readonly smoothness = new PreviewSmoothnessTracker();
+  private lastFrameDurationMs = 0;
   private resourceWarnings: string[] = [];
   private gltfComponentMetadata = new Map<string, unknown>();
   private animPlaying = false;
@@ -449,6 +462,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private pendingPoint: Vector3 | null = null;
   private pendingMarker: Mesh | null = null;
   private hoveredMarkerIndex = -1;
+  private hoverPickFrame = 0;
+  private pendingHoverPick: { x: number; y: number } | null = null;
   private lastPointerClient = { x: 0, y: 0, altKey: false };
   private previewLine: LinesMesh | null = null;
   private readonly cameraZoomObservers = new Set<(state: CameraZoomState | null) => void>();
@@ -475,6 +490,23 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    // Coalesce the hover raycast to one per frame: pointermove can fire far more
+    // often than the render loop, and each `scene.pick` is a full synchronous
+    // raycast that would otherwise run on every event.
+    this.pendingHoverPick = { x, y };
+    if (!this.hoverPickFrame) {
+      this.hoverPickFrame = window.requestAnimationFrame(() => {
+        this.hoverPickFrame = 0;
+        const pending = this.pendingHoverPick;
+        this.pendingHoverPick = null;
+        if (!pending) return;
+        this.applyHoverPick(pending.x, pending.y);
+      });
+    }
+  };
+
+  private applyHoverPick(x: number, y: number): void {
+    if (!this.measurementActive) return;
     const pickResult = this.scene.pick(x, y, (mesh) => this.measurementMarkers.includes(mesh as Mesh));
     const newHover = pickResult.hit ? this.measurementMarkers.indexOf(pickResult.pickedMesh as Mesh) : -1;
     if (newHover !== this.hoveredMarkerIndex) {
@@ -601,6 +633,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.scene.ambientColor = new Color3(0.3, 0.3, 0.3);
     const hemi = new HemisphericLight("default-light", new Vector3(0, 1, 0.5), this.scene);
     hemi.intensity = 1.2;
+    this.installStudioEnvironment();
 
     this.resizeObs = new ResizeObserver(() => this.engine.resize());
     this.resizeObs.observe(canvas);
@@ -648,6 +681,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.loadedExt = extLower;
     this.resourceWarnings = [];
     throwIfPreviewLoadInterrupted(options);
+    const loaderKind = getDirectLoaderKind(extLower);
     this.gltfComponentMetadata = collectBabylonGltfComponentMetadata(data, extLower);
     const scene = this.scene;
 
@@ -696,11 +730,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
     // OBJ: override _loadMTL to read MTL from vault instead of network fetch.
     // Serialized via objMtlLock to prevent concurrent loads from clobbering the prototype.
-    if (extLower === "obj" && readFile && modelPath) {
+    if (loaderKind === "obj" && readFile && modelPath) {
       if (objMtlLock) await objMtlLock;
       throwIfPreviewLoadInterrupted(options);
       let resolveLock!: () => void;
       objMtlLock = new Promise<void>(r => { resolveLock = r; });
+      let restoreLoadMTL: (() => void) | null = null;
       try {
         const { OBJFileLoader } = await import("@babylonjs/loaders/OBJ/objFileLoader.js");
         const proto = OBJFileLoader.prototype as unknown as Record<string, unknown>;
@@ -772,12 +807,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
           const content = mtlContent ?? "";
           onSuccess(content);
         };
+        restoreLoadMTL = () => {
+          proto._loadMTL = originalLoadMTL;
+        };
 
         const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
         assignImportResult(result);
-
-        // Restore original _loadMTL
-        proto._loadMTL = originalLoadMTL;
       } catch (e) {
         if (isPreviewLoadInterruptedError(e)) {
           throw e;
@@ -785,10 +820,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
         console.error("[AI3D] OBJ load error:", e);
         throw e;
       } finally {
+        // Restore the shared prototype on success AND error so a failed OBJ load
+        // never leaks a stale _loadMTL closure into later loads.
+        restoreLoadMTL?.();
         resolveLock();
         objMtlLock = null;
       }
-    } else if (extLower === "stl") {
+    } else if (loaderKind === "stl") {
       // Direct parse — Babylon v9 SceneLoader mishandles data URLs for custom plugins
       const rootMesh = loadSTLBuffer(scene, data);
       try {
@@ -799,7 +837,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
       this.rootMesh = rootMesh;
       if (this.rootMesh) this.loadedMeshes = [this.rootMesh];
-    } else if (extLower === "ply") {
+    } else if (loaderKind === "ply") {
       // Direct parse — same Babylon v9 data-URL issue as STL
       const rootMesh = loadPLYBuffer(scene, data);
       try {
@@ -969,10 +1007,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.shadowGenerator?.dispose();
     this.shadowGenerator = null;
 
-    // Remove the default light when config lights are provided
+    // Hide rather than dispose the default light, so clearing the light config
+    // restores default illumination instead of leaving the scene unlit.
     const defaultLight = this.scene.getLightByName("default-light");
     if (defaultLight) {
-      defaultLight.dispose();
+      defaultLight.setEnabled(lights.length === 0);
     }
 
     for (const cfg of lights) {
@@ -1089,17 +1128,55 @@ export class BabylonModelPreview implements WorkbenchPreview {
       this.sliceAutoRotatePaused = false;
     }
 
-    if (config.groundShadow && this.rootMesh) {
-      this.createGround();
+    // Helpers are synced rather than only created, so flipping a flag back to
+    // false removes it instead of leaving the previous state on screen. Fields the
+    // caller omitted are left untouched, since applySceneConfig receives partial
+    // configs and an absent flag means "unchanged", not "off".
+    if (config.groundShadow !== undefined) {
+      if (config.groundShadow && this.rootMesh) {
+        this.createGround();
+      } else if (!config.groundShadow) {
+        this.removeGround();
+      }
     }
 
-    if (config.grid) {
-      this.createGrid();
+    if (config.grid !== undefined) {
+      if (config.grid) {
+        this.createGrid();
+      } else {
+        this.removeGrid();
+      }
     }
 
-    if (config.axis) {
-      this.createAxis();
+    if (config.axis !== undefined) {
+      if (config.axis) {
+        this.createAxis();
+      } else {
+        this.removeAxis();
+      }
     }
+  }
+
+  private removeGround(): void {
+    if (!this.groundMesh) return;
+    // dispose(false, true) releases the per-toggle StandardMaterial too; the plain
+    // Mesh.dispose() default keeps the material alive in scene.materials.
+    this.groundMesh.dispose(false, true);
+    this.groundMesh = null;
+  }
+
+  private removeGrid(): void {
+    if (!this.gridMesh) return;
+    this.gridMesh.dispose(false, true);
+    this.gridMesh = null;
+  }
+
+  private removeAxis(): void {
+    if (this.axisMeshes.length === 0) return;
+    for (const mesh of this.axisMeshes) {
+      mesh.dispose(false, true);
+    }
+    this.axisMeshes = [];
   }
 
   private createGround(): void {
@@ -1160,6 +1237,44 @@ export class BabylonModelPreview implements WorkbenchPreview {
       tube.material = mat;
       this.axisMeshes.push(tube);
     }
+  }
+
+  /**
+   * Install local image-based lighting and a fixed color pipeline.
+   *
+   * Without an environment texture, PBR materials have nothing to reflect and
+   * metallic/rough surfaces render flat and grey. Tone mapping stays off to match
+   * the Three path's `NoToneMapping`, so both backends agree on output color.
+   */
+  private installStudioEnvironment(): void {
+    const imageProcessing = this.scene.imageProcessingConfiguration;
+    imageProcessing.toneMappingEnabled = false;
+    imageProcessing.exposure = 1;
+    imageProcessing.contrast = 1;
+
+    this.applyEnvironmentForQuality();
+  }
+
+  /** Environment lighting is a specular-only cost, so it is dropped on low quality. */
+  private applyEnvironmentForQuality(): void {
+    if (this.currentQuality === "low") {
+      this.disposeStudioEnvironment();
+      return;
+    }
+    if (this.environmentTexture || this.scene.isDisposed) return;
+    const texture = createBabylonStudioEnvironment(this.scene);
+    this.environmentTexture = texture;
+    this.scene.environmentTexture = texture;
+    this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
+  }
+
+  private disposeStudioEnvironment(): void {
+    if (!this.environmentTexture) return;
+    if (this.scene.environmentTexture === this.environmentTexture) {
+      this.scene.environmentTexture = null;
+    }
+    this.environmentTexture.dispose();
+    this.environmentTexture = null;
   }
 
   setSTLColor(hex: string): void {
@@ -1396,14 +1511,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const hadGround = !!this.groundMesh;
     const hadGrid = !!this.gridMesh;
     const hadAxis = this.axisMeshes.length > 0;
-    this.bboxMesh?.dispose();
+    this.bboxMesh?.dispose(false, true);
     this.bboxMesh = null;
-    this.groundMesh?.dispose();
-    this.groundMesh = null;
-    this.gridMesh?.dispose();
-    this.gridMesh = null;
-    for (const axis of this.axisMeshes) axis.dispose();
-    this.axisMeshes = [];
+    this.removeGround();
+    this.removeGrid();
+    this.removeAxis();
     if (hadBoundingBox && this.rootMesh) {
       const bounds = this.getRenderableBounds(this.rootMesh);
       const center = toBabylonVector3(getPreviewBoundsCenter(bounds));
@@ -1566,11 +1678,21 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   getPerformanceSnapshot() {
+    const smoothness = this.smoothness.snapshot();
     return {
       backend: "babylon" as const,
       renderScale: Number((1 / this.engine.getHardwareScalingLevel()).toFixed(2)),
       quality: this.currentQuality,
       meshCount: this.rootMesh ? this.getRenderableMeshes(this.rootMesh).length : 0,
+      lastFrameDurationMs: Number(this.lastFrameDurationMs.toFixed(2)),
+      averageRenderMs: smoothness.averageRenderMs,
+      p95RenderMs: smoothness.p95RenderMs,
+      maxRenderMs: smoothness.maxRenderMs,
+      renderedFrameCount: smoothness.renderedFrameCount,
+      slowFrameCount: smoothness.slowFrameCount,
+      idleFrameSkipCount: smoothness.idleFrameSkipCount,
+      adaptiveScaleChangeCount: smoothness.adaptiveScaleChangeCount,
+      viewportVisible: this.viewportVisible,
     };
   }
 
@@ -1578,7 +1700,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.bboxEnabled = !this.bboxEnabled;
     if (this.bboxEnabled) {
       if (!this.rootMesh) return this.bboxEnabled;
-      if (this.bboxMesh) this.bboxMesh.dispose();
+      if (this.bboxMesh) this.bboxMesh.dispose(false, true);
       const bounds = this.getRenderableBounds(this.rootMesh);
       const center = toBabylonVector3(getPreviewBoundsCenter(bounds));
       const size = toBabylonVector3(getPreviewBoundsSize(bounds));
@@ -1594,7 +1716,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       mat.alpha = 0.6;
       this.bboxMesh.material = mat;
     } else {
-      this.bboxMesh?.dispose();
+      this.bboxMesh?.dispose(false, true);
       this.bboxMesh = null;
     }
     return this.bboxEnabled;
@@ -1874,7 +1996,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     }
 
     const tick = (now: number) => {
-      const t = Math.min(1, Math.max(0, (now - startedAt) / FOCUS_WORLD_POINT_ANIMATION_MS));
+      const t = Math.min(1, Math.max(0, (now - startedAt) / FOCUS_ANIMATION_MS));
       const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       this.camera.target = Vector3.Lerp(start, target, ease);
       if (t < 1 && !this.scene.isDisposed) {
@@ -2002,10 +2124,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
   setRenderQuality(quality: "low" | "medium" | "high", renderScale = this.renderScale): void {
     this.currentQuality = quality;
     this.renderScale = Math.max(0.25, Math.min(renderScale, 2.0));
+    this.applyEnvironmentForQuality();
     const scaleMap = { low: 2, medium: 1.33, high: 1 };
     const mobileBoost = isMobile() ? 1.5 : 1;
     // hardwareScalingLevel: higher = fewer pixels. renderScale < 1 = fewer pixels.
     const scale = scaleMap[quality] * mobileBoost / this.renderScale;
+    if (Math.abs(this.engine.getHardwareScalingLevel() - scale) > Number.EPSILON) {
+      this.smoothness.recordAdaptiveScaleChange();
+    }
     this.engine.setHardwareScalingLevel(scale);
 
     if (this.shadowGenerator) {
@@ -2022,6 +2148,17 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   destroy() {
+    // Guard scene/engine disposal in finally so a throw from any controller's
+    // dispose() (gizmo, disassembly, overlays) cannot strand the WebGL context.
+    try {
+      this.destroyInternals();
+    } finally {
+      this.scene.dispose();
+      this.engine.dispose();
+    }
+  }
+
+  private destroyInternals(): void {
     this.engine.stopRenderLoop();
     if (this.focusWorldPointFrame) {
       window.cancelAnimationFrame(this.focusWorldPointFrame);
@@ -2065,6 +2202,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
       window.cancelAnimationFrame(this.sliceMoveFrame);
       this.sliceMoveFrame = 0;
     }
+    if (this.hoverPickFrame) {
+      window.cancelAnimationFrame(this.hoverPickFrame);
+      this.hoverPickFrame = 0;
+    }
+    this.pendingHoverPick = null;
     this.pendingSliceMove = null;
     this.invalidateMeshCache();
     this.rootMesh = null;
@@ -2078,14 +2220,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.configLights = [];
     this.shadowGenerator?.dispose();
     this.shadowGenerator = null;
-    this.groundMesh?.dispose();
-    this.groundMesh = null;
-    this.gridMesh?.dispose();
-    this.gridMesh = null;
-    for (const a of this.axisMeshes) a.dispose();
-    this.axisMeshes = [];
-    this.scene.dispose();
-    this.engine.dispose();
+    this.removeGround();
+    this.removeGrid();
+    this.removeAxis();
+    this.disposeStudioEnvironment();
   }
 
   private startRenderLoop() {
@@ -2095,13 +2233,17 @@ export class BabylonModelPreview implements WorkbenchPreview {
       if (!this.canRender() || !this.viewportVisible || this.contextLost) {
         this.engine.stopRenderLoop();
         this.rendering = false;
+        this.smoothness.recordIdleFrameSkip();
         return;
       }
+      const startedAt = performance.now();
       this.scene.render();
       if (this.gizmo && this.gizmoEnabled) {
         this.gizmo.syncWith(this.camera);
         this.gizmo.render();
       }
+      this.lastFrameDurationMs = performance.now() - startedAt;
+      this.smoothness.recordRenderedFrame(this.lastFrameDurationMs, FRAME_BUDGET_SLOW_MS);
     });
   }
 
@@ -2600,9 +2742,25 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private syncSliceOverlay(range: SliceRange | null): void {
-    this.disposeSliceOverlay(false, true);
+    // The plane (a single quad) and the variable-count arc/arrowheads are
+    // recreated, but the nine fixed-count line overlays (frame, normal guide,
+    // three rings, three tick sets, move guide) are pooled and updated in place
+    // via MeshBuilder's `instance` option. Rebuilding them per pointer-move
+    // frame allocated hundreds of vertices and ~11 line systems each drag frame.
+    for (const plane of this.sliceOverlayPlanes) {
+      plane.dispose(false, true);
+    }
+    this.sliceOverlayPlanes = [];
+    for (const line of this.sliceOverlayVariableLines) {
+      line.dispose(false, true);
+    }
+    this.sliceOverlayVariableLines = [];
+
     const bounds = this.rootMesh ? this.getRenderableBounds(this.rootMesh) : null;
-    if (!bounds || !range) return;
+    if (!bounds || !range) {
+      this.clearSliceOverlayLinePool();
+      return;
+    }
 
     const sliceAxes = {
       x: toPreviewWorldPoint(this.slicePlaneX),
@@ -2610,10 +2768,10 @@ export class BabylonModelPreview implements WorkbenchPreview {
       z: toPreviewWorldPoint(this.sliceNormal),
     };
     const planeGeometry = createSlicePlaneGeometry(bounds, range, 0.12, sliceAxes);
-    const plane = this.createSliceOverlayPlane(planeGeometry);
+    this.sliceOverlayPlanes.push(this.createSliceOverlayPlane(planeGeometry));
     const frameColor = this.sliceInteractionMode === "rotate" ? SLICE_ROTATE_FRAME_COLOR : SLICE_FRAME_COLOR;
-    const frame = this.createSliceOverlayLines(planeGeometry.segments, frameColor);
-    const normalGuide = this.createSliceOverlayLines(this.createSliceNormalGuide(bounds, range), SLICE_CENTER_FRAME_COLOR);
+    this.updateSliceOverlayLine("frame", planeGeometry.segments, frameColor);
+    this.updateSliceOverlayLine("normalGuide", this.createSliceNormalGuide(bounds, range), SLICE_CENTER_FRAME_COLOR);
     const rotationAngles = this.sliceDragState?.mode === "rotate"
       ? { [this.sliceDragState.axis]: this.sliceDragState.currentPointerAngle }
       : undefined;
@@ -2631,24 +2789,19 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const styleX = ringStyle("x", SLICE_GIZMO_X_COLOR);
     const styleY = ringStyle("y", SLICE_GIZMO_Y_COLOR);
     const styleZ = ringStyle("z", SLICE_GIZMO_Z_COLOR);
-    const ringX = this.createSliceOverlayLines(gizmo.rotationRings.x, styleX.color, styleX.alpha);
-    const ringY = this.createSliceOverlayLines(gizmo.rotationRings.y, styleY.color, styleY.alpha);
-    const ringZ = this.createSliceOverlayLines(gizmo.rotationRings.z, styleZ.color, styleZ.alpha);
-    const ticksX = this.createSliceOverlayLines(gizmo.rotationTicks.x, styleX.color, styleX.tickAlpha);
-    const ticksY = this.createSliceOverlayLines(gizmo.rotationTicks.y, styleY.color, styleY.tickAlpha);
-    const ticksZ = this.createSliceOverlayLines(gizmo.rotationTicks.z, styleZ.color, styleZ.tickAlpha);
-    const moveGuide = this.createSliceOverlayLines(gizmo.moveGuide, SLICE_MOVE_COLOR, activeAxis ? 0.22 : 0.96);
+    this.updateSliceOverlayLine("ringX", gizmo.rotationRings.x, styleX.color, styleX.alpha);
+    this.updateSliceOverlayLine("ringY", gizmo.rotationRings.y, styleY.color, styleY.alpha);
+    this.updateSliceOverlayLine("ringZ", gizmo.rotationRings.z, styleZ.color, styleZ.alpha);
+    this.updateSliceOverlayLine("ticksX", gizmo.rotationTicks.x, styleX.color, styleX.tickAlpha);
+    this.updateSliceOverlayLine("ticksY", gizmo.rotationTicks.y, styleY.color, styleY.tickAlpha);
+    this.updateSliceOverlayLine("ticksZ", gizmo.rotationTicks.z, styleZ.color, styleZ.tickAlpha);
+    this.updateSliceOverlayLine("moveGuide", gizmo.moveGuide, SLICE_MOVE_COLOR, activeAxis ? 0.22 : 0.96);
     const activeColor = activeAxis === "x"
       ? SLICE_GIZMO_X_COLOR
       : activeAxis === "y" ? SLICE_GIZMO_Y_COLOR : SLICE_GIZMO_Z_COLOR;
-    const activeArc = activeAxis ? this.createSliceOverlayLines(gizmo.rotationArcs[activeAxis], activeColor, 1) : null;
-    const activeArrowheads = activeAxis
-      ? this.createSliceOverlayLines(gizmo.rotationArrowheads[activeAxis], activeColor, 1)
-      : null;
-    this.sliceOverlayPlanes.push(plane);
-    this.sliceOverlayLines.push(frame, normalGuide, ringX, ringY, ringZ, ticksX, ticksY, ticksZ, moveGuide);
-    if (activeAxis && activeArc && activeArrowheads) {
-      this.sliceOverlayLines.push(activeArc, activeArrowheads);
+    if (activeAxis) {
+      this.sliceOverlayVariableLines.push(this.createSliceOverlayLines(gizmo.rotationArcs[activeAxis], activeColor, 1));
+      this.sliceOverlayVariableLines.push(this.createSliceOverlayLines(gizmo.rotationArrowheads[activeAxis], activeColor, 1));
       const drag = this.sliceDragState;
       if (drag?.mode === "rotate") {
         const degrees = ((drag.currentPointerAngle * 180 / Math.PI) % 360 + 360) % 360;
@@ -2717,6 +2870,43 @@ export class BabylonModelPreview implements WorkbenchPreview {
     return line;
   }
 
+  /**
+   * Update a pooled slice overlay line in place. The ring/tick/frame/guide line
+   * systems all have a fixed vertex count, so `instance` updates the existing
+   * LinesMesh without reallocating buffers each frame (Babylon only allows
+   * position changes on an instance, not a change in point count).
+   */
+  private updateSliceOverlayLine(
+    key: string,
+    segments: Array<[PreviewWorldPoint, PreviewWorldPoint]>,
+    color: Color3,
+    alpha = 0.88,
+  ): LinesMesh {
+    const existing = this.sliceOverlayLinePool.get(key);
+    const line = MeshBuilder.CreateLineSystem("ai3d-slice-frame", {
+      lines: segments.map(([start, end]) => [
+        new Vector3(start.x, start.y, start.z),
+        new Vector3(end.x, end.y, end.z),
+      ]),
+      instance: existing,
+    }, this.scene);
+    line.color = color.clone();
+    line.alpha = alpha;
+    line.isPickable = false;
+    line.renderingGroupId = 2;
+    if (!existing) {
+      this.sliceOverlayLinePool.set(key, line);
+    }
+    return line;
+  }
+
+  private clearSliceOverlayLinePool(): void {
+    for (const line of this.sliceOverlayLinePool.values()) {
+      line.dispose(false, true);
+    }
+    this.sliceOverlayLinePool.clear();
+  }
+
   private createSliceNormalGuide(bounds: PreviewBounds, range: SliceRange): Array<[PreviewWorldPoint, PreviewWorldPoint]> {
     const radius = Math.max(getPreviewBoundsRadius(bounds), range.span * 0.25, Number.EPSILON);
     const normal = normalizePreviewWorldPoint(range.normal) ?? DEFAULT_SLICE_NORMAL;
@@ -2733,14 +2923,18 @@ export class BabylonModelPreview implements WorkbenchPreview {
     for (const plane of this.sliceOverlayPlanes) {
       plane.dispose(false, true);
     }
-    for (const line of this.sliceOverlayLines) {
+    for (const line of this.sliceOverlayLinePool.values()) {
+      line.dispose(false, true);
+    }
+    for (const line of this.sliceOverlayVariableLines) {
       line.dispose(false, true);
     }
     for (const label of this.sliceOverlayLabels) {
       label.dispose(false, true);
     }
     this.sliceOverlayPlanes = [];
-    this.sliceOverlayLines = [];
+    this.sliceOverlayLinePool.clear();
+    this.sliceOverlayVariableLines = [];
     this.sliceOverlayLabels = [];
     if (!preserveRotationLabel) this.disposeSliceRotationLabel();
     if (startLoop) {

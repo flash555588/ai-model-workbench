@@ -121,6 +121,10 @@ export function stat(path: string): Promise<import("node:fs").Stats> {
   return throwIfNull(getFsPromises(), "node:fs/promises").stat(path);
 }
 
+export function readdir(path: string): Promise<string[]> {
+  return throwIfNull(getFsPromises(), "node:fs/promises").readdir(path);
+}
+
 // ── fs constants ─────────────────────────────────────────────────
 
 export const F_OK = 0;

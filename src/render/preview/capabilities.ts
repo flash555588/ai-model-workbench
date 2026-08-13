@@ -17,7 +17,9 @@ import {
 } from "./types";
 
 const THREE_DIRECT_FORMATS = ["glb", "gltf", "stl", "ply", "obj"] as const;
-const BABYLON_CAPABILITY_FORMATS = ["glb", "gltf", "stl", "ply", "obj", "splat", "converted-glb"] as const;
+// SPLAT/SPZ/SOG are disabled in packaged builds (see io/formats/registry.ts),
+// so they are not listed as a supported capability format.
+const BABYLON_CAPABILITY_FORMATS = ["glb", "gltf", "stl", "ply", "obj", "converted-glb"] as const;
 
 export function collectPreviewCapabilities(preview: unknown): PreviewCapabilityId[] {
   const capabilities: PreviewCapabilityId[] = [];
@@ -59,9 +61,9 @@ export function createPreviewCapabilityProfile(
     supportedFormats: BABYLON_CAPABILITY_FORMATS,
     fallbackRole: "Capability and compatibility backend",
     capabilities: [...capabilities],
-    colorPipeline: "Babylon material pipeline with conservative fallback behavior",
+    colorPipeline: "sRGB output, no tone mapping, PBR material preservation with local IBL",
     fidelityNotes: [
-      "3dgrid, conservative workbench, SPLAT, and converted workbench inputs remain on Babylon.",
+      "3dgrid, conservative workbench, and converted workbench inputs remain on Babylon.",
       "Babylon remains the rollback path when Three direct rendering is disabled.",
     ],
   };

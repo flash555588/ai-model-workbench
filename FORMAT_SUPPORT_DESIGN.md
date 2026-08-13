@@ -319,6 +319,29 @@
 - 编辑器错误扫描结果为 0。
 - 现有直读行为与入口兼容保持不变。
 
+### 12.7 运行时格式注册与直读分派（2026-08）
+- 格式注册表已支持运行时扩展：`registerFormatCapability` / `unregisterFormatCapability` /
+  `resetFormatCapabilities` / `getFormatCapabilities`，可在不改内置列表的前提下新增或覆盖格式。
+- `directLoader` 放宽为任意字符串，允许自定义加载器标识；`FormatCapability` 新增 `displayName` 可读名。
+- 直读分派已改为注册表驱动：`getDirectLoaderKind(ext)` 返回 `gltf` / `obj` / `stl` / `ply` 等
+  渲染器无关的 loader 标识，Three 与 Babylon 的 `loadModel` 均按该标识分派，不再各自硬编码扩展名分支。
+- 转换工厂已支持运行时注册：`createConversionManager` 接受 `extraConverters` 自定义转换器，
+  与 `registerFormatCapability` 配合即可端到端接入一个新 `convert` 格式。
+- 边界说明：注册表扩展是"路由元数据"级扩展，并非新格式开箱即用——新 `convert` 格式仍需在
+  `conversion/factory.ts` 注册对应转换器，新 `direct` 格式仍需在渲染层增加对应 loader 实现。
+
+### 12.8 新增 trimesh 可转换格式（2026-08）
+- 新增两种可转换源格式：OFF（`off`）、Gmsh（`msh`），均为 `trimesh.load()` 核心格式，
+  无需额外依赖（`xaml` 需可选依赖 `lxml`、`xyz` 为点云无法经当前 trimesh 网格桥输出 GLB，
+  故暂未纳入）。
+- 两者均路由至 assimp（Python/trimesh）转换桥，输出为 `glb`，归属 `mesh` 族。
+
+### 12.9 新增 FreeCAD 原生 CAD 格式（2026-08）
+- 将原 SLDPRT 转换器泛化为 FreeCAD 原生 CAD 转换器，新增 Parasolid（`x_t`、`x_b`）与
+  CATIA（`catpart`、`catproduct`）支持，与 `sldprt` 共用 FreeCADCmd + ImportGui 导入脚本。
+- 这些格式依赖 FreeCAD 原生导入器（非 CadQuery/OCCT），转换失败时按现有错误通道提示。
+- 转换器 id 保持 `sldprt` 以兼容已保存的 `enabledConverterIds` 设置。
+
 ---
 
 ## 13. 设计完成判定（Final）

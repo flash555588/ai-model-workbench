@@ -11,6 +11,7 @@ import {
   getAdaptivePointSize,
   prepareThreeMaterialForColorAccuracy,
 } from "./material-quality";
+import { createThreeRemoteUrlError, guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
 import { throwIfPreviewLoadInterrupted, type PreviewLoadOptions } from "../preview/load-control";
 
 const IMAGE_MIME: Record<string, string> = {
@@ -87,6 +88,7 @@ function collectGltfExternalResourceTasks(gltfJson: GltfJson): GltfExternalResou
     if (!uri || uri.startsWith("data:")) {
       return;
     }
+    guardThreeUrl(uri, "glTF resource loading");
     const key = normalizeResourceLookupKey(uri);
     if (!key) {
       return;
@@ -165,7 +167,14 @@ async function createGltfBlobResourceResolver(
 
   manager.setURLModifier((url) => {
     const key = normalizeResourceLookupKey(url);
-    return lookup.get(key) ?? lookup.get(joinPortablePath("", key)) ?? url;
+    const resolved = lookup.get(key) ?? lookup.get(joinPortablePath("", key));
+    if (resolved) return resolved;
+    // Nothing local matched. Returning `url` here would hand a remote address to
+    // the default loader and cause a real network fetch, so refuse it instead.
+    if (isThreeRemoteUrl(url)) {
+      throw createThreeRemoteUrlError(url, "glTF resource loading");
+    }
+    return url;
   });
 
   return {
@@ -193,6 +202,10 @@ function firstTexturePath(value: string): string {
   return tokens.slice(Math.max(0, pathStart)).join(" ").replace(/^"|"$/g, "");
 }
 
+function formatLoadError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function readRelativeResource(
   readFile: (path: string) => Promise<ArrayBuffer>,
   modelDir: string,
@@ -201,8 +214,8 @@ async function readRelativeResource(
   const path = joinPortablePath(modelDir, uri);
   try {
     return { data: await readFile(path), path };
-  } catch {
-    throw new Error(`Missing external model resource: ${path}`);
+  } catch (error) {
+    throw new Error(`Missing external model resource: ${path} (${formatLoadError(error)})`);
   }
 }
 
@@ -349,56 +362,69 @@ export async function loadThreeOBJ(
     const modelDir = getPortableDirname(modelPath);
     const mtlPath = joinPortablePath(modelDir, mtlFilename);
 
+    let mtlText: string;
     try {
       const mtlData = await readFile(mtlPath);
-      let mtlText = new TextDecoder().decode(new Uint8Array(mtlData));
+      mtlText = new TextDecoder().decode(new Uint8Array(mtlData));
+    } catch (error) {
+      warnings.push(`OBJ material library read failed: ${mtlPath} (${formatLoadError(error)})`);
+      mtlText = "";
+    }
 
-      // Resolve texture references in MTL
-      const lines = mtlText.split("\n");
-      const texCache = new Map<string, string>();
+    if (mtlText) {
+      try {
+        // Resolve texture references in MTL
+        const lines = mtlText.split("\n");
+        const texCache = new Map<string, string>();
 
-      for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(MTL_TEXTURE_RE);
-        if (!m) continue;
-        const rawPath = firstTexturePath(m[2]);
-        const candidates = buildTextureCandidates(modelDir, rawPath, modelPath);
+        for (let i = 0; i < lines.length; i++) {
+          const m = lines[i].match(MTL_TEXTURE_RE);
+          if (!m) continue;
+          const rawPath = firstTexturePath(m[2]);
+          const candidates = buildTextureCandidates(modelDir, rawPath, modelPath);
 
-        let resolved = false;
-        for (const cand of candidates) {
-          if (texCache.has(cand)) {
-            lines[i] = `${m[1]} ${texCache.get(cand)}`;
-            resolved = true;
-            break;
+          let resolved = false;
+          let lastError: unknown = null;
+          for (const cand of candidates) {
+            if (texCache.has(cand)) {
+              lines[i] = `${m[1]} ${texCache.get(cand)}`;
+              resolved = true;
+              break;
+            }
+            try {
+              const texBuf = await readFile(cand);
+              const dataUrl = `data:${guessMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
+              texCache.set(cand, dataUrl);
+              lines[i] = `${m[1]} ${dataUrl}`;
+              resolved = true;
+              break;
+            } catch (error) {
+              lastError = error;
+              /* try next candidate */
+            }
           }
-          try {
-            const texBuf = await readFile(cand);
-            const dataUrl = `data:${guessMime(cand)};base64,${arrayBufferToBase64(texBuf)}`;
-            texCache.set(cand, dataUrl);
-            lines[i] = `${m[1]} ${dataUrl}`;
-            resolved = true;
-            break;
-          } catch { /* try next candidate */ }
+          if (!resolved) {
+            const reason = lastError ? ` (${formatLoadError(lastError)})` : "";
+            warnings.push(`OBJ material texture not found: ${rawPath}${reason}`);
+            lines[i] = "";
+          }
         }
-        if (!resolved) {
-          warnings.push(`OBJ material texture not found: ${rawPath}`);
-          lines[i] = "";
+
+        // Ensure diffuse color exists
+        const filtered = lines.filter(l => l !== "");
+        const hasKd = filtered.some(l => /^\s*Kd\s+/i.test(l));
+        if (!hasKd) {
+          const nmIdx = filtered.findIndex(l => /^\s*newmtl\s+/i.test(l));
+          filtered.splice(nmIdx >= 0 ? nmIdx + 1 : 0, 0, "Kd 0.80 0.80 0.80");
         }
-      }
 
-      // Ensure diffuse color exists
-      const filtered = lines.filter(l => l !== "");
-      const hasKd = filtered.some(l => /^\s*Kd\s+/i.test(l));
-      if (!hasKd) {
-        const nmIdx = filtered.findIndex(l => /^\s*newmtl\s+/i.test(l));
-        filtered.splice(nmIdx >= 0 ? nmIdx + 1 : 0, 0, "Kd 0.80 0.80 0.80");
+        const mtlLoader = new MTLLoader();
+        const mtlResult = mtlLoader.parse(filtered.join("\n"), modelDir ? `${modelDir}/` : "");
+        mtlResult.preload();
+        materials = mtlResult;
+      } catch (error) {
+        warnings.push(`OBJ material library parse failed: ${mtlPath} (${formatLoadError(error)})`);
       }
-
-      const mtlLoader = new MTLLoader();
-      const mtlResult = mtlLoader.parse(filtered.join("\n"), modelDir ? `${modelDir}/` : "");
-      mtlResult.preload();
-      materials = mtlResult;
-    } catch {
-      warnings.push(`OBJ material library not found: ${mtlPath}`);
     }
   } else if (mtlMatch && (!readFile || !modelPath)) {
     warnings.push("OBJ material library could not be resolved without a model path.");

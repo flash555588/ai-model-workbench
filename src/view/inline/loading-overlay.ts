@@ -22,7 +22,10 @@ export interface LoadingOverlay {
 }
 
 export function createLoadingOverlay(host: HTMLElement): LoadingOverlay {
+  host.setAttribute("aria-busy", "true");
   const overlay = host.createDiv({ cls: "ai3d-loading-overlay" });
+  overlay.setAttribute("role", "status");
+  overlay.setAttribute("aria-live", "polite");
   const skeleton = overlay.createDiv({ cls: "ai3d-loading-skeleton" });
   skeleton.createDiv({ cls: "ai3d-loading-skeleton-canvas" });
   const skeletonMeta = skeleton.createDiv({ cls: "ai3d-loading-skeleton-meta" });
@@ -78,6 +81,7 @@ export function createLoadingOverlay(host: HTMLElement): LoadingOverlay {
       if (hidden) return;
       hidden = true;
       stopListening();
+      overlay.parentElement?.removeAttribute("aria-busy");
       overlay.classList.add("is-hiding");
       window.setTimeout(() => overlay.remove(), 300);
     },

@@ -121,4 +121,70 @@ describe("buildLocalAnalysisResult format lineage", () => {
     expect(analysis.parts[0].meshRefs).toHaveLength(16);
     expect(analysis.draftingInput?.partCandidates[0].meshRefs).toHaveLength(16);
   });
+
+  it("applies persisted match decisions and keeps rejected matches out of drafting input", () => {
+    const evidence: ModelEvidence = {
+      summary: preview,
+      parts: [{
+        name: "Control Board",
+        source: "component",
+        componentId: "PCB-001",
+        meshNames: ["Control Board"],
+        childCount: 1,
+        triangleCount: 420,
+        vertexCount: 210,
+        materialName: "board",
+        boundingSize: { x: 1.6, y: 0.8, z: 0.45 },
+        center: { x: 0, y: 0, z: 0 },
+      }],
+      materialNames: ["board"],
+      resourceWarnings: [],
+      capturedAt: "2026-08-04T00:00:00.000Z",
+    };
+    const registeredParts = [{
+      partId: "legacy:control-board",
+      assetId: "models/legacy.glb",
+      name: "Control Board",
+      source: "component" as const,
+      componentId: "PCB-001",
+      meshRefs: ["Control Board"],
+      materialRefs: ["board"],
+      bbox: [1.6, 0.8, 0.45] as [number, number, number],
+      confidence: 0.9,
+      observations: [],
+      inferredFunctions: [],
+      knowledgeTags: [],
+      reviewed: true,
+    }];
+    const initial = buildLocalAnalysisResult({
+      modelPath: "models/current.glb",
+      preview,
+      evidence,
+      registeredParts,
+    });
+    const currentPartId = initial.parts[0].partId;
+    const analysis = buildLocalAnalysisResult({
+      modelPath: "models/current.glb",
+      preview,
+      evidence,
+      registeredParts,
+      profile: {
+        tags: [],
+        notes: "",
+        annotations: [],
+        registeredMatchReviews: [{
+          currentPartId,
+          sourceAssetId: "models/legacy.glb",
+          sourcePartId: "legacy:control-board",
+          decision: "rejected",
+          reviewedAt: "2026-08-04T01:00:00.000Z",
+        }],
+        createdAt: "2026-08-04T00:00:00.000Z",
+        updatedAt: "2026-08-04T01:00:00.000Z",
+      },
+    });
+
+    expect(analysis.parts[0].registeredMatches?.[0].reviewDecision).toBe("rejected");
+    expect(analysis.draftingInput?.partCandidates[0].registeredMatches).toEqual([]);
+  });
 });

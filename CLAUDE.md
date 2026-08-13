@@ -18,11 +18,21 @@ model regions, and generating linked knowledge notes from local model evidence.
 
 Current renderer contract:
 
-- Three.js is the default single-model preview path for GLB/GLTF/STL/PLY/OBJ across
-  inline previews, Live Preview, and direct file view.
+- Babylon.js compatibility mode (`previewRendererRollout: "babylon-safe"`,
+  `useThreeRenderer: false`) is the default single-model preview path for
+  GLB/GLTF/STL/PLY/OBJ across inline previews, Live Preview, and direct file view.
+- Three.js is an explicit opt-in rollout for those same single-model surfaces, plus
+  the one default-on exception below.
+- Direct file view opens generated converted GLB outputs (STEP/FBX/3MF/DAE and
+  similar) with Three.js first and silently falls back to Babylon.js on load failure,
+  while the Converted GLB Three fast path setting is enabled.
 - Babylon.js remains the production capability/fallback backend for `3dgrid` and
   conservative workbench behavior.
-- Direct GLB/GLTF file view can use Experimental Three workbench with Babylon fallback.
+- Direct GLB/GLTF file view can use Experimental Three workbench (off by default)
+  with Babylon fallback.
+
+The route contract lives in `src/render/preview/routing.ts` and
+`docs/preview-routing-matrix.md`. Update both when routing changes.
 
 Current knowledge contract:
 

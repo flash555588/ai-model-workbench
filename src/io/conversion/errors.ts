@@ -5,7 +5,7 @@ const CONVERTER_DISPLAY_NAMES: Record<string, string> = {
   obj2gltf: "obj2gltf",
   fbx2gltf: "FBX2glTF",
   assimp: "mesh",
-  sldprt: "SolidWorks",
+  sldprt: "FreeCAD",
 };
 
 export interface ModelLoadFailureDetails {

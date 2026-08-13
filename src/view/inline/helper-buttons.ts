@@ -35,6 +35,7 @@ import type {
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
 import { getPortableStem } from "../../utils/resolve-path";
+import { dataUrlToBlob } from "../../utils/base64";
 import {
   cancelOrDeactivateMeasurement,
   createBoundsMeasurementScale,
@@ -63,16 +64,6 @@ function createSvgIcon(inner: string): SVGSVGElement {
     svg.appendChild(activeDocument.importNode(child, true));
   }
   return svg;
-}
-
-/** Convert a data URL to a Blob without using fetch(). */
-function dataUrlToBlob(dataUrl: string): Blob {
-  const [header, data] = dataUrl.split(",");
-  const mime = header.match(/:(.*?);/)?.[1] ?? "image/png";
-  const binary = atob(data);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
 }
 
 const RENDER_SCALE_PRESETS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] as const;

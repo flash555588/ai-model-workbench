@@ -9,6 +9,7 @@ vi.mock("obsidian", () => ({
 let loadThreePLY: typeof import("./loaders").loadThreePLY;
 let loadThreeSTL: typeof import("./loaders").loadThreeSTL;
 let loadThreeGLTF: typeof import("./loaders").loadThreeGLTF;
+let loadThreeOBJ: typeof import("./loaders").loadThreeOBJ;
 
 beforeAll(async () => {
   vi.stubGlobal("activeWindow", {});
@@ -28,6 +29,7 @@ beforeAll(async () => {
   loadThreeGLTF = loaders.loadThreeGLTF;
   loadThreePLY = loaders.loadThreePLY;
   loadThreeSTL = loaders.loadThreeSTL;
+  loadThreeOBJ = loaders.loadThreeOBJ;
 });
 
 function encodeAscii(text: string): ArrayBuffer {
@@ -226,6 +228,30 @@ describe("Three loaders", () => {
     expect(result.scene.getObjectByName("external-buffer-triangle")).toBeTruthy();
   });
 
+  it("refuses GLTF external buffers hosted on remote URLs", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, [
+      { uri: "https://example.com/Geometry.bin", byteLength: base.bin.byteLength },
+    ]);
+    const readFile = vi.fn(async () => base.bin);
+
+    await expect(loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf"))
+      .rejects.toThrow(/Refused remote URL/);
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses protocol-relative GLTF external buffers", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, [
+      { uri: "//cdn.example.com/Geometry.bin", byteLength: base.bin.byteLength },
+    ]);
+    const readFile = vi.fn(async () => base.bin);
+
+    await expect(loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf"))
+      .rejects.toThrow(/Refused remote URL/);
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
   it("enables vertex colors for colored STL", async () => {
     const object = await loadThreeSTL(createColoredBinaryStl());
 
@@ -282,5 +308,25 @@ describe("Three loaders", () => {
     expect(object).toBeInstanceOf(Points);
     expect(((object as Points).material as PointsMaterial).vertexColors).toBe(true);
     expect(((object as Points).material as PointsMaterial).size).toBeLessThan(0.01);
+  });
+
+  it("reports the underlying read error when an OBJ material library cannot be read", async () => {
+    const obj = [
+      "mtllib missing.mtl",
+      "o triangle",
+      "v 0 0 0",
+      "v 1 0 0",
+      "v 0 1 0",
+      "f 1 2 3",
+    ].join("\n");
+    const readFile = vi.fn(async () => {
+      throw new Error("vault read denied");
+    });
+
+    const result = await loadThreeOBJ(encodeAscii(obj), readFile, "fixtures/model.obj");
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain("read failed");
+    expect(result.warnings[0]).toContain("vault read denied");
   });
 });

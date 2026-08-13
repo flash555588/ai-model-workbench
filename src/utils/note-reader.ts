@@ -53,40 +53,46 @@ export async function readHeadingSection(
   notePath: string,
   heading: string,
 ): Promise<string | null> {
+  const file = app.vault.getAbstractFileByPath(notePath);
+  if (!(file instanceof TFile)) return null;
+
+  let content: string;
   try {
-    const file = app.vault.getAbstractFileByPath(notePath);
-    if (!(file instanceof TFile)) return null;
-    const content = await app.vault.cachedRead(file);
-    const lines = content.split("\n");
-
-    // Find the heading line (normalize for fuzzy match against formatted headings)
-    let start = -1;
-    let level = 0;
-    const normalizedTarget = normalizeHeadingText(heading);
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^(#{1,6})\s+(.+)/);
-      if (m) {
-        const text = m[2].trim();
-        if (text === heading || normalizeHeadingText(text) === normalizedTarget) {
-          start = i + 1;
-          level = m[1].length;
-          break;
-        }
-      }
-    }
-    if (start < 0) return null;
-
-    // Extract until next heading of same or higher level
-    const section: string[] = [];
-    for (let i = start; i < lines.length; i++) {
-      const m = lines[i].match(/^(#{1,6})\s/);
-      if (m && m[1].length <= level) break;
-      section.push(lines[i]);
-    }
-    return section.join("\n").trim() || null;
-  } catch {
+    content = await app.vault.cachedRead(file);
+  } catch (error) {
+    // Only the vault read is expected to fail; surface it instead of silently
+    // returning the same null callers use for "empty section".
+    console.warn(`[AI3D] Failed to read note section "${heading}" from ${notePath}:`, error);
     return null;
   }
+
+  const lines = content.split("\n");
+
+  // Find the heading line (normalize for fuzzy match against formatted headings)
+  let start = -1;
+  let level = 0;
+  const normalizedTarget = normalizeHeadingText(heading);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+(.+)/);
+    if (m) {
+      const text = m[2].trim();
+      if (text === heading || normalizeHeadingText(text) === normalizedTarget) {
+        start = i + 1;
+        level = m[1].length;
+        break;
+      }
+    }
+  }
+  if (start < 0) return null;
+
+  // Extract until next heading of same or higher level
+  const section: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s/);
+    if (m && m[1].length <= level) break;
+    section.push(lines[i]);
+  }
+  return section.join("\n").trim() || null;
 }
 
 /**

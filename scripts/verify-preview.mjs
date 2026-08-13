@@ -80,6 +80,18 @@ function parseExpectSmallParts() {
   return process.argv.includes("--expect-small-parts");
 }
 
+function parseVerifyCameraViewport() {
+  return process.argv.includes("--verify-camera-viewport");
+}
+
+function parseVerifyStyleConfig() {
+  return process.argv.includes("--verify-style-config");
+}
+
+function parseVerifyStlConfigScope() {
+  return process.argv.includes("--verify-stl-config-scope");
+}
+
 const verifyMode = parseMode();
 const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
@@ -90,6 +102,9 @@ const verifyExpectNoWarnings = parseExpectNoWarnings();
 const verifyExpectGroupParts = parseExpectGroupParts();
 const verifyExpectColorFidelity = parseExpectColorFidelity();
 const verifyExpectSmallParts = parseExpectSmallParts();
+const verifyCameraViewport = parseVerifyCameraViewport();
+const verifyStyleConfig = parseVerifyStyleConfig();
+const verifyStlConfigScope = parseVerifyStlConfigScope();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -252,6 +267,8 @@ function createStaticServer() {
     .preview-card { width: 960px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 20px; background: #171b23; border-radius: 20px; }
     .ai3d-preview-host { min-height: 640px; }
     #preview-canvas { display: block; width: 100%; height: 640px; background: #20242e; border-radius: 14px; }
+    #preview-canvas.ai3d-verify-portrait-viewport { width: 320px; height: 640px; }
+    #preview-canvas.ai3d-verify-landscape-viewport { width: 640px; height: 320px; }
     .grid-preview-card { margin-block: 80px; }
     .grid-code-block-host .ai3d-grid-host { min-height: 300px; }
     .grid-code-block-host canvas { display: block; width: 100%; height: 300px; background: #20242e; border-radius: 14px; }
@@ -702,24 +719,26 @@ async function findMeasurementClickPair(page, box, firstPick, selectedBounds = n
   ].map((entry) => clampClickToBox(box, entry.clientX, entry.clientY));
 
   const acceptsPoint = (point) => point && (!selectedBounds || isPointInsideSelectedBounds(point, selectedBounds));
-  let first = null;
+  const accepted = [];
   for (const candidate of candidates) {
     const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
     if (acceptsPoint(point)) {
-      first = { ...candidate, point };
-      break;
+      accepted.push({ ...candidate, point });
     }
   }
-  assert(first, "Could not find a first pick point for measurement verification");
+  assert(accepted.length > 0, "Could not find a first pick point for measurement verification");
 
-  for (const candidate of candidates) {
-    const point = await readPickWorldPoint(page, candidate.clientX, candidate.clientY);
-    if (acceptsPoint(point) && worldPointDistance(point, first.point) > 0.0001) {
-      return { first, second: { ...candidate, point } };
+  let best = null;
+  for (let i = 0; i < accepted.length; i++) {
+    for (let j = i + 1; j < accepted.length; j++) {
+      const distance = worldPointDistance(accepted[i].point, accepted[j].point);
+      if (distance > 0.0001 && (!best || distance > best.distance)) {
+        best = { first: accepted[i], second: accepted[j], distance };
+      }
     }
   }
-
-  throw new Error("Could not find two distinct pick points for measurement verification");
+  assert(best, "Could not find two distinct pick points for measurement verification");
+  return { first: best.first, second: best.second };
 }
 
 async function verifyHelperToolbar(page) {
@@ -1227,7 +1246,10 @@ async function verifyMeasurementTool(page, box, firstPick) {
   const records = await page.evaluate(() => window.__ai3dPreview?.getMeasurementRecords?.() ?? []);
   const completedSnapState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
 
-  assert(records.length === 1, `Expected one measurement record, got ${JSON.stringify(records)}`);
+  assert(
+    records.length === 1,
+    `Expected one measurement record: ${JSON.stringify({ records, clickPair, firstSnapState, completedSnapState })}`,
+  );
   assert(records[0].reading.distance > 0, `Measurement distance was not positive: ${JSON.stringify(records[0])}`);
   assert(
     records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
@@ -1698,6 +1720,409 @@ async function verifyThreePerformanceBudgetSnapshot(page, route, performanceSnap
   );
 }
 
+async function verifyThreeCameraViewportControls(page, route) {
+  if (!verifyCameraViewport) return;
+  assert(route?.backend === "three", `Camera viewport verification requires Three.js: ${JSON.stringify(route)}`);
+
+  const baseline = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    if (!preview || !(canvas instanceof HTMLCanvasElement)) return null;
+    preview.resetView();
+    return {
+      aspect: canvas.clientWidth / canvas.clientHeight,
+      initialDistance: preview.initialPosition.distanceTo(preview.initialTarget),
+    };
+  });
+  assert(baseline?.initialDistance > 0, `Three camera baseline was unavailable: ${JSON.stringify(baseline)}`);
+
+  const portrait = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    canvas.classList.remove("ai3d-verify-landscape-viewport");
+    canvas.classList.add("ai3d-verify-portrait-viewport");
+    preview.resizeRenderer();
+    return {
+      aspect: canvas.clientWidth / canvas.clientHeight,
+      initialDistance: preview.initialPosition.distanceTo(preview.initialTarget),
+      poseError: preview.camera.position.distanceTo(preview.initialPosition)
+        + preview.controls.target.distanceTo(preview.initialTarget),
+    };
+  });
+  assert(portrait.aspect < 1, `Portrait camera probe did not create a narrow viewport: ${JSON.stringify(portrait)}`);
+  assert(
+    portrait.initialDistance > baseline.initialDistance,
+    `Narrow viewport did not pull the default camera back: ${JSON.stringify({ baseline, portrait })}`,
+  );
+  assert(portrait.poseError < portrait.initialDistance * 1e-5, `Live default camera did not follow its aspect refit: ${JSON.stringify(portrait)}`);
+
+  const movedLandscape = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    preview.camera.position.x += preview.initialPosition.distanceTo(preview.initialTarget) * 0.2;
+    preview.controls.update();
+    const movedPosition = preview.camera.position.clone();
+    canvas.classList.remove("ai3d-verify-portrait-viewport");
+    canvas.classList.add("ai3d-verify-landscape-viewport");
+    preview.resizeRenderer();
+    return {
+      aspect: canvas.clientWidth / canvas.clientHeight,
+      initialDistance: preview.initialPosition.distanceTo(preview.initialTarget),
+      movedPoseError: preview.camera.position.distanceTo(movedPosition),
+      resetPoseError: preview.camera.position.distanceTo(preview.initialPosition),
+    };
+  });
+  assert(movedLandscape.aspect > 1, `Landscape camera probe did not create a wide viewport: ${JSON.stringify(movedLandscape)}`);
+  assert(
+    movedLandscape.initialDistance < portrait.initialDistance,
+    `Wide viewport did not recompute the stored default framing: ${JSON.stringify({ portrait, movedLandscape })}`,
+  );
+  assert(
+    movedLandscape.movedPoseError < movedLandscape.initialDistance * 1e-5
+      && movedLandscape.resetPoseError > movedLandscape.initialDistance * 1e-3,
+    `Aspect refit overrode a user-moved camera: ${JSON.stringify(movedLandscape)}`,
+  );
+
+  const resetState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    preview.resetView();
+    return {
+      poseError: preview.camera.position.distanceTo(preview.initialPosition)
+        + preview.controls.target.distanceTo(preview.initialTarget),
+      nearError: Math.abs(preview.camera.near - preview.initialNear),
+      farError: Math.abs(preview.camera.far - preview.initialFar),
+    };
+  });
+  assert(
+    resetState.poseError < movedLandscape.initialDistance * 1e-5
+      && resetState.nearError < 1e-9
+      && resetState.farError < 1e-9,
+    `Reset View did not restore the refitted pose and clip range: ${JSON.stringify(resetState)}`,
+  );
+
+  const orthographicState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    preview.applyConfig({ lights: [{ type: "attachToCam", intensity: 1 }] });
+    const attachedLight = preview.configLights[0];
+    const attachedBeforeSwitch = attachedLight?.parent === preview.camera;
+    preview.applyConfig({ camera: { mode: "orthographic" } });
+    canvas.classList.remove("ai3d-verify-landscape-viewport");
+    canvas.classList.add("ai3d-verify-portrait-viewport");
+    preview.resizeRenderer();
+
+    const bounds = preview.fittedBounds;
+    const provider = preview.getAnnotationProvider?.();
+    const projectedCorners = [];
+    if (bounds && provider) {
+      for (const x of [bounds.min.x, bounds.max.x]) {
+        for (const y of [bounds.min.y, bounds.max.y]) {
+          for (const z of [bounds.min.z, bounds.max.z]) {
+            const projection = { screenX: 0, screenY: 0, depth: 0 };
+            const visible = provider.projectWorldPoint({ x, y, z }, projection);
+            projectedCorners.push({ visible, ...projection });
+          }
+        }
+      }
+    }
+    return {
+      isOrthographic: preview.camera.isOrthographicCamera === true,
+      attachedBeforeSwitch,
+      attachedAfterSwitch: attachedLight?.parent === preview.camera,
+      canvasWidth: canvas.clientWidth,
+      canvasHeight: canvas.clientHeight,
+      frustumAspect: (preview.camera.right - preview.camera.left) / (preview.camera.top - preview.camera.bottom),
+      projectedCorners,
+    };
+  });
+  assert(
+    orthographicState.isOrthographic
+      && orthographicState.attachedBeforeSwitch
+      && orthographicState.attachedAfterSwitch,
+    `Projection switch lost its camera-attached light: ${JSON.stringify(orthographicState)}`,
+  );
+  assert(
+    Math.abs(orthographicState.frustumAspect - orthographicState.canvasWidth / orthographicState.canvasHeight) < 1e-6,
+    `Orthographic frustum did not follow the viewport aspect: ${JSON.stringify(orthographicState)}`,
+  );
+  assert(
+    orthographicState.projectedCorners.length === 8
+      && orthographicState.projectedCorners.every((corner) =>
+        corner.visible
+        && corner.screenX >= -1
+        && corner.screenX <= orthographicState.canvasWidth + 1
+        && corner.screenY >= -1
+        && corner.screenY <= orthographicState.canvasHeight + 1
+      ),
+    `Orthographic framing clipped model bounds: ${JSON.stringify(orthographicState)}`,
+  );
+
+  const lightSurvivedReturn = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const attachedLight = preview.configLights[0];
+    preview.applyConfig({ camera: { mode: "perspective" } });
+    return attachedLight?.parent === preview.camera;
+  });
+  assert(lightSurvivedReturn, "Camera-attached light did not survive the return to perspective");
+
+  const authoredPoseState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    preview.applyConfig({ camera: { position: [5, 4, 6], lookAt: [0, 0, 0] } });
+    const authoredPosition = preview.camera.position.clone();
+    const authoredTarget = preview.controls.target.clone();
+    canvas.classList.remove("ai3d-verify-portrait-viewport");
+    canvas.classList.add("ai3d-verify-landscape-viewport");
+    preview.resizeRenderer();
+    return {
+      positionError: preview.camera.position.distanceTo(authoredPosition),
+      targetError: preview.controls.target.distanceTo(authoredTarget),
+    };
+  });
+  assert(
+    authoredPoseState.positionError < 1e-9 && authoredPoseState.targetError < 1e-9,
+    `Authored camera pose changed during resize: ${JSON.stringify(authoredPoseState)}`,
+  );
+
+  await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const canvas = document.querySelector("#preview-canvas");
+    canvas.classList.remove("ai3d-verify-portrait-viewport", "ai3d-verify-landscape-viewport");
+    preview.resizeRenderer();
+    preview.resetView();
+    preview.applyConfig({ scene: { autoRotate: true, autoRotateSpeed: 1 } });
+    window.__ai3dAutoRotateStart = preview.camera.position.clone();
+  });
+  await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
+  await page.waitForTimeout(250);
+  const autoRotateDistance = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    return preview.camera.position.distanceTo(window.__ai3dAutoRotateStart);
+  });
+  assert(
+    autoRotateDistance > baseline.initialDistance * 1e-5,
+    `Three auto-rotation did not advance with wall-clock time: distance=${autoRotateDistance}`,
+  );
+
+  await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    preview.applyConfig({ lights: [], scene: { autoRotate: false } });
+    preview.resetView();
+    delete window.__ai3dAutoRotateStart;
+  });
+}
+
+async function verifyThreeStyleConfigControls(page, route) {
+  if (!verifyStyleConfig) return;
+  assert(route?.backend === "three", `Style config verification requires Three.js: ${JSON.stringify(route)}`);
+
+  // `scene.axis` and the orientation-gizmo toggle drove one shared visibility flag,
+  // so whichever ran last discarded the other's request. Drive both and confirm
+  // neither erases the other.
+  const axisState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const axisVisible = () => preview.axesHelper?.visible === true;
+
+    preview.applyConfig({ scene: { axis: false } });
+    const gizmoOffConfigOff = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+
+    // Config on, gizmo off: the axis must show because the block config asked.
+    preview.applyConfig({ scene: { axis: true } });
+    const configOnGizmoOff = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+
+    // Toggling the gizmo on and back off must not cancel the config's request.
+    preview.toggleOrientationGizmo();
+    const configOnGizmoOn = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+    preview.toggleOrientationGizmo();
+    const configOnGizmoBackOff = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+
+    // Config off, gizmo on: the toolbar must still be able to show the axis.
+    preview.applyConfig({ scene: { axis: false } });
+    preview.toggleOrientationGizmo();
+    const configOffGizmoOn = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+
+    const helperScale = preview.axesHelper?.scale?.x ?? 0;
+    const bounds = preview.fittedBounds;
+    const modelSpan = bounds
+      ? Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z)
+      : 0;
+
+    preview.toggleOrientationGizmo();
+    const configOffGizmoOff = { axis: axisVisible(), reported: preview.isOrientationGizmoEnabled() };
+
+    return {
+      gizmoOffConfigOff,
+      configOnGizmoOff,
+      configOnGizmoOn,
+      configOnGizmoBackOff,
+      configOffGizmoOn,
+      configOffGizmoOff,
+      helperScale,
+      modelSpan,
+    };
+  });
+
+  assert(
+    !axisState.gizmoOffConfigOff.axis && !axisState.gizmoOffConfigOff.reported,
+    `Axis was visible before either input asked for it: ${JSON.stringify(axisState)}`,
+  );
+  assert(
+    axisState.configOnGizmoOff.axis && !axisState.configOnGizmoOff.reported,
+    `scene.axis:true did not show the axis, or leaked into the gizmo toggle state: ${JSON.stringify(axisState)}`,
+  );
+  assert(
+    axisState.configOnGizmoOn.axis && axisState.configOnGizmoOn.reported,
+    `Orientation gizmo did not report enabled while showing the axis: ${JSON.stringify(axisState)}`,
+  );
+  assert(
+    axisState.configOnGizmoBackOff.axis,
+    `Turning the orientation gizmo off erased an axis the block config requested: ${JSON.stringify(axisState)}`,
+  );
+  assert(
+    axisState.configOffGizmoOn.axis && axisState.configOffGizmoOn.reported,
+    `Orientation gizmo could not show the axis while scene.axis was false: ${JSON.stringify(axisState)}`,
+  );
+  assert(
+    !axisState.configOffGizmoOff.axis && !axisState.configOffGizmoOff.reported,
+    `Axis stayed visible with both the config and the gizmo off: ${JSON.stringify(axisState)}`,
+  );
+  // A helper created after the camera fit kept its fixed 1.2-unit build size.
+  assert(
+    axisState.modelSpan > 0 && axisState.helperScale > axisState.modelSpan * 0.05,
+    `Axis helper was not scaled to the model when created late: ${JSON.stringify(axisState)}`,
+  );
+
+  const wireframeState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const isStl = preview.loadedExt === "stl";
+    const meshWireframe = () => {
+      const materials = [];
+      const root = preview.rootObject;
+      if (root) {
+        root.traverse((object) => {
+          if (!object.isMesh) return;
+          for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+            if (material) materials.push(material.wireframe === true);
+          }
+        });
+      }
+      return materials;
+    };
+
+    preview.applyConfig({ stl: { wireframe: true } });
+    const afterConfigOn = { reported: preview.wireframeEnabled, materials: meshWireframe() };
+
+    preview.applyConfig({ stl: { wireframe: false } });
+    const afterConfigOff = { reported: preview.wireframeEnabled, materials: meshWireframe() };
+
+    // The toolbar toggle and the block config must agree on one state.
+    const toggled = preview.toggleWireframe();
+    const afterToggle = { reported: toggled, materials: meshWireframe() };
+    preview.toggleWireframe();
+
+    return { isStl, afterConfigOn, afterConfigOff, afterToggle };
+  });
+
+  assert(wireframeState.isStl, "Style config verification expects an STL fixture for stl.wireframe coverage");
+  assert(
+    wireframeState.afterConfigOn.reported
+      && wireframeState.afterConfigOn.materials.length > 0
+      && wireframeState.afterConfigOn.materials.every(Boolean),
+    `stl.wireframe:true did not render as wireframe or desynced the toolbar: ${JSON.stringify(wireframeState)}`,
+  );
+  assert(
+    !wireframeState.afterConfigOff.reported && wireframeState.afterConfigOff.materials.every((on) => !on),
+    `stl.wireframe:false did not restore solid materials: ${JSON.stringify(wireframeState)}`,
+  );
+  assert(
+    wireframeState.afterToggle.reported && wireframeState.afterToggle.materials.every(Boolean),
+    `Toolbar wireframe toggle disagreed with the rendered materials: ${JSON.stringify(wireframeState)}`,
+  );
+
+  // `stl:` options are format-scoped on the Babylon path; Three must match.
+  const colorState = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    preview.applyConfig({ stl: { color: "#3366cc" } });
+    const solid = preview.stlMaterial?.color?.getHexString?.() ?? null;
+
+    // A color change while wireframe is active must reach the stand-in materials.
+    preview.applyConfig({ stl: { wireframe: true } });
+    preview.setSTLColor("#cc3366");
+    const wireframeColors = [];
+    preview.rootObject?.traverse((object) => {
+      if (!object.isMesh) return;
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        if (material?.color) wireframeColors.push(material.color.getHexString());
+      }
+    });
+    preview.applyConfig({ stl: { wireframe: false } });
+    return { solid, wireframeColors, restored: preview.stlMaterial?.color?.getHexString?.() ?? null };
+  });
+
+  assert(
+    colorState.solid === "3366cc",
+    `stl.color was not applied to the STL material: ${JSON.stringify(colorState)}`,
+  );
+  assert(
+    colorState.wireframeColors.length > 0 && colorState.wireframeColors.every((hex) => hex === "cc3366"),
+    `Wireframe stand-ins kept a stale color after setSTLColor: ${JSON.stringify(colorState)}`,
+  );
+  assert(
+    colorState.restored === "cc3366",
+    `STL material lost its color after the wireframe round trip: ${JSON.stringify(colorState)}`,
+  );
+
+  await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    preview.applyConfig({ scene: { axis: false } });
+    preview.resetView();
+  });
+}
+
+async function verifyThreeStlConfigScope(page, route) {
+  if (!verifyStlConfigScope) return;
+  assert(route?.backend === "three", `STL config scope verification requires Three.js: ${JSON.stringify(route)}`);
+
+  const state = await page.evaluate(() => {
+    const preview = window.__ai3dPreview;
+    const readMaterials = () => {
+      const materials = [];
+      preview.rootObject?.traverse((object) => {
+        if (!object.isMesh) return;
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          if (!material) continue;
+          materials.push({
+            uuid: material.uuid,
+            color: material.color?.getHexString?.() ?? null,
+            wireframe: material.wireframe === true,
+          });
+        }
+      });
+      return materials;
+    };
+
+    const before = {
+      reported: preview.wireframeEnabled,
+      stlMaterial: preview.stlMaterial?.uuid ?? null,
+      materials: readMaterials(),
+    };
+    preview.applyConfig({ stl: { color: "#cc3366", wireframe: true } });
+    const after = {
+      reported: preview.wireframeEnabled,
+      stlMaterial: preview.stlMaterial?.uuid ?? null,
+      materials: readMaterials(),
+    };
+    return { loadedExt: preview.loadedExt, before, after };
+  });
+
+  assert(state.loadedExt !== "stl", `STL config scope probe needs a non-STL fixture: ${JSON.stringify(state)}`);
+  assert(state.before.materials.length > 0, `STL config scope probe found no model materials: ${JSON.stringify(state)}`);
+  assert(
+    JSON.stringify(state.after) === JSON.stringify(state.before),
+    `An stl: block changed a non-STL Three.js model: ${JSON.stringify(state)}`,
+  );
+}
+
 function verifyColorFidelity(stats) {
   if (!verifyExpectColorFidelity) return;
   assert(stats.redDominant > 4, `Color fixture did not expose enough red-dominant pixels: ${JSON.stringify(stats)}`);
@@ -1799,8 +2224,15 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   assert(result.evidence?.summary?.meshCount === state.summary.meshCount, "Workbench evidence summary did not match preview summary");
   assert(result.modelInfo.includes("Model Info"), "Workbench model info export failed");
   const rows = Array.isArray(state.registeredMatchRows) ? state.registeredMatchRows : [];
-  const noteRow = rows.find((row) => row.title === "Left Assembly");
+  const noteRow = rows.find((row) => row.source === "Legacy Left Assembly");
   const modelRow = rows.find((row) => row.title === "Right Assembly");
+  const rejectedRow = rows.find((row) => row.title === "Center Assembly");
+  const rejectedAlternateRow = rows.find((row) => row.source === "Rejected Left Assembly");
+  assert(rows.length === 4, `Registered match queue did not retain every candidate: ${JSON.stringify(rows)}`);
+  assert(
+    rows.indexOf(rejectedAlternateRow) < rows.indexOf(noteRow),
+    `Reviewed registered match did not sort ahead of a higher-scoring pending candidate: ${JSON.stringify(rows)}`,
+  );
   assert(noteRow?.button === "Note", `Registered match part-note row did not render Note action: ${JSON.stringify(rows)}`);
   assert(
     noteRow.targetPath === "Parts/3D Components/legacy/01 Left Assembly.md",
@@ -1809,6 +2241,11 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   assert(noteRow.target === "Opens matched part note", `Registered match part-note target copy was wrong: ${JSON.stringify(noteRow)}`);
   assert(noteRow.model === "From legacy grouped parts.gltf", `Registered match source model label was wrong: ${JSON.stringify(noteRow)}`);
   assert(noteRow.disabled === false, `Registered match part-note action was disabled: ${JSON.stringify(noteRow)}`);
+  assert(
+    JSON.stringify(noteRow.reviewButtons) === JSON.stringify(["Confirm", "Not same"]),
+    `Pending registered match review actions were wrong: ${JSON.stringify(noteRow)}`,
+  );
+  assert(noteRow.reviewStatus === "", `Pending registered match unexpectedly rendered a review status: ${JSON.stringify(noteRow)}`);
   assert(modelRow?.button === "Model", `Registered match source-model row did not render Model action: ${JSON.stringify(rows)}`);
   assert(
     modelRow.targetPath === "models/auto registered parts.gltf",
@@ -1816,6 +2253,11 @@ async function verifyWorkbenchMode(page, state, stats, performanceSnapshot, sele
   );
   assert(modelRow.target === "Opens source model", `Registered match source-model target copy was wrong: ${JSON.stringify(modelRow)}`);
   assert(modelRow.disabled === false, `Registered match source-model action was disabled: ${JSON.stringify(modelRow)}`);
+  assert(modelRow.reviewStatus === "Confirmed", `Confirmed registered match status was wrong: ${JSON.stringify(modelRow)}`);
+  assert(JSON.stringify(modelRow.reviewButtons) === JSON.stringify(["Undo"]), `Confirmed registered match action was wrong: ${JSON.stringify(modelRow)}`);
+  assert(rejectedRow?.reviewStatus === "Not same", `Rejected registered match status was wrong: ${JSON.stringify(rejectedRow)}`);
+  assert(JSON.stringify(rejectedRow?.reviewButtons) === JSON.stringify(["Undo"]), `Rejected registered match action was wrong: ${JSON.stringify(rejectedRow)}`);
+  assert(rejectedAlternateRow?.reviewStatus === "Not same", `Second candidate for one current part was not reviewable: ${JSON.stringify(rows)}`);
 
   console.log("Workbench preview verification passed");
   console.log(JSON.stringify({
@@ -2084,6 +2526,9 @@ async function verify() {
       `Performance snapshot backend did not match route: ${JSON.stringify(performanceSnapshot)}`,
     );
     await verifyThreePerformanceBudgetSnapshot(page, state.route, performanceSnapshot);
+    await verifyThreeCameraViewportControls(page, state.route);
+    await verifyThreeStyleConfigControls(page, state.route);
+    await verifyThreeStlConfigScope(page, state.route);
 
     if (verifyRouteOnly) {
       console.log("Preview route-only verification passed");

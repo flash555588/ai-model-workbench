@@ -307,6 +307,10 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
       window.clearTimeout(debounceTimer);
       debounceTimer = 0;
     }
+    if (scanTimer) {
+      window.clearTimeout(scanTimer);
+      scanTimer = 0;
+    }
   }
 
   context.registerCleanup(() => {

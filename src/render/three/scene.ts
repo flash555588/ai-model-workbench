@@ -61,6 +61,7 @@ import type {
   ThreeDBlockConfig,
 } from "../../domain/models";
 import { isMobile } from "../../utils/device";
+import { getDirectLoaderKind } from "../../io/formats/registry";
 import { createStagedEl } from "../../utils/dom";
 import {
   createPreviewBounds,
@@ -70,6 +71,11 @@ import {
   type PreviewBounds,
 } from "../preview/bounds";
 import { createPreviewPerspectiveCameraFit } from "../preview/camera-fit";
+import {
+  computeOrthographicHalfExtents,
+  DEFAULT_VIEWPORT_FIT_MARGIN,
+  shouldRefitForAspect,
+} from "../preview/viewport-fit";
 import {
   createPreviewModelInfoMarkdown,
   createPreviewPartInfoMarkdown,
@@ -159,7 +165,13 @@ import {
   type SliceRange,
 } from "../preview/slice";
 import { createThreeDisassemblyController } from "./disassembly";
+import { resolveAxisVisibility } from "../preview/axis-visibility";
+import { ENVIRONMENT_INTENSITY, FOCUS_ANIMATION_MS as CAMERA_ANIMATION_MS, FRAME_BUDGET_SLOW_MS } from "../preview/tuning";
 import { ThreeFocusDimMaterialCache } from "./focus-materials";
+import {
+  createThreeWireframeMaterialValue,
+  disposeThreeWireframeOverrides,
+} from "./wireframe-materials";
 import { setThreeExplode, resetThreeExplode } from "./explode";
 import { getPortableBasename } from "../../utils/resolve-path";
 import {
@@ -190,6 +202,7 @@ import {
 } from "./mesh-preview";
 
 const DEFAULT_BACKGROUND = new Color("#20242e");
+const DEFAULT_CAMERA_FOV = 45;
 const DEFAULT_SHADOW_OPACITY = 0.28;
 const MAX_RENDER_PIXEL_RATIO = 2.5;
 const DESKTOP_INTERACTIVE_PIXEL_RATIO_CAP = 1.5;
@@ -197,7 +210,6 @@ const MOBILE_INTERACTIVE_PIXEL_RATIO_CAP = 1.15;
 const INTERACTIVE_PIXEL_RATIO_HOLD_MS = 260;
 const RENDER_OBSERVER_SETTLE_FRAMES = 30;
 const RENDER_OBSERVER_SETTLE_MIN_FRAMES = 8;
-const FRAME_BUDGET_SLOW_MS = 28;
 const FRAME_BUDGET_FAST_MS = 18;
 const FRAME_BUDGET_SLOW_STREAK = 2;
 const FRAME_BUDGET_FAST_STREAK = 28;
@@ -207,6 +219,8 @@ const FRAME_BUDGET_MIN_PIXEL_RATIO_SCALE = 0.62;
 const FRAME_BUDGET_SHADOW_SCALE = 0.86;
 const FRAME_BUDGET_MAX_OBSERVER_STRIDE = 4;
 const ENVIRONMENT_INSTALL_DELAY_MS = 120;
+/** Upper bound on the delta handed to OrbitControls, in seconds (~4 frames at 60fps). */
+const MAX_CONTROLS_DELTA_SECONDS = 1 / 15;
 const MEASUREMENT_LINE_COLOR = 0xf8fafc;
 const MEASUREMENT_MARKER_COLOR = 0xf8fafc;
 const MEASUREMENT_PENDING_COLOR = 0xf59e0b;
@@ -340,6 +354,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private readonly pointer = new Vector2();
   private readonly annotationProjection = new Vector3();
   private readonly annotationDirection = new Vector3();
+  private readonly sliceDragScratch = [new Vector3(), new Vector3(), new Vector3()];
   private readonly clock = { last: performance.now() };
   private readonly defaultLights: Light[] = [];
   private readonly configLights: Light[] = [];
@@ -376,6 +391,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
     timestamp: performance.now(),
   };
   private axesHelper: AxesHelper | null = null;
+  /** Orientation-gizmo request, kept apart from the scene `axis` config flag. */
+  private orientationGizmoEnabled = false;
   private bboxHelper: BoxHelper | null = null;
   private groundShadowMesh: Mesh | null = null;
   private meshShadowFlagsPrepared = false;
@@ -411,8 +428,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private animationPlaying = false;
   private initialTarget = new Vector3();
   private initialPosition = new Vector3(3, 2, 3);
-  private initialFov = 45;
+  private initialFov = DEFAULT_CAMERA_FOV;
   private initialZoom = 1;
+  private initialNear = 0.01;
+  private initialFar = 2000;
+  /** Bounds the camera was last fitted against; refit on aspect change uses these. */
+  private fittedBounds: PreviewBounds | null = null;
+  /** Viewport aspect at the last camera fit, to detect meaningful aspect changes. */
+  private fittedAspect = 0;
+  /** Set when a `camera:` block config pins the pose, which suppresses aspect refits. */
+  private cameraPoseFromConfig = false;
+  /** Keep authored clip planes stable while aspect-aware fits update the reset pose. */
+  private cameraClipFromConfig = false;
   private initialCameraMode: "perspective" | "orthographic" = "perspective";
   private cameraMode: "perspective" | "orthographic" = "perspective";
   private lastPointerDown: { x: number; y: number } | null = null;
@@ -627,17 +654,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
     let animations: import("three").AnimationClip[] = [];
 
     try {
-      if (this.loadedExt === "glb" || this.loadedExt === "gltf") {
+      const loaderKind = getDirectLoaderKind(this.loadedExt);
+      if (loaderKind === "gltf") {
         const gltfResult = await loadThreeGLTF(data, this.loadedExt, readFile, modelPath, options);
         root = gltfResult.scene;
         animations = gltfResult.animations;
         this.resourceWarnings = gltfResult.warnings;
-      } else if (this.loadedExt === "stl") {
+      } else if (loaderKind === "stl") {
         root = await loadThreeSTL(data);
         this.stlMaterial = isMesh(root) ? (root.material as MeshStandardMaterial) : null;
-      } else if (this.loadedExt === "ply") {
+      } else if (loaderKind === "ply") {
         root = await loadThreePLY(data);
-      } else if (this.loadedExt === "obj") {
+      } else if (loaderKind === "obj") {
         const objResult = await loadThreeOBJ(data, readFile, modelPath);
         root = objResult.object;
         this.resourceWarnings = objResult.warnings;
@@ -698,18 +726,34 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (config.camera) this.applyCameraConfig(config.camera);
     if (config.lights) this.applyLightConfig(config.lights);
     if (config.scene) this.applySceneConfig(config.scene);
-    if (config.stl) this.applySTLConfig(config.stl);
+    // Matches the Babylon path: `stl:` options are format-scoped, so they must not
+    // wireframe or recolor a GLB that happens to share the block config.
+    if (config.stl && this.loadedExt === "stl") this.applySTLConfig(config.stl);
   }
 
   private applySTLConfig(config: STLConfig): void {
-    const material = this.stlMaterial;
-    if (!material) return;
     if (config.color !== undefined) {
-      material.color.set(config.color);
+      this.setSTLColor(config.color);
     }
     if (config.wireframe !== undefined) {
-      material.wireframe = config.wireframe;
-      material.needsUpdate = true;
+      // Route through setWireframe so `wireframeEnabled` tracks the config. Setting
+      // `stlMaterial.wireframe` directly left the toolbar toggle reading "off" while
+      // the model rendered as wireframe, and the next toggle then layered override
+      // materials on top of the already-wireframed original.
+      this.setWireframe(config.wireframe);
+    }
+  }
+
+  setSTLColor(hex: string): void {
+    const material = this.stlMaterial;
+    if (!material) return;
+    material.color.set(hex);
+    material.needsUpdate = true;
+    if (this.wireframeEnabled) {
+      // Stand-ins copied the previous color when wireframe was enabled, so rebuild
+      // them; otherwise the new color only appears after wireframe is turned off.
+      this.applyWireframe(false);
+      this.applyWireframe(true);
     }
     this.markDirty();
   }
@@ -737,6 +781,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     this.defaultLights.length = 0;
     this.disposeGlobalEnvironment();
+    this.disposeAxisHelper();
     this.controls.removeEventListener("change", this.handleControlsChange);
     this.controls.dispose();
     const canvas = this.renderer.domElement;
@@ -885,6 +930,8 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.camera.fov = this.initialFov;
     }
     this.camera.zoom = this.initialZoom;
+    this.camera.near = this.initialNear;
+    this.camera.far = this.initialFar;
     this.camera.updateProjectionMatrix();
     this.controls.update();
     this.markDirty();
@@ -937,30 +984,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     for (const mesh of this.getRenderableMeshes(this.rootObject)) {
       if (enabled) {
         this.wireframeOriginalMaterials.set(mesh.id, mesh.material);
-        const materials = materialList(mesh.material);
-        const cloned = materials.map((mat) => {
-          if (mat instanceof MeshStandardMaterial) {
-            const basic = new MeshBasicMaterial({
-              color: mat.color,
-              transparent: mat.transparent,
-              opacity: mat.opacity,
-              side: mat.side,
-              visible: mat.visible,
-            });
-            basic.wireframe = true;
-            return basic;
-          }
-          if ("wireframe" in mat) {
-            const c = mat.clone();
-            c.wireframe = true;
-            return c;
-          }
-          return mat;
-        });
-        mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0];
+        mesh.material = createThreeWireframeMaterialValue(mesh.material);
       } else {
         const original = this.wireframeOriginalMaterials.get(mesh.id);
         if (original) {
+          // Drop the stand-ins created on enable; only originals stay alive.
+          disposeThreeWireframeOverrides(mesh.material, original);
           mesh.material = original;
         }
         this.wireframeOriginalMaterials.delete(mesh.id);
@@ -968,30 +997,35 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
   }
 
-  toggleOrientationGizmo(): boolean {
-    if (!this.axesHelper) {
-      this.axesHelper = new AxesHelper(1.2);
-      this.axesHelper.visible = false;
-      const mat = this.axesHelper.material as LineBasicMaterial;
-      mat.depthTest = false;
-      mat.depthWrite = false;
-      this.axesHelper.renderOrder = 999;
-      this.scene.add(this.axesHelper);
+  /** Restore pre-wireframe materials so model disposal can reach the originals. */
+  private restoreWireframeMaterials(): void {
+    if (this.wireframeOriginalMaterials.size === 0) return;
+    if (this.rootObject) {
+      for (const mesh of this.getRenderableMeshes(this.rootObject)) {
+        const original = this.wireframeOriginalMaterials.get(mesh.id);
+        if (!original) continue;
+        disposeThreeWireframeOverrides(mesh.material, original);
+        mesh.material = original;
+      }
     }
-    this.axesHelper.visible = !this.axesHelper.visible;
-    this.axesHelper.position.copy(this.controls.target);
+    this.wireframeOriginalMaterials.clear();
+  }
+
+  toggleOrientationGizmo(): boolean {
+    this.orientationGizmoEnabled = !this.orientationGizmoEnabled;
+    this.syncAxisHelper();
     this.markDirty();
-    return this.axesHelper.visible;
+    return this.orientationGizmoEnabled;
   }
 
   isOrientationGizmoEnabled(): boolean {
-    return !!this.axesHelper?.visible;
+    return this.orientationGizmoEnabled;
   }
 
   toggleBoundingBox(): boolean {
     this.bboxEnabled = !this.bboxEnabled;
     if (!this.bboxEnabled) {
-      this.bboxHelper?.removeFromParent();
+      this.disposeBoxHelper(this.bboxHelper);
       this.bboxHelper = null;
       this.markDirty();
       return false;
@@ -1631,7 +1665,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     cancelAnimationFrame(this.cameraAnimHandle);
     const startPos = this.camera.position.clone();
     const startTarget = this.controls.target.clone();
-    const duration = 500;
+    const duration = CAMERA_ANIMATION_MS;
     const startTime = performance.now();
 
     const tick = () => {
@@ -1688,7 +1722,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const deltaSeconds = Math.max(0, (now - this.clock.last) / 1000);
     this.clock.last = now;
 
-    const cameraMoved = this.controls.update();
+    // Pass the real frame delta so auto-rotation runs at a wall-clock speed instead
+    // of OrbitControls' 60fps assumption, which drifts on high-refresh displays and
+    // stalls on heavy scenes. Clamped so a backgrounded tab cannot jump the model.
+    const cameraMoved = this.controls.update(Math.min(deltaSeconds, MAX_CONTROLS_DELTA_SECONDS));
     const animating = !!this.mixer && this.animationPlaying;
     if (animating && this.mixer) {
       this.mixer.update(deltaSeconds);
@@ -1877,13 +1914,71 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
     this.renderer.setPixelRatio(this.computePixelRatio());
     this.renderer.setSize(width, height, false);
+    const aspect = width / height;
     if (this.camera instanceof OrthographicCamera) {
-      this.updateOrthographicFrustum(width / height);
+      this.updateOrthographicFrustum(aspect);
     } else {
-      this.camera.aspect = width / height;
+      this.camera.aspect = aspect;
     }
     this.camera.updateProjectionMatrix();
+    this.refitCameraForAspect(aspect);
     this.markDirty();
+  }
+
+  /**
+   * Re-derive the *default* framing when the viewport aspect changes materially.
+   *
+   * A model framed in a wide pane no longer fits after the pane is dragged narrow,
+   * because the limiting field of view switches from vertical to horizontal. Only
+   * the stored reset pose is recomputed — the live camera is left alone unless it
+   * is still sitting on the previous default, so this never fights a user who has
+   * orbited or zoomed.
+   */
+  private refitCameraForAspect(aspect: number, force = false): void {
+    const bounds = this.fittedBounds;
+    if (!bounds) return;
+    // An explicit `camera:` block config is an author's decision, not a fit result.
+    if (this.cameraPoseFromConfig) return;
+    // Orthographic framing is fully handled by the frustum half-extents.
+    if (this.camera instanceof OrthographicCamera) return;
+    if (!force && !shouldRefitForAspect(this.fittedAspect, aspect)) return;
+
+    // Tolerance scales with the model so tiny and huge scenes behave the same.
+    const poseEpsilon = Math.max(this.initialPosition.distanceTo(this.initialTarget) * 1e-4, 1e-9);
+    const cameraWasAtDefault = this.camera.position.distanceTo(this.initialPosition) <= poseEpsilon
+      && this.controls.target.distanceTo(this.initialTarget) <= poseEpsilon;
+
+    const fit = createPreviewPerspectiveCameraFit(bounds, {
+      aspect,
+      fovDegrees: this.getInitialPerspectiveEffectiveFov(),
+    });
+    this.initialTarget.set(fit.target.x, fit.target.y, fit.target.z);
+    this.initialPosition.set(fit.position.x, fit.position.y, fit.position.z);
+    this.fittedAspect = aspect;
+    if (!this.cameraClipFromConfig) {
+      this.initialNear = fit.near;
+      this.initialFar = fit.far;
+    }
+
+    const fitDistance = this.initialPosition.distanceTo(this.initialTarget);
+    this.controls.maxDistance = Math.max(fitDistance * 8, this.controls.minDistance * 10);
+
+    if (cameraWasAtDefault) {
+      this.camera.position.copy(this.initialPosition);
+      this.controls.target.copy(this.initialTarget);
+      this.camera.lookAt(this.controls.target);
+      this.camera.near = this.initialNear;
+      this.camera.far = this.initialFar;
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+      this.notifyCameraZoomChanged();
+    }
+  }
+
+  private getInitialPerspectiveEffectiveFov(): number {
+    const fovRadians = (this.initialFov * Math.PI) / 180;
+    const zoom = Math.max(this.initialZoom, Number.EPSILON);
+    return (2 * Math.atan(Math.tan(fovRadians / 2) / zoom) * 180) / Math.PI;
   }
 
   private getCameraZoomRange(): { mode: "distance" | "zoom"; current: number; min: number; max: number } | null {
@@ -1932,30 +2027,41 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private computeOrthographicViewSpan(): number {
     if (!this.rootObject) return 2;
     const bounds = this.getRootPreviewBounds() ?? getObjectPreviewBounds(this.rootObject);
-    const size = getPreviewBoundsSize(bounds);
-    return Math.max(Math.max(size.x, size.y, size.z, Number.EPSILON) * 1.2, 0.001);
+    // A max-axis span can still clip a box viewed diagonally. The bounding-sphere
+    // diameter remains safe while the user orbits and shares the perspective fit's
+    // margin, so projection switches preserve comparable breathing room.
+    return Math.max(getPreviewBoundsRadius(bounds) * 2 * DEFAULT_VIEWPORT_FIT_MARGIN, 0.001);
   }
 
+  /**
+   * Half-extents of the orthographic frustum for a viewport aspect.
+   *
+   * The view span describes the model's largest dimension, so it maps directly to
+   * whichever axis is *less* constrained. On a portrait viewport (aspect < 1) the
+   * horizontal half-extent is the tighter one, and deriving width from height would
+   * clip the model left and right — so the height is widened instead.
+   */
   private updateOrthographicFrustum(aspect: number): void {
     if (!(this.camera instanceof OrthographicCamera)) return;
-    const viewSpan = this.computeOrthographicViewSpan();
-    const halfHeight = viewSpan / 2;
-    const halfWidth = halfHeight * aspect;
-    this.camera.left = -halfWidth;
-    this.camera.right = halfWidth;
-    this.camera.top = halfHeight;
-    this.camera.bottom = -halfHeight;
+    this.updateOrthographicFrustumForCamera(this.camera, aspect, false);
   }
 
-  private updateOrthographicFrustumForCamera(camera: OrthographicCamera, aspect: number): void {
-    const viewSpan = this.computeOrthographicViewSpan();
-    const halfHeight = viewSpan / 2;
-    const halfWidth = halfHeight * aspect;
+  private updateOrthographicFrustumForCamera(
+    camera: OrthographicCamera,
+    aspect: number,
+    updateProjection = true,
+  ): void {
+    const { halfWidth, halfHeight } = computeOrthographicHalfExtents(
+      this.computeOrthographicViewSpan(),
+      aspect,
+    );
     camera.left = -halfWidth;
     camera.right = halfWidth;
     camera.top = halfHeight;
     camera.bottom = -halfHeight;
-    camera.updateProjectionMatrix();
+    if (updateProjection) {
+      camera.updateProjectionMatrix();
+    }
   }
 
   private switchCameraMode(mode: "perspective" | "orthographic"): void {
@@ -1975,6 +2081,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const zoom = oldCamera.zoom || 1;
     const near = oldCamera.near;
     const far = oldCamera.far;
+    // `attachToCam` lights are children of the camera. Swapping the camera without
+    // re-parenting them would leave them on the discarded object, silently going dark.
+    const cameraChildren = [...oldCamera.children];
 
     this.scene.remove(oldCamera);
 
@@ -1991,6 +2100,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
       camera.zoom = zoom;
       camera.lookAt(target);
       this.camera = camera;
+    }
+
+    for (const child of cameraChildren) {
+      this.camera.add(child);
     }
 
     this.scene.add(this.camera);
@@ -2014,21 +2127,37 @@ export class ThreeModelPreview implements WorkbenchPreview {
     if (config.position) {
       this.camera.position.set(...config.position);
       this.initialPosition.set(...config.position);
+      this.cameraPoseFromConfig = true;
     }
     if (config.lookAt) {
       this.controls.target.set(...config.lookAt);
       this.camera.lookAt(this.controls.target);
       this.initialTarget.set(...config.lookAt);
+      this.cameraPoseFromConfig = true;
     }
     if (typeof config.near === "number" && Number.isFinite(config.near)) {
       this.camera.near = config.near;
+      this.initialNear = config.near;
+      this.cameraClipFromConfig = true;
     }
     if (typeof config.far === "number" && Number.isFinite(config.far)) {
       this.camera.far = config.far;
+      this.initialFar = config.far;
+      this.cameraClipFromConfig = true;
     }
     if (typeof config.zoom === "number" && Number.isFinite(config.zoom)) {
       this.camera.zoom = config.zoom;
       this.initialZoom = config.zoom;
+    }
+    if (
+      this.camera instanceof PerspectiveCamera
+      && !this.cameraPoseFromConfig
+      && (config.fov !== undefined || config.zoom !== undefined)
+    ) {
+      const canvas = this.renderer.domElement;
+      const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1));
+      const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
+      this.refitCameraForAspect(width / height, true);
     }
     this.camera.updateProjectionMatrix();
     this.controls.update();
@@ -2051,7 +2180,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
       const light = this.createConfiguredLight(config);
       if (!light) continue;
       this.configLights.push(light);
-      if (light.parent !== this.camera) {
+      // `attachToCam` lights are already parented to the camera; re-adding them to
+      // the scene would detach them and freeze them at the camera's current pose.
+      if (!light.parent) {
         this.scene.add(light);
       }
     }
@@ -2080,12 +2211,15 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
     if (typeof config.autoRotate === "boolean") {
       this.controls.autoRotate = config.autoRotate;
+      // OrbitControls only advances auto-rotation from inside `controls.update()`,
+      // which the idle branch of the render loop skips. Without this the model sits
+      // still until the user interacts, and stops again the moment they let go.
+      if (config.autoRotate) {
+        this.markDirty();
+      }
     }
     if (typeof config.autoRotateSpeed === "number") {
       this.controls.autoRotateSpeed = config.autoRotateSpeed;
-    }
-    if (typeof config.axis === "boolean") {
-      this.syncAxisHelper(config.axis);
     }
     this.syncSceneHelpers();
     this.syncShadowFeatures();
@@ -2111,7 +2245,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     const room = new RoomEnvironment();
     this.environmentTarget = pmrem.fromScene(room, 0.04);
     this.scene.environment = this.environmentTarget.texture;
-    this.scene.environmentIntensity = 0.48;
+    this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
     room.dispose();
     pmrem.dispose();
   }
@@ -2356,12 +2490,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.removeGrid();
     }
 
-    if (typeof this.sceneConfig.axis === "boolean") {
-      this.syncAxisHelper(this.sceneConfig.axis);
-    }
+    // Unconditional: syncAxisHelper resolves the config flag together with the
+    // gizmo toggle, so an absent `axis` still needs the gizmo state applied.
+    this.syncAxisHelper();
   }
 
-  private syncAxisHelper(visible: boolean): void {
+  private syncAxisHelper(): void {
+    // The scene `axis` config and the orientation-gizmo toggle are independent
+    // inputs sharing one helper. Tracking them separately keeps either from
+    // silently clearing the other's request.
+    const visible = resolveAxisVisibility({
+      gizmoEnabled: this.orientationGizmoEnabled,
+      configAxis: this.sceneConfig.axis,
+    });
+    if (!visible && !this.axesHelper) return;
+    const created = !this.axesHelper;
     if (!this.axesHelper) {
       this.axesHelper = new AxesHelper(1.2);
       const mat = this.axesHelper.material as LineBasicMaterial;
@@ -2372,6 +2515,33 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
     this.axesHelper.visible = visible;
     this.axesHelper.position.copy(this.controls.target);
+    if (created) {
+      // The helper is built at a fixed 1.2 units, and only fitCameraToObject
+      // rescales it. A helper first created after the camera fit — either from
+      // `applyConfig` running after `loadModel`, or from the gizmo toggle — would
+      // otherwise stay that size and be invisible or huge next to the model.
+      this.scaleAxisHelperToModel();
+    }
+  }
+
+  /** Size the axis helper relative to the loaded model, if there is one. */
+  private scaleAxisHelperToModel(rootBounds?: PreviewBounds): void {
+    if (!this.axesHelper) return;
+    const bounds = rootBounds ?? this.getRootPreviewBounds();
+    if (!bounds) return;
+    const boundsSize = getPreviewBoundsSize(bounds);
+    const maxSpan = Math.max(boundsSize.x, boundsSize.y, boundsSize.z, Number.EPSILON);
+    this.axesHelper.scale.setScalar(Math.max(maxSpan * 0.25, 0.0005));
+  }
+
+  private disposeAxisHelper(): void {
+    if (!this.axesHelper) return;
+    this.axesHelper.removeFromParent();
+    this.axesHelper.geometry.dispose();
+    for (const material of materialList(this.axesHelper.material)) {
+      material.dispose();
+    }
+    this.axesHelper = null;
   }
 
   private createGroundShadow(): void {
@@ -2508,6 +2678,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disassemblySetup = false;
     this.explodeStateActive = false;
     this.meshShadowFlagsPrepared = false;
+    this.fittedBounds = null;
+    this.fittedAspect = 0;
+    this.cameraPoseFromConfig = false;
+    this.cameraClipFromConfig = false;
     this.invalidateMeshCache();
     this.markDirty();
     this.clearFocusedMesh();
@@ -2519,10 +2693,12 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disposeMeasurementOverlays(true);
     this.resetMeasurementCalibrationState();
     this.wireframeEnabled = false;
-    this.wireframeOriginalMaterials.clear();
+    // Must run before disposeObjectGraph: that walk only reaches materials still
+    // attached to meshes, so wireframe clones would otherwise strand the originals.
+    this.restoreWireframeMaterials();
     this.stlMaterial = null;
     this.notifyCameraZoomChanged();
-    this.bboxHelper?.removeFromParent();
+    this.disposeBoxHelper(this.bboxHelper);
     this.bboxHelper = null;
     this.bboxEnabled = false;
     this.removeGroundShadow();
@@ -2625,10 +2801,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
 
   private fitCameraToObject(root: Object3D, rootBounds?: PreviewBounds): void {
     const bounds = rootBounds ?? this.getRootPreviewBounds(root) ?? getObjectPreviewBounds(root);
-    const fit = createPreviewPerspectiveCameraFit(bounds);
+    // Fit against the live viewport aspect so a narrow or short pane pulls the
+    // camera back instead of clipping the model against the limiting field of view.
+    const canvas = this.renderer.domElement;
+    const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 1));
+    const height = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 1));
+    const fit = createPreviewPerspectiveCameraFit(bounds, {
+      aspect: width / height,
+      fovDegrees: DEFAULT_CAMERA_FOV,
+    });
     this.initialTarget.set(fit.target.x, fit.target.y, fit.target.z);
     this.initialPosition.set(fit.position.x, fit.position.y, fit.position.z);
-    this.initialFov = 45;
+    this.initialFov = DEFAULT_CAMERA_FOV;
     const boundsSize = getPreviewBoundsSize(bounds);
     const maxSpan = Math.max(boundsSize.x, boundsSize.y, boundsSize.z, Number.EPSILON);
     const fitDistance = this.initialPosition.distanceTo(this.initialTarget);
@@ -2640,14 +2824,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.raycaster.params.Line = { threshold: Math.max(maxSpan * 0.002, 0.00001) };
     this.occlusionRaycaster.params.Points = { threshold: Math.max(maxSpan * 0.006, 0.00001) };
     this.occlusionRaycaster.params.Line = { threshold: Math.max(maxSpan * 0.001, 0.00001) };
+    this.fittedBounds = bounds;
+    this.fittedAspect = width / height;
+    // Set the clip planes before resetView(): it renders a frame synchronously, and
+    // with the previous model's near/far still in place that frame can come out
+    // clipped. switchCameraMode() carries both across if it swaps the camera.
+    this.initialNear = fit.near;
+    this.initialFar = fit.far;
+    this.camera.near = this.initialNear;
+    this.camera.far = this.initialFar;
+    this.camera.updateProjectionMatrix();
     this.resetView();
     if (this.axesHelper) {
       this.axesHelper.position.copy(this.controls.target);
-      this.axesHelper.scale.setScalar(Math.max(maxSpan * 0.25, 0.0005));
+      this.scaleAxisHelperToModel(bounds);
     }
-    this.camera.near = fit.near;
-    this.camera.far = fit.far;
-    this.camera.updateProjectionMatrix();
     this.markDirty();
     this.notifyCameraZoomChanged();
   }
@@ -3049,9 +3240,9 @@ export class ThreeModelPreview implements WorkbenchPreview {
       );
       const nextPlaneX = rotateSliceNormalAroundAxis(state.startPlaneX, state.rotationAxis, state.rotationRadians);
       const nextPlaneY = rotateSliceNormalAroundAxis(state.startPlaneY, state.rotationAxis, state.rotationRadians);
-      const normalDelta = this.sliceNormal.distanceToSquared(new Vector3(nextNormal.x, nextNormal.y, nextNormal.z));
-      const planeAxesDelta = this.slicePlaneX.distanceToSquared(new Vector3(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z))
-        + this.slicePlaneY.distanceToSquared(new Vector3(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z));
+      const normalDelta = this.sliceNormal.distanceToSquared(this.sliceDragScratch[0].set(nextNormal.x, nextNormal.y, nextNormal.z));
+      const planeAxesDelta = this.slicePlaneX.distanceToSquared(this.sliceDragScratch[1].set(nextPlaneX.x, nextPlaneX.y, nextPlaneX.z))
+        + this.slicePlaneY.distanceToSquared(this.sliceDragScratch[2].set(nextPlaneY.x, nextPlaneY.y, nextPlaneY.z));
       if (normalDelta <= 0.000001 && planeAxesDelta <= 0.000001) return true;
       if (normalDelta > 0.000001) {
         const bounds = this.getRootPreviewBounds();
@@ -3379,9 +3570,21 @@ export class ThreeModelPreview implements WorkbenchPreview {
     }
   }
 
+  /**
+   * Remove and dispose a BoxHelper. `removeFromParent()` alone detaches the
+   * LineSegments but leaves its fresh BufferGeometry and LineBasicMaterial
+   * allocated, leaking GPU buffers on every selection/focus/bbox change.
+   */
+  private disposeBoxHelper(helper: BoxHelper | null): void {
+    if (!helper) return;
+    helper.removeFromParent();
+    helper.geometry.dispose();
+    helper.material.dispose();
+  }
+
   private ensureBoundingBoxHelper(): void {
     if (!this.rootObject) return;
-    this.bboxHelper?.removeFromParent();
+    this.disposeBoxHelper(this.bboxHelper);
     this.bboxHelper = new BoxHelper(this.rootObject, 0xfacc15);
     this.scene.add(this.bboxHelper);
   }
@@ -3395,7 +3598,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       return;
     }
 
-    this.selectionHelper?.removeFromParent();
+    this.disposeBoxHelper(this.selectionHelper);
     this.selectionHelper = new BoxHelper(object, 0x4a9eff);
     this.scene.add(this.selectionHelper);
     this.highlightedObject = object;
@@ -3424,7 +3627,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
       this.applyFocusSelectionDelta(selectedMeshes);
     }
 
-    this.focusHelper?.removeFromParent();
+    this.disposeBoxHelper(this.focusHelper);
     this.focusHelper = new BoxHelper(object, 0x2ec4ff);
     this.scene.add(this.focusHelper);
     this.focusedObject = object;
@@ -3441,7 +3644,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
     this.disposeFocusDimMaterials();
     this.originalMaterials.clear();
     this.focusedSelectedMeshes.clear();
-    this.focusHelper?.removeFromParent();
+    this.disposeBoxHelper(this.focusHelper);
     this.focusHelper = null;
     this.focusedObject = null;
     this.syncSliceClipping();
@@ -3496,7 +3699,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private clearSelectionHighlight(): void {
-    this.selectionHelper?.removeFromParent();
+    this.disposeBoxHelper(this.selectionHelper);
     this.selectionHelper = null;
     this.highlightedObject = null;
     this.markDirty();
@@ -3519,7 +3722,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private clearMeasurementTargetHelper(markDirty = true): void {
-    this.measurementTargetHelper?.removeFromParent();
+    this.disposeBoxHelper(this.measurementTargetHelper);
     this.measurementTargetHelper = null;
     if (markDirty) {
       this.markDirty();

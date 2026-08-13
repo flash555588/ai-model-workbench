@@ -1,4 +1,4 @@
-import { F_OK, X_OK, access, execFile, stat } from "../../utils/node-shim";
+import { F_OK, X_OK, access, execFile, readdir, stat } from "../../utils/node-shim";
 import { getRuntimeProcess } from "../../utils/node-shim";
 import { pathDelimiter as delimiter, pathExtname as extname, pathIsAbsolute as isAbsolute, pathJoin as join } from "../../utils/node-shim";
 import type { PluginSettings } from "../../domain/models";
@@ -93,6 +93,8 @@ function resolveFreeCadCandidates(): readonly string[] {
       "/opt/local/bin/freecadcmd",
       "/snap/freecad/current/usr/bin/freecadcmd",
       "/usr/bin/freecadcmd",
+      "/usr/local/bin/freecad",
+      "/usr/bin/freecad",
     ];
   }
 
@@ -123,6 +125,33 @@ function resolveFreeCadCandidates(): readonly string[] {
   if (programFilesX86) {
     candidates.push(`${programFilesX86}/FreeCAD/bin/FreeCADCmd.exe`);
   }
+  return candidates;
+}
+
+async function resolveLinuxFreecadAppImageCandidates(): Promise<readonly string[]> {
+  if (proc?.platform === "win32" || proc?.platform === "darwin") {
+    return [];
+  }
+
+  const homeDir = proc?.env?.HOME;
+  if (!homeDir) {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  for (const dirName of ["Applications", "Downloads"]) {
+    try {
+      const entries = await readdir(join(homeDir, dirName));
+      for (const entry of entries) {
+        if (/^freecad.*\.appimage$/i.test(entry)) {
+          candidates.push(join(homeDir, dirName, entry));
+        }
+      }
+    } catch {
+      // Directory may not exist; this is a heuristic hint, not a requirement.
+    }
+  }
+
   return candidates;
 }
 
@@ -701,6 +730,18 @@ export async function inspectConverterCommand(
   );
   if (userCandidateStatus) {
     return userCandidateStatus;
+  }
+
+  if (spec.id === "freecadcmd") {
+    const appImageCandidates = await resolveLinuxFreecadAppImageCandidates();
+    const appImageStatus = await inspectCandidateReference(
+      spec,
+      appImageCandidates,
+      "Detected FreeCAD AppImage in the user's home directory.",
+    );
+    if (appImageStatus) {
+      return appImageStatus;
+    }
   }
 
   const fallbackStatuses: ConverterCommandStatus[] = [];

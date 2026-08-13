@@ -165,8 +165,8 @@ await writeFile(entryPath, `
   assert(report.includes("Plugin version: 0.4.1"), "Plugin version missing");
   assert(report.includes("Obsidian API version: 1.12.7"), "Obsidian API version missing");
   assert(report.includes("Current route: babylon"), "Route summary missing");
-  assert(report.includes("Route capability profile: babylon; formats=glb/gltf/stl/ply/obj/splat/converted-glb"), "Route capability profile missing");
-  assert(report.includes("Route color pipeline: Babylon material pipeline with conservative fallback behavior"), "Route color pipeline missing");
+  assert(report.includes("Route capability profile: babylon; formats=glb/gltf/stl/ply/obj/converted-glb"), "Route capability profile missing");
+  assert(report.includes("Route color pipeline: sRGB output, no tone mapping, PBR material preservation with local IBL"), "Route color pipeline missing");
   assert(report.includes("Path: <redacted .glb>"), "Current model path was not redacted");
   assert(report.includes("Knowledge index: set (<redacted .md>)"), "Knowledge index status missing or unredacted");
   assert(report.includes("Analysis sidecar: set (<redacted .json>)"), "Analysis sidecar status missing or unredacted");

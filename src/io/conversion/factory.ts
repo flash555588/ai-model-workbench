@@ -4,6 +4,7 @@ import { Obj2GltfConverter } from "./adapters/obj2gltf-converter";
 import { Fbx2GltfConverter } from "./adapters/fbx2gltf-converter";
 import { AssimpConverter } from "./adapters/assimp-converter";
 import { SldprtConverter } from "./adapters/sldprt-converter";
+import type { ModelConverter } from "./types";
 import { createLogger } from "../../utils/log";
 
 const log = createLogger("conversion-factory");
@@ -15,6 +16,12 @@ export interface ConversionFactoryOptions {
   fbx2gltfCommand?: string;
   assimpCommand?: string;
   freecadcmdCommand?: string;
+  /**
+   * Additional converters to register unconditionally (they are provided
+   * explicitly, so they are not gated by `enabledConverterIds`). Use this to
+   * extend the conversion pipeline at runtime without editing the built-in list.
+   */
+  extraConverters?: readonly ModelConverter[];
 }
 
 export function createConversionManager(options?: ConversionFactoryOptions): ConversionManager {
@@ -38,6 +45,11 @@ export function createConversionManager(options?: ConversionFactoryOptions): Con
     } else {
       log.debug("converter disabled", { converterId: converter.id });
     }
+  }
+
+  for (const converter of options?.extraConverters ?? []) {
+    manager.registerConverter(converter);
+    log.info("registered custom converter", { converterId: converter.id });
   }
 
   return manager;

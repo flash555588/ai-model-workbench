@@ -24,6 +24,14 @@ const cases = [
     args: ["--mode", "readonly-pin", "--rollout", "three-readonly-glb"],
   },
   {
+    label: "Three.js viewport framing and camera controls",
+    args: ["--rollout", "three-direct-glb", "--verify-camera-viewport", "--route-only"],
+  },
+  {
+    label: "Three.js STL block config stays scoped away from GLB",
+    args: ["--rollout", "three-direct-glb", "--verify-stl-config-scope", "--route-only"],
+  },
+  {
     label: "Reading-surfaces rollout direct-edit GLB preview",
     args: ["--mode", "direct-edit", "--rollout", "three-readonly-glb"],
   },
@@ -68,6 +76,17 @@ const cases = [
   {
     label: "STL preview (Three.js)",
     args: ["--model", join(rootDir, "models", "test.stl"), "--rollout", "three-direct-glb"],
+  },
+  {
+    label: "Three.js scene/stl block-config style controls",
+    args: [
+      "--model",
+      join(rootDir, "models", "test.stl"),
+      "--rollout",
+      "three-direct-glb",
+      "--verify-style-config",
+      "--route-only",
+    ],
   },
   // PLY format test
   {

@@ -12,6 +12,7 @@ import {
   configureModelPreviewCanvas,
 } from "../src/view/inline/preview-canvas-accessibility";
 import { renderRegisteredPartMatchRow } from "../src/view/direct-workbench-registered-match";
+import { buildRegisteredPartMatchReviewQueue } from "../src/utils/registered-match-review";
 
 interface DomCreateOptions {
   cls?: string;
@@ -56,6 +57,8 @@ declare global {
         button: string;
         targetPath: string;
         disabled: boolean;
+        reviewButtons: string[];
+        reviewStatus: string;
       }>;
       gridBlockCount?: number;
       gridContextLostCount?: number;
@@ -225,30 +228,72 @@ function renderRegisteredPartMatchHarness(): Array<{
   button: string;
   targetPath: string;
   disabled: boolean;
+  reviewButtons: string[];
+  reviewStatus: string;
 }> {
   const section = document.createElement("section");
   section.id = "registered-match-harness";
   section.className = "ai3d-direct-workbench-match-list";
   document.body.appendChild(section);
-  renderRegisteredPartMatchRow(section, "Left Assembly", {
-    sourceAssetId: "models/legacy grouped parts.gltf",
-    sourcePartId: "legacy-model:part:1",
-    sourcePartName: "Legacy Left Assembly",
-    sourceNotePath: "Parts/3D Components/legacy/01 Left Assembly.md",
-    sourceModelPath: "models/legacy grouped parts.gltf",
-    matchScore: 0.82,
-    confidence: 0.82,
-    reasons: ["similar part name", "similar bounding size"],
-  });
-  renderRegisteredPartMatchRow(section, "Right Assembly", {
-    sourceAssetId: "models/auto registered parts.gltf",
-    sourcePartId: "auto-model:part:1",
-    sourcePartName: "Auto Right Assembly",
-    sourceModelPath: "models/auto registered parts.gltf",
-    matchScore: 0.74,
-    confidence: 0.74,
-    reasons: ["similar mesh names"],
-  });
+  const queue = buildRegisteredPartMatchReviewQueue([
+    {
+      partId: "current-model:left",
+      name: "Left Assembly",
+      registeredMatches: [
+        {
+          sourceAssetId: "models/legacy grouped parts.gltf",
+          sourcePartId: "legacy-model:part:1",
+          sourcePartName: "Legacy Left Assembly",
+          sourceNotePath: "Parts/3D Components/legacy/01 Left Assembly.md",
+          sourceModelPath: "models/legacy grouped parts.gltf",
+          matchScore: 0.82,
+          confidence: 0.82,
+          reasons: ["similar part name", "similar bounding size"],
+        },
+        {
+          sourceAssetId: "models/rejected left parts.gltf",
+          sourcePartId: "rejected-left-model:part:1",
+          sourcePartName: "Rejected Left Assembly",
+          sourceModelPath: "models/rejected left parts.gltf",
+          matchScore: 0.68,
+          confidence: 0.68,
+          reasons: ["similar bounding size"],
+          reviewDecision: "rejected",
+        },
+      ],
+    },
+    {
+      partId: "current-model:right",
+      name: "Right Assembly",
+      registeredMatches: [{
+        sourceAssetId: "models/auto registered parts.gltf",
+        sourcePartId: "auto-model:part:1",
+        sourcePartName: "Auto Right Assembly",
+        sourceModelPath: "models/auto registered parts.gltf",
+        matchScore: 0.74,
+        confidence: 0.74,
+        reasons: ["similar mesh names"],
+        reviewDecision: "confirmed",
+      }],
+    },
+    {
+      partId: "current-model:center",
+      name: "Center Assembly",
+      registeredMatches: [{
+        sourceAssetId: "models/rejected parts.gltf",
+        sourcePartId: "rejected-model:part:1",
+        sourcePartName: "Rejected Center Assembly",
+        sourceModelPath: "models/rejected parts.gltf",
+        matchScore: 0.7,
+        confidence: 0.7,
+        reasons: ["similar bounding size"],
+        reviewDecision: "rejected",
+      }],
+    },
+  ]);
+  for (const row of queue) {
+    renderRegisteredPartMatchRow(section, row.currentPartName, row.match);
+  }
   return Array.from(section.querySelectorAll(".ai3d-direct-workbench-match")).map((row) => {
     const button = row.querySelector("[data-ai3d-action='open-registered-part']");
     return {
@@ -259,6 +304,9 @@ function renderRegisteredPartMatchHarness(): Array<{
       button: button?.textContent ?? "",
       targetPath: button instanceof HTMLElement ? button.dataset.ai3dTargetPath ?? "" : "",
       disabled: button instanceof HTMLButtonElement ? button.disabled : true,
+      reviewButtons: Array.from(row.querySelectorAll("[data-ai3d-action='review-registered-part']"))
+        .map((reviewButton) => reviewButton.textContent ?? ""),
+      reviewStatus: row.querySelector(".ai3d-direct-workbench-match-review-status")?.textContent ?? "",
     };
   });
 }

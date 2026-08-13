@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import type { ModelAssetFormat, ModelAssetProfile, ModelLoadStrategy, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
+import type { ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 import { compactPersistedNumberTuple, isCompactPersistedNumber } from "../utils/compact-number";
@@ -9,7 +9,15 @@ import {
   MAX_PERSISTED_REGISTERED_PART_MATERIAL_REFS,
   MAX_PERSISTED_REGISTERED_PART_MESH_REFS,
   MAX_PERSISTED_REGISTERED_PART_OBSERVATIONS,
+  normalizeModelAssetFormat,
+  normalizeModelLoadStrategy,
+  normalizePartSource,
+  rankRegisteredPart,
 } from "../utils/registered-part-persistence";
+import {
+  isReusableRegisteredPartMatchReviews,
+  normalizeRegisteredPartMatchReviews,
+} from "../utils/registered-match-review";
 
 export interface PluginStore {
   store: Store<PluginState>;
@@ -218,12 +226,14 @@ function normalizeModelAssetProfiles(
     }
     const now = new Date().toISOString();
     const registeredParts = normalizeRegisteredParts(profile.registeredParts, path);
-    changed = changed || registeredParts.changed;
+    const registeredMatchReviews = normalizeRegisteredPartMatchReviews(profile.registeredMatchReviews);
+    changed = changed || registeredParts.changed || registeredMatchReviews.changed;
     profiles[path] = {
       tags: Array.isArray(profile.tags) ? profile.tags : [],
       notes: typeof profile.notes === "string" ? profile.notes : "",
       annotations: Array.isArray(profile.annotations) ? profile.annotations : [],
       registeredParts: registeredParts.parts,
+      registeredMatchReviews: registeredMatchReviews.reviews,
       analysisVersion: typeof profile.analysisVersion === "string" ? profile.analysisVersion : undefined,
       reportNotePath: typeof profile.reportNotePath === "string" ? profile.reportNotePath : undefined,
       analysisSidecarPath: typeof profile.analysisSidecarPath === "string" ? profile.analysisSidecarPath : undefined,
@@ -243,6 +253,10 @@ function isReusableModelAssetProfile(profile: Partial<ModelAssetProfile>): profi
     (
       profile.registeredParts === undefined ||
       (Array.isArray(profile.registeredParts) && profile.registeredParts.length <= MAX_REGISTERED_PARTS_PER_PROFILE)
+    ) &&
+    (
+      profile.registeredMatchReviews === undefined ||
+      isReusableRegisteredPartMatchReviews(profile.registeredMatchReviews)
     ) &&
     isNormalizedOptionalString(profile.analysisVersion) &&
     isNormalizedOptionalString(profile.reportNotePath) &&
@@ -278,30 +292,12 @@ function isNormalizedNumberTuple(value: unknown): value is [number, number, numb
     value.every((entry) => Number.isFinite(entry) && isCompactPersistedNumber(Number(entry)));
 }
 
-function normalizePartSource(value: unknown): PartRecord["source"] {
-  return value === "group" || value === "mesh" || value === "component" || value === "detail-cluster"
-    ? value
-    : undefined;
-}
-
 function isNormalizedPartSource(value: unknown): boolean {
   return value === undefined || normalizePartSource(value) === value;
 }
 
-function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | undefined {
-  return value === "glb" || value === "gltf" || value === "stl" || value === "obj" || value === "splat" ||
-    value === "ply" || value === "fbx" || value === "step" || value === "stp" || value === "iges" ||
-    value === "igs" || value === "brep" || value === "sldprt" || value === "3mf" || value === "dae"
-    ? value
-    : undefined;
-}
-
 function isNormalizedModelAssetFormat(value: unknown): boolean {
   return value === undefined || normalizeModelAssetFormat(value) === value;
-}
-
-function normalizeModelLoadStrategy(value: unknown): ModelLoadStrategy | undefined {
-  return value === "direct" || value === "convert" ? value : undefined;
 }
 
 function isNormalizedModelLoadStrategy(value: unknown): boolean {
@@ -372,14 +368,6 @@ function reuseNormalizedRegisteredParts(value: readonly unknown[]): PartRecord[]
   return value as PartRecord[];
 }
 
-function getRegisteredPartRank(part: PartRecord): number {
-  if (part.reviewed || part.notePath) return 0;
-  if (part.source === "component") return 1;
-  if (part.source === "group") return 2;
-  if (part.source === "detail-cluster") return 3;
-  return 4;
-}
-
 function limitRegisteredParts(parts: PartRecord[]): PartRecord[] {
   if (parts.length <= MAX_REGISTERED_PARTS_PER_PROFILE) {
     return parts;
@@ -387,7 +375,7 @@ function limitRegisteredParts(parts: PartRecord[]): PartRecord[] {
 
   return [...parts]
     .sort((left, right) => {
-      const rankDelta = getRegisteredPartRank(left) - getRegisteredPartRank(right);
+      const rankDelta = rankRegisteredPart(left) - rankRegisteredPart(right);
       if (rankDelta !== 0) return rankDelta;
       const confidenceDelta = right.confidence - left.confidence;
       if (confidenceDelta !== 0) return confidenceDelta;
@@ -509,6 +497,7 @@ export function createDefaultProfile(): ModelAssetProfile {
     notes: "",
     annotations: [],
     registeredParts: undefined,
+    registeredMatchReviews: undefined,
     createdAt: now,
     updatedAt: now,
   };

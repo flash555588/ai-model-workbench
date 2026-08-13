@@ -559,6 +559,19 @@ describe("createPluginStore persistence", () => {
             }],
             reviewed: false,
           }],
+          registeredMatchReviews: [{
+            currentPartId: "part-1",
+            sourceAssetId: "models/old.glb",
+            sourcePartId: "old-part",
+            decision: "confirmed",
+            reviewedAt: "2026-06-22T00:01:00.000Z",
+          }, {
+            currentPartId: "part-1",
+            sourceAssetId: "models/old.glb",
+            sourcePartId: "old-part",
+            decision: "rejected",
+            reviewedAt: "2026-06-22T00:02:00.000Z",
+          }],
           createdAt: now,
           updatedAt: now,
         },
@@ -578,6 +591,13 @@ describe("createPluginStore persistence", () => {
     const part = pluginStore.store.getState().modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
     expect(part?.registeredMatches).toBeUndefined();
     expect(part?.meshRefs).toHaveLength(16);
+    expect(pluginStore.store.getState().modelAssetProfiles["models/large.glb"]?.registeredMatchReviews).toEqual([{
+      currentPartId: "part-1",
+      sourceAssetId: "models/old.glb",
+      sourcePartId: "old-part",
+      decision: "confirmed",
+      reviewedAt: "2026-06-22T00:01:00.000Z",
+    }]);
 
     await vi.advanceTimersByTimeAsync(50);
     await settlePromises();
@@ -586,6 +606,7 @@ describe("createPluginStore persistence", () => {
     const persistedPart = normalizedSaves[0].modelAssetProfiles["models/large.glb"]?.registeredParts?.[0];
     expect(persistedPart?.registeredMatches).toBeUndefined();
     expect(persistedPart?.meshRefs).toHaveLength(16);
+    expect(normalizedSaves[0].modelAssetProfiles["models/large.glb"]?.registeredMatchReviews).toHaveLength(1);
   });
 
   it("compacts persisted registered part number tuples during load", async () => {

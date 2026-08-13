@@ -41,6 +41,43 @@ export function renderRegisteredPartMatchRow(parent: HTMLElement, partName: stri
     cls: "ai3d-direct-workbench-match-score",
     text: `${Math.round(match.matchScore * 100)}%`,
   });
+  const review = side.createDiv({ cls: "ai3d-direct-workbench-match-review" });
+  if (match.reviewDecision) {
+    review.createSpan({
+      cls: `ai3d-direct-workbench-match-review-status is-${match.reviewDecision}`,
+      text: match.reviewDecision === "confirmed"
+        ? t("directWorkbench.registeredConfirmed")
+        : t("directWorkbench.registeredRejected"),
+    });
+    review.createEl("button", {
+      cls: "ai3d-direct-workbench-action ai3d-direct-workbench-match-review-action",
+      text: t("directWorkbench.registeredUndoReview"),
+      attr: {
+        type: "button",
+        "data-ai3d-action": "review-registered-part",
+        "data-ai3d-review-decision": "clear",
+      },
+    });
+  } else {
+    review.createEl("button", {
+      cls: "ai3d-direct-workbench-action ai3d-direct-workbench-match-review-action",
+      text: t("directWorkbench.registeredConfirm"),
+      attr: {
+        type: "button",
+        "data-ai3d-action": "review-registered-part",
+        "data-ai3d-review-decision": "confirmed",
+      },
+    });
+    review.createEl("button", {
+      cls: "ai3d-direct-workbench-action ai3d-direct-workbench-match-review-action",
+      text: t("directWorkbench.registeredReject"),
+      attr: {
+        type: "button",
+        "data-ai3d-action": "review-registered-part",
+        "data-ai3d-review-decision": "rejected",
+      },
+    });
+  }
   const openButton = side.createEl("button", {
     cls: "ai3d-direct-workbench-action ai3d-direct-workbench-match-open",
     text: match.sourceNotePath
@@ -55,4 +92,3 @@ export function renderRegisteredPartMatchRow(parent: HTMLElement, partName: stri
   openButton.disabled = !match.sourceNotePath && !match.sourceModelPath;
   return row;
 }
-

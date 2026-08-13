@@ -81,7 +81,7 @@ function buildTrimeshScript(sourcePath: string, outputPath: string): string {
 
 export class AssimpConverter implements ModelConverter {
   readonly id = "assimp";
-  readonly sourceExts = ["3mf", "dae"] as const;
+  readonly sourceExts = ["3mf", "dae", "off", "msh"] as const;
   readonly targetExt = "glb" as const;
 
   constructor(private configuredCommand?: string) {}

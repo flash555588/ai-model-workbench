@@ -87,7 +87,13 @@ export type ModelAssetFormat =
   | "brep"
   | "sldprt"
   | "3mf"
-  | "dae";
+  | "dae"
+  | "off"
+  | "msh"
+  | "x_t"
+  | "x_b"
+  | "catpart"
+  | "catproduct";
 
 export type ModelLoadStrategy = "direct" | "convert";
 
@@ -155,6 +161,7 @@ export interface ModelAssetProfile {
   notes: string;
   annotations: AnnotationPin[];
   registeredParts?: PartRecord[];
+  registeredMatchReviews?: RegisteredPartMatchReview[];
   analysisVersion?: string;
   reportNotePath?: string;
   analysisSidecarPath?: string;
@@ -274,6 +281,17 @@ export interface RegisteredPartMatch {
   matchScore: number;
   confidence: number;
   reasons: string[];
+  reviewDecision?: RegisteredPartMatchReviewDecision;
+}
+
+export type RegisteredPartMatchReviewDecision = "confirmed" | "rejected";
+
+export interface RegisteredPartMatchReview {
+  currentPartId: string;
+  sourceAssetId: string;
+  sourcePartId: string;
+  decision: RegisteredPartMatchReviewDecision;
+  reviewedAt: string;
 }
 
 // ── Knowledge Node ───────────────────────────────────────────────

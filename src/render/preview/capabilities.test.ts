@@ -151,7 +151,9 @@ describe("preview capability profile", () => {
     const profile = collectPreviewCapabilityProfile({ toggleWireframe: () => true }, "babylon");
 
     expect(profile.backend).toBe("babylon");
-    expect(profile.supportedFormats).toContain("splat");
+    expect(profile.supportedFormats).toContain("converted-glb");
+    // SPLAT is disabled in packaged builds, so it must not be advertised.
+    expect(profile.supportedFormats).not.toContain("splat");
     expect(profile.capabilities).toEqual(["wireframe"]);
   });
 });

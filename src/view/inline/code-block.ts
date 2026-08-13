@@ -6,7 +6,7 @@ import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsAnnotationPreview } from "../../render/preview/types";
-import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { getPortableBasename, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
 import { getPreset, composeSections } from "../../render/presets";
 import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
 import type { ThreeDBlockConfig, ModelConfig, GridBlockConfig, ComposeSection } from "../../domain/models";
@@ -115,6 +115,23 @@ function appendMobileInlineHint(parent: HTMLElement): void {
   parent.createDiv({ cls: "ai3d-mobile-mode-hint ai3d-mobile-mode-hint--inline", text: t("codeBlock.mobileHint") });
 }
 
+/** Show a one-time interaction hint; auto-dismisses on first interaction or after ~4.7s. */
+function showInlineInteractionHint(host: HTMLElement, canvas: HTMLCanvasElement): void {
+  const hint = host.createDiv({ cls: "ai3d-interaction-hint", text: t("codeBlock.interactHint") });
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    canvas.removeEventListener("pointerdown", dismiss);
+    canvas.removeEventListener("wheel", dismiss);
+    hint.remove();
+  };
+  canvas.addEventListener("pointerdown", dismiss);
+  canvas.addEventListener("wheel", dismiss);
+  window.setTimeout(() => hint.classList.add("is-hidden"), 4200);
+  window.setTimeout(dismiss, 4700);
+}
+
 /**
  * Register the ```3d code block processor.
  *
@@ -213,6 +230,10 @@ export function registerCodeBlockProcessor(
       const canvas = host.createEl("canvas", { cls: "ai3d-canvas-full" });
       configureModelPreviewCanvas(canvas, "inline", modelPath);
       host.appendChild(canvas);
+
+      const caption = host.createDiv({ cls: "ai3d-inline-caption", attr: { title: modelPath } });
+      caption.createSpan({ cls: "ai3d-inline-caption-name", text: getPortableBasename(modelPath) ?? modelPath });
+      caption.createSpan({ cls: "ai3d-inline-caption-badge", text: ext.toUpperCase() });
 
       // Add helper buttons
       let preview: ModelPreview | null = null;
@@ -373,6 +394,7 @@ export function registerCodeBlockProcessor(
             }
 
             loading.hide();
+            showInlineInteractionHint(host, canvas);
             void setupReadonlyAnnotations(preview, pins);
           });
         } catch (err) {
@@ -515,6 +537,13 @@ export function registerGridCodeBlockProcessor(
       const canvas = gridHost.createEl("canvas");
       configureGridPreviewCanvas(canvas);
       gridHost.appendChild(canvas);
+
+      const gridCaption = gridHost.createDiv({ cls: "ai3d-inline-caption" });
+      gridCaption.createSpan({
+        cls: "ai3d-inline-caption-name",
+        text: helperSourcePath ? (getPortableBasename(helperSourcePath) ?? helperSourcePath) : t("codeBlock.gridTitle"),
+      });
+      gridCaption.createSpan({ cls: "ai3d-inline-caption-badge", text: formatT("codeBlock.gridModelCount", { count: String(configuredModelCount) }) });
 
       // Height controlled by CSS max-height only; rowHeight sets inline height (capped by CSS max-height)
       if (typeof config.rowHeight === "number") {

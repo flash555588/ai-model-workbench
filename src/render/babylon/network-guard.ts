@@ -6,7 +6,9 @@ let networkGuardConfigured = false;
 
 function isExplicitRemoteUrl(url: string): boolean {
   const trimmed = url.trim();
-  return /^https?:\/\//i.test(trimmed) || /^wss?:\/\//i.test(trimmed) || /^\/\//.test(trimmed);
+  // Matches the Three.js guard: https, http, ws, wss, and ftp schemes plus
+  // protocol-relative (//) URLs are all refused.
+  return /^(https?:|wss?:|ftp:)\/\//i.test(trimmed) || /^\/\//.test(trimmed);
 }
 
 function guardBabylonUrl(url: string, channel: string): string {

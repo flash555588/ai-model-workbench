@@ -204,9 +204,14 @@ function buildFreeCadScript(sourcePath: string, outputPath: string): string {
   ].join("\n");
 }
 
+/**
+ * FreeCAD-native CAD converter. Runs a script under FreeCADCmd that imports the
+ * source with FreeCAD's native importers (SolidWorks, Parasolid, CATIA), exports
+ * a STEP intermediate, then triangulates to GLB via OpenCASCADE.
+ */
 export class SldprtConverter implements ModelConverter {
   readonly id = "sldprt";
-  readonly sourceExts = ["sldprt"] as const;
+  readonly sourceExts = ["sldprt", "x_t", "x_b", "catpart", "catproduct"] as const;
   readonly targetExt = "glb" as const;
 
   constructor(private configuredCommand?: string) {}
@@ -248,7 +253,7 @@ export class SldprtConverter implements ModelConverter {
       if (stderr) log.warn("FreeCAD stderr", { stderr: stderr.trim().slice(0, 500) });
     } catch (error) {
       throw new Error(
-        `SLDPRT conversion failed for '${req.sourcePath}'. ` +
+        `CAD conversion failed for '${req.sourcePath}'. ` +
         `Ensure FreeCAD is installed (https://www.freecad.org/downloads.php). ` +
         `Set FreeCADCmd path in plugin settings or AI3D_FREECADCMD env var. ` +
         `${error instanceof Error ? error.message : String(error)}`,
@@ -259,8 +264,8 @@ export class SldprtConverter implements ModelConverter {
 
     if (!(await fileExists(outputPath))) {
       throw new Error(
-        `SLDPRT conversion finished but output was not found: '${outputPath}'. ` +
-        "Check that FreeCAD can import this SolidWorks file version.",
+        `CAD conversion finished but output was not found: '${outputPath}'. ` +
+        "Check that FreeCAD can import this file format.",
       );
     }
 

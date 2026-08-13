@@ -82,7 +82,13 @@ Named GLB/GLTF model groups are promoted to higher-confidence part candidates wh
 ungrouped meshes remain candidates. Direct file view auto-registers captured part
 candidates into each model profile after successful load. This lets later imported
 models detect likely reused parts before a full report/sidecar exists. Full report
-generation upgrades those candidates with sidecar and part-note links.
+generation upgrades those candidates with sidecar and part-note links. Direct workbench
+match rows let users confirm, reject, or undo each suggested relationship. Those review
+decisions persist separately from derived match data: confirmed reuse is preferred in
+generated knowledge, while rejected reuse stays undoable but is excluded from reports,
+indexes, part notes, and drafting input. The review surface is a multi-candidate queue:
+reviewed relationships appear first, the initial view is capped for sidebar readability,
+and Show all exposes the remaining candidates.
 
 Core files:
 

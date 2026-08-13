@@ -7,10 +7,10 @@ Markdown snippets, see [Common Usage Syntax](common-usage-syntax.md).
 
 | Surface | Best for | Renderer contract |
 |---------|----------|-------------------|
-| Wikilink embed | Quick inline model previews in notes | Three.js for `GLB/GLTF/STL/PLY/OBJ` |
-| `3d` code block | A single model with explicit camera, lights, or scene options | Three.js for direct single-model formats |
+| Wikilink embed | Quick inline model previews in notes | Babylon.js for `GLB/GLTF/STL/PLY/OBJ`; Three.js opt-in |
+| `3d` code block | A single model with explicit camera, lights, or scene options | Babylon.js for direct single-model formats; Three.js opt-in |
 | `3dgrid` code block | Comparing multiple models or using layout presets | Babylon.js grid backend |
-| Direct file view | Inspecting, annotating, measuring, snapshotting, and generating notes from one model | Three.js for direct formats; conservative fallback for converted/workbench paths |
+| Direct file view | Inspecting, annotating, measuring, snapshotting, and generating notes from one model | Babylon.js for direct formats; Three.js fast path for converted GLB with Babylon fallback |
 
 Use direct formats when possible: `GLB`, `GLTF`, `STL`, `PLY`, and `OBJ`.
 Desktop conversion can prepare `STEP`, `STP`, `IGES`, `IGS`, `BREP`,
@@ -31,9 +31,11 @@ Recommended flow:
 5. Capture a snapshot or copy model/part information as Markdown.
 6. Generate a knowledge note when the model evidence is ready.
 
-The default direct route uses Three.js for `GLB/GLTF/STL/PLY/OBJ`. Converted
-formats and conservative workbench paths keep Babylon.js fallback behavior unless
-an explicit experimental Three workbench path is enabled.
+The default direct route uses Babylon.js compatibility mode for
+`GLB/GLTF/STL/PLY/OBJ`; enable a Three.js rollout in settings to opt in. Converted
+GLB outputs take a Three.js fast path with silent Babylon.js fallback while the
+Converted GLB Three fast path setting is enabled, and conservative workbench paths
+stay on Babylon.js unless the experimental Three workbench path is enabled.
 
 ## Annotations
 
@@ -76,7 +78,7 @@ Useful habits:
 - Reset the view before measuring if the model is hard to frame.
 - Use direct file view for repeated measurement work.
 - Copy completed measurements into your analysis note before clearing them.
-- For very small parts, rely on the current Three.js camera and marker scaling
+- For very small parts, rely on the renderer's camera and marker scaling
   instead of manually enlarging the model.
 
 ## Snapshots And Markdown Exports
@@ -124,6 +126,11 @@ Part candidates come from renderer evidence rather than free-form guessing.
 - Reports, sidecars, draft input, part notes, and registered profiles preserve
   format lineage such as `STEP -> GLB (convert)` without storing converted
   absolute filesystem paths in notes.
+- The direct workbench lists likely cross-model part matches. Use **Confirm** when
+  the parts represent the same reusable component, **Not same** to exclude a false
+  match from generated knowledge, or **Undo** to return the suggestion to pending.
+  The review decision persists across reloads and report regeneration. Reviewed
+  relationships appear first; use **Show all** when more than 12 candidates exist.
 
 For best results when exporting from other software, preserve object names,
 component hierarchy, material names, and assembly labels. Avoid merging every

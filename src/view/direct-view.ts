@@ -22,7 +22,11 @@ import { formatT, t } from "../i18n";
 import { renderModelLoadFailure, renderModelPerformanceFeedback } from "./model-load-feedback";
 import { isMobile } from "../utils/device";
 import { createLogger } from "../utils/log";
-import { compactRegisteredPartForPersistence } from "../utils/registered-part-persistence";
+import { compactRegisteredPartForPersistence, rankRegisteredPart } from "../utils/registered-part-persistence";
+import {
+  buildRegisteredPartMatchReviewQueue,
+  upsertRegisteredPartMatchReview,
+} from "../utils/registered-match-review";
 import { inferModelAssetFormat } from "./workbench/format-lineage";
 import { createDirectViewLayout } from "./direct-view-layout";
 import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
@@ -46,6 +50,7 @@ const MAX_MATCH_PREVIEW_EVIDENCE_PARTS = 64;
 const MAX_MATCH_PREVIEW_REGISTERED_PARTS = 512;
 const REGISTERED_MATCH_PREVIEW_DELAY_MS = 250;
 const MEDIUM_REGISTERED_MATCH_PREVIEW_DELAY_MS = 1_000;
+const MAX_VISIBLE_REGISTERED_MATCH_ROWS = 12;
 import { createDefaultProfile } from "../store/plugin-store";
 
 function isMissingExternalModelResourceError(error: unknown): boolean {
@@ -82,14 +87,6 @@ function mergeAutoRegisteredPart(previous: PartRecord | undefined, next: PartRec
   };
 }
 
-function getAutoRegisteredPartRank(part: PartRecord): number {
-  if (part.reviewed || part.notePath) return 0;
-  if (part.source === "component") return 1;
-  if (part.source === "group") return 2;
-  if (part.source === "detail-cluster") return 3;
-  return 4;
-}
-
 function limitAutoRegisteredParts(parts: PartRecord[]): PartRecord[] {
   if (parts.length <= MAX_AUTO_REGISTERED_PARTS) {
     return parts;
@@ -97,7 +94,7 @@ function limitAutoRegisteredParts(parts: PartRecord[]): PartRecord[] {
 
   return [...parts]
     .sort((left, right) => {
-      const rankDelta = getAutoRegisteredPartRank(left) - getAutoRegisteredPartRank(right);
+      const rankDelta = rankRegisteredPart(left) - rankRegisteredPart(right);
       if (rankDelta !== 0) return rankDelta;
       const confidenceDelta = (right.confidence ?? 0) - (left.confidence ?? 0);
       if (confidenceDelta !== 0) return confidenceDelta;
@@ -855,34 +852,61 @@ export class DirectModelView extends FileView {
             evidence,
             registeredParts,
           });
-          const matchedParts = analysis.parts
-            .filter((part) => part.registeredMatches?.length)
-            .sort((left, right) => (right.registeredMatches?.[0]?.matchScore ?? 0) - (left.registeredMatches?.[0]?.matchScore ?? 0))
-            .slice(0, 5);
+          const matchRows = buildRegisteredPartMatchReviewQueue(analysis.parts);
 
-          if (matchedParts.length === 0) {
+          if (matchRows.length === 0) {
             renderEmpty("directWorkbench.registeredEmpty");
             return;
           }
 
-          status.setText(formatT("directWorkbench.registeredCount", { count: String(matchedParts.length) }));
-          body.empty();
-          const list = body.createDiv({ cls: "ai3d-direct-workbench-match-list" });
-          for (const part of matchedParts) {
-            const match = part.registeredMatches?.[0];
-            if (!match) continue;
-            const row = renderRegisteredPartMatchRow(list, part.name, match);
-            const openButton = row.querySelector("[data-ai3d-action='open-registered-part']");
-            if (!(openButton instanceof HTMLButtonElement)) continue;
-            openButton.addEventListener("click", () => {
-              const targetPath = openButton.getAttribute("data-ai3d-target-path") || undefined;
-              if (!targetPath) return;
-              const file = this.app.vault.getAbstractFileByPath(targetPath);
-              if (file instanceof TFile) {
-                void this.app.workspace.getLeaf(true).openFile(file, { active: true });
+          status.setText(formatT("directWorkbench.registeredCount", { count: String(matchRows.length) }));
+          const renderRows = (visibleRows: typeof matchRows): void => {
+            body.empty();
+            const list = body.createDiv({ cls: "ai3d-direct-workbench-match-list" });
+            for (const { currentPartId, currentPartName, match } of visibleRows) {
+              const row = renderRegisteredPartMatchRow(list, currentPartName, match);
+              for (const reviewButton of Array.from(row.querySelectorAll("[data-ai3d-action='review-registered-part']"))) {
+                if (!reviewButton.instanceOf(HTMLButtonElement)) continue;
+                reviewButton.addEventListener("click", () => {
+                  const requestedDecision = reviewButton.dataset.ai3dReviewDecision;
+                  const decision = requestedDecision === "confirmed" || requestedDecision === "rejected"
+                    ? requestedDecision
+                    : null;
+                  this.ps.updateModelProfile(modelPath, (existing) => ({
+                    registeredMatchReviews: upsertRegisteredPartMatchReview(
+                      existing.registeredMatchReviews,
+                      {
+                        currentPartId,
+                        sourceAssetId: match.sourceAssetId,
+                        sourcePartId: match.sourcePartId,
+                      },
+                      decision,
+                    ),
+                  }));
+                  this.refreshWorkbenchPanel();
+                });
               }
-            });
-          }
+              const openButton = row.querySelector("[data-ai3d-action='open-registered-part']");
+              if (!(openButton instanceof HTMLButtonElement)) continue;
+              openButton.addEventListener("click", () => {
+                const targetPath = openButton.getAttribute("data-ai3d-target-path") || undefined;
+                if (!targetPath) return;
+                const file = this.app.vault.getAbstractFileByPath(targetPath);
+                if (file instanceof TFile) {
+                  void this.app.workspace.getLeaf(true).openFile(file, { active: true });
+                }
+              });
+            }
+            if (visibleRows.length < matchRows.length) {
+              const showAllButton = body.createEl("button", {
+                cls: "ai3d-direct-workbench-action ai3d-direct-workbench-match-show-all",
+                text: formatT("directWorkbench.registeredShowAll", { count: String(matchRows.length) }),
+                attr: { type: "button" },
+              });
+              showAllButton.addEventListener("click", () => renderRows(matchRows));
+            }
+          };
+          renderRows(matchRows.slice(0, MAX_VISIBLE_REGISTERED_MATCH_ROWS));
         })
         .catch((error) => {
           console.warn("[AI3D] Registered part match preview failed:", error);

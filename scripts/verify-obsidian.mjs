@@ -328,6 +328,27 @@ async function trustVaultIfPrompted(page) {
   }
 }
 
+async function dismissExternalOpenPrompt(page) {
+  const dismissed = await page.evaluate(() => {
+    const promptPattern = /(external link|run.*action|\u5916\u90e8\u94fe\u63a5|\u5373\u5c06\u8fd0\u884c)/i;
+    const modal = Array.from(document.querySelectorAll(".modal-container"))
+      .find((entry) => promptPattern.test(entry.textContent ?? ""));
+    if (!modal) return false;
+    const cancelPattern = /^(cancel|\u53d6\u6d88)$/i;
+    const cancelButton = Array.from(modal.querySelectorAll("button"))
+      .find((button) => cancelPattern.test((button.textContent ?? "").trim()));
+    cancelButton?.click();
+    return !!cancelButton;
+  });
+  if (dismissed) {
+    await page.waitForFunction(() => {
+      const promptPattern = /(external link|run.*action|\u5916\u90e8\u94fe\u63a5|\u5373\u5c06\u8fd0\u884c)/i;
+      return !Array.from(document.querySelectorAll(".modal-container"))
+        .some((entry) => promptPattern.test(entry.textContent ?? ""));
+    }, null, { timeout: 5_000 });
+  }
+}
+
 async function verifyPage() {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
   try {
@@ -354,6 +375,10 @@ async function verifyPage() {
     }
     assert(page, "Obsidian page not found through remote debugging");
     await trustVaultIfPrompted(page);
+    // Obsidian 1.13+ confirms command-style obsidian:// links even after the
+    // target vault has opened. The verifier opens the note through the app API,
+    // so cancel the redundant URI action before it can cover preview controls.
+    await dismissExternalOpenPrompt(page);
     await page.waitForFunction(() => {
       return window.app?.workspace?.layoutReady === true
         && !!document.querySelector(".workspace-leaf");
@@ -418,6 +443,8 @@ async function verifyPage() {
       return !!window.app?.plugins?.enabledPlugins?.has?.("ai-model-workbench")
         && !!window.app?.plugins?.plugins?.["ai-model-workbench"];
     }, null, { timeout: 20_000 });
+
+    await dismissExternalOpenPrompt(page);
 
     await page.waitForFunction((targetNote) => {
       return window.app?.workspace?.getActiveFile?.()?.path === targetNote
