@@ -23,6 +23,17 @@ export default defineConfig([
       parser: tsparser,
       parserOptions: { project: "./tsconfig.json" },
     },
+    rules: {
+      // Match the Obsidian plugin review's type-checked linting so local `npm run lint`
+      // predicts review warnings. These rules fire only when a value is actually `any`;
+      // the review's mass 0.7.7 warnings were an artifact of its failed `npm ci`
+      // (stale lockfile) leaving node types unresolved.
+      "@typescript-eslint/no-unsafe-assignment": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-call": "error",
+      "@typescript-eslint/no-unsafe-return": "error",
+    },
   },
   {
     files: ["src/**/*.test.ts"],
