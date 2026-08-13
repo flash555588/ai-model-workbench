@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.8 - 2026-08-13
+
+- Fix: sync `package-lock.json` transitive dependency resolution so the release passes the Obsidian review lockfile check.
+- Docs: add the `0.7.7` release notes file that was published after the 0.7.7 tag.
+
 ## 0.7.7 - 2026-08-13
 
 - Format: add OFF and Gmsh (msh) sources via the local Python/trimesh conversion bridge.
