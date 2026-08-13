@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
 import type AI3DModelWorkbench from "./main";
 import { DEFAULT_SETTINGS } from "./domain/constants";
 import type {
@@ -11,6 +11,9 @@ import { isMobile } from "./utils/device";
 import { getRuntimeProcess } from "./utils/node-shim";
 
 const proc = getRuntimeProcess();
+
+/** Key prefix used by the declarative converter-enabled toggles (backed by `enabledConverterIds`). */
+const ENABLED_CONVERTER_KEY_PREFIX = "enabledConverter:";
 
 // TODO(P2): split display() into section-builder methods; currently >500 lines (debt: settings-ui).
 
@@ -62,6 +65,330 @@ export class AI3DSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  // ── Obsidian 1.13+ declarative settings ─────────────────────────
+  // `display()` remains the fallback for Obsidian < 1.13; on 1.13+ Obsidian
+  // renders the definitions below and makes them searchable in settings.
+
+  getControlValue(key: string): unknown {
+    if (key.startsWith(ENABLED_CONVERTER_KEY_PREFIX)) {
+      const id = key.slice(ENABLED_CONVERTER_KEY_PREFIX.length);
+      return this.plugin.getSettings().enabledConverterIds.includes(id);
+    }
+    return (this.plugin.getSettings() as unknown as Record<string, unknown>)[key];
+  }
+
+  setControlValue(key: string, value: unknown): void {
+    if (key.startsWith(ENABLED_CONVERTER_KEY_PREFIX)) {
+      const id = key.slice(ENABLED_CONVERTER_KEY_PREFIX.length);
+      const current = this.plugin.getSettings().enabledConverterIds;
+      const next = value
+        ? Array.from(new Set([...current, id]))
+        : current.filter((entry) => entry !== id);
+      this.plugin.updateSettings({ enabledConverterIds: next });
+      return;
+    }
+    this.plugin.updateSettings({ [key]: value });
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return this.buildSettingDefinitions();
+  }
+
+  private buildSettingDefinitions(): SettingDefinitionItem[] {
+    const commandPlaceholders = getConverterCommandPlaceholders();
+    const groups: SettingDefinitionItem[] = [
+      {
+        type: "group",
+        heading: t("settings.language"),
+        items: [
+          {
+            name: t("settings.language"),
+            desc: t("settings.language.desc"),
+            control: {
+              type: "dropdown",
+              key: "locale",
+              options: {
+                en: t("settings.language.englishName"),
+                "zh-CN": t("settings.language.chineseName"),
+              },
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("settings.folders"),
+        items: [
+          {
+            name: t("settings.sourceModelFolder"),
+            desc: t("settings.sourceModelFolder.desc"),
+            control: { type: "text", key: "sourceModelFolder", placeholder: DEFAULT_SETTINGS.sourceModelFolder },
+          },
+          {
+            name: t("settings.auxiliaryFileFolder"),
+            desc: t("settings.auxiliaryFileFolder.desc"),
+            control: { type: "text", key: "auxiliaryFileFolder", placeholder: t("settings.auxiliaryFileFolder.placeholder") },
+          },
+          {
+            name: t("settings.reportFolder"),
+            desc: t("settings.reportFolder.desc"),
+            control: { type: "text", key: "reportFolder", placeholder: DEFAULT_SETTINGS.reportFolder },
+          },
+          {
+            name: t("settings.partFolder"),
+            desc: t("settings.partFolder.desc"),
+            control: { type: "text", key: "partFolder", placeholder: DEFAULT_SETTINGS.partFolder },
+          },
+          {
+            name: t("settings.snapshotFolder"),
+            desc: t("settings.snapshotFolder.desc"),
+            control: { type: "text", key: "snapshotFolder", placeholder: DEFAULT_SETTINGS.snapshotFolder },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("settings.behavior"),
+        items: [
+          {
+            name: t("settings.autoGenerateKnowledgeNotes"),
+            desc: t("settings.autoGenerateKnowledgeNotes.desc"),
+            control: { type: "toggle", key: "autoGenerateKnowledgeNotes" },
+          },
+          {
+            name: t("settings.annotationPreviewMode"),
+            desc: t("settings.annotationPreviewMode.desc"),
+            control: {
+              type: "dropdown",
+              key: "annotationPreviewMode",
+              options: {
+                "plain-text": t("settings.annotationPreviewMode.plainText"),
+                markdown: t("settings.annotationPreviewMode.markdown"),
+              },
+            },
+          },
+          {
+            name: t("settings.annotationDisplayMode"),
+            desc: t("settings.annotationDisplayMode.desc"),
+            control: {
+              type: "dropdown",
+              key: "annotationDisplayMode",
+              options: {
+                snippet: t("settings.annotationDisplayMode.snippet"),
+                surface: t("settings.annotationDisplayMode.surface"),
+                dot: t("settings.annotationDisplayMode.dot"),
+              },
+            },
+          },
+          {
+            name: t("settings.previewRendererRollout"),
+            desc: t("settings.previewRendererRollout.desc"),
+            control: {
+              type: "dropdown",
+              key: "previewRendererRollout",
+              options: {
+                "babylon-safe": t("settings.previewRendererRollout.babylonSafe"),
+                "three-readonly-glb": t("settings.previewRendererRollout.readonly"),
+                "three-direct-glb": t("settings.previewRendererRollout.direct"),
+              },
+            },
+          },
+          {
+            name: t("settings.useThreeRenderer"),
+            desc: t("settings.useThreeRenderer.desc"),
+            control: { type: "toggle", key: "useThreeRenderer" },
+          },
+          {
+            name: t("settings.useThreeForConvertedDirectView"),
+            desc: t("settings.useThreeForConvertedDirectView.desc"),
+            control: { type: "toggle", key: "useThreeForConvertedDirectView" },
+          },
+          {
+            name: t("settings.experimentalThreeWorkbench"),
+            desc: t("settings.experimentalThreeWorkbench.desc"),
+            control: { type: "toggle", key: "experimentalThreeWorkbench" },
+          },
+          {
+            name: t("settings.autoRotateDefault"),
+            desc: t("settings.autoRotateDefault.desc"),
+            control: { type: "toggle", key: "autoRotateDefault" },
+          },
+          {
+            name: t("settings.snapshotNaming"),
+            desc: t("settings.snapshotNaming.desc"),
+            control: {
+              type: "dropdown",
+              key: "snapshotNaming",
+              options: {
+                "model-name": t("settings.snapshotNaming.modelName"),
+                timestamp: t("settings.snapshotNaming.timestamp"),
+              },
+            },
+          },
+          {
+            name: t("settings.logLevel"),
+            desc: t("settings.logLevel.desc"),
+            control: {
+              type: "dropdown",
+              key: "logLevel",
+              options: { debug: "Debug", info: "Info", warn: "Warn", error: "Error" },
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("settings.knowledgeGeneration"),
+        items: [
+          {
+            name: t("settings.analysisMode"),
+            desc: t("settings.analysisMode.desc"),
+            control: {
+              type: "dropdown",
+              key: "analysisMode",
+              options: {
+                local: t("settings.analysisMode.local"),
+                hybrid: t("settings.analysisMode.hybrid"),
+                remote: t("settings.analysisMode.remote"),
+              },
+            },
+          },
+          {
+            name: t("settings.serviceBaseUrl"),
+            desc: t("settings.serviceBaseUrl.desc"),
+            control: { type: "text", key: "serviceBaseUrl", placeholder: "Local draft service URL" },
+          },
+          {
+            name: t("settings.sendGeometrySummaryToRemote"),
+            desc: t("settings.sendGeometrySummaryToRemote.desc"),
+            control: { type: "toggle", key: "sendGeometrySummaryToRemote" },
+          },
+          {
+            name: t("settings.sendPreviewImagesToRemote"),
+            desc: t("settings.sendPreviewImagesToRemote.desc"),
+            control: { type: "toggle", key: "sendPreviewImagesToRemote" },
+          },
+          {
+            name: t("settings.sendRawModelToRemote"),
+            desc: t("settings.sendRawModelToRemote.desc"),
+            control: { type: "toggle", key: "sendRawModelToRemote" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("settings.performance"),
+        items: [
+          {
+            name: t("settings.canvasHeight"),
+            desc: t("settings.canvasHeight.desc"),
+            control: { type: "slider", key: "defaultCanvasHeight", min: 200, max: 800, step: 25 },
+          },
+          {
+            name: t("settings.autoRotateSpeed"),
+            desc: t("settings.autoRotateSpeed.desc"),
+            control: { type: "slider", key: "autoRotateSpeed", min: 0.1, max: 2, step: 0.1 },
+          },
+          {
+            name: t("settings.renderQuality"),
+            desc: t("settings.renderQuality.desc"),
+            control: {
+              type: "dropdown",
+              key: "renderQuality",
+              options: { low: "Low", medium: "Medium", high: "High" },
+            },
+          },
+          {
+            name: t("settings.renderScale"),
+            desc: t("settings.renderScale.desc"),
+            control: { type: "slider", key: "renderScale", min: 0.25, max: 2, step: 0.25 },
+          },
+        ],
+      },
+    ];
+
+    if (isMobile()) {
+      return groups;
+    }
+
+    const converterItems: SettingGroupItem[] = [
+      {
+        name: t("settings.enableCad"),
+        desc: t("settings.enableCad.desc"),
+        control: { type: "toggle", key: `${ENABLED_CONVERTER_KEY_PREFIX}freecad` },
+      },
+      {
+        name: t("settings.enableObj2gltf"),
+        desc: t("settings.enableObj2gltf.desc"),
+        control: { type: "toggle", key: `${ENABLED_CONVERTER_KEY_PREFIX}obj2gltf` },
+      },
+      {
+        name: t("settings.preferObj2gltf"),
+        desc: t("settings.preferObj2gltf.desc"),
+        control: { type: "toggle", key: "preferObj2gltfForObj" },
+      },
+      {
+        name: t("settings.enableFbx2gltf"),
+        desc: t("settings.enableFbx2gltf.desc"),
+        control: { type: "toggle", key: `${ENABLED_CONVERTER_KEY_PREFIX}fbx2gltf` },
+      },
+      {
+        name: t("settings.enableMesh"),
+        desc: t("settings.enableMesh.desc"),
+        control: { type: "toggle", key: `${ENABLED_CONVERTER_KEY_PREFIX}assimp` },
+      },
+      {
+        name: t("settings.enableSldprt"),
+        desc: t("settings.enableSldprt.desc"),
+        control: { type: "toggle", key: `${ENABLED_CONVERTER_KEY_PREFIX}sldprt` },
+      },
+      {
+        name: t("settings.pythonCmd"),
+        desc: t("settings.pythonCmd.desc"),
+        control: { type: "text", key: "freecadCommand", placeholder: commandPlaceholders.python },
+      },
+      {
+        name: t("settings.freecadCmd"),
+        desc: t("settings.freecadCmd.desc"),
+        control: { type: "text", key: "freecadcmdCommand", placeholder: commandPlaceholders.freecad },
+      },
+      {
+        name: t("settings.obj2gltfCmd"),
+        desc: t("settings.obj2gltfCmd.desc"),
+        control: { type: "text", key: "obj2gltfCommand", placeholder: commandPlaceholders.obj2gltf },
+      },
+      {
+        name: t("settings.fbx2gltfCmd"),
+        desc: t("settings.fbx2gltfCmd.desc"),
+        control: { type: "text", key: "fbx2gltfCommand", placeholder: commandPlaceholders.fbx2gltf },
+      },
+      {
+        name: t("settings.assimpCmd"),
+        desc: t("settings.assimpCmd.desc"),
+        control: { type: "text", key: "assimpCommand", placeholder: commandPlaceholders.python },
+      },
+      {
+        name: t("settings.diagnostics"),
+        desc: t("settings.diagnostics.desc"),
+        action: (rowEl) => { void this.runDeclarativeConverterDiagnostics(rowEl); },
+      },
+    ];
+
+    groups.push({ type: "group", heading: t("settings.converters"), items: converterItems });
+    return groups;
+  }
+
+  private async runDeclarativeConverterDiagnostics(rowEl: HTMLElement): Promise<void> {
+    const container = rowEl.createDiv({ cls: "ai3d-settings-diagnostics" });
+    container.createEl("p", { text: t("settings.diagnostics.checkingAvailability") });
+    const { describeConverterCommandSource, inspectAllConverterCommands } = await import("./io/conversion/command-discovery");
+    const statuses = await inspectAllConverterCommands(this.plugin.getSettings());
+    container.empty();
+    for (const status of statuses) {
+      this.renderCommandStatus(container, status, describeConverterCommandSource);
+    }
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -109,6 +436,7 @@ export class AI3DSettingTab extends PluginSettingTab {
             const locale = value as Locale;
             this.plugin.updateSettings({ locale });
             setLocale(locale);
+            // eslint-disable-next-line @typescript-eslint/no-deprecated -- re-render imperative UI for Obsidian < 1.13
             this.display();
           }),
       );
@@ -585,8 +913,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         slider
           .setLimits(200, 800, 25)
           .setValue(this.plugin.getSettings().defaultCanvasHeight)
-          .setDynamicTooltip()
-          .onChange((val) => {
+                    .onChange((val) => {
             this.plugin.updateSettings({ defaultCanvasHeight: val });
           }),
       );
@@ -598,8 +925,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         slider
           .setLimits(0.1, 2.0, 0.1)
           .setValue(this.plugin.getSettings().autoRotateSpeed)
-          .setDynamicTooltip()
-          .onChange((val) => {
+                    .onChange((val) => {
             this.plugin.updateSettings({ autoRotateSpeed: val });
           }),
       );
@@ -625,8 +951,7 @@ export class AI3DSettingTab extends PluginSettingTab {
         slider
           .setLimits(0.25, 2.0, 0.25)
           .setValue(this.plugin.getSettings().renderScale)
-          .setDynamicTooltip()
-          .onChange((val) => {
+                    .onChange((val) => {
             this.plugin.updateSettings({ renderScale: val });
           }),
       );

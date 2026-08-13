@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Settings: implement the Obsidian 1.13+ declarative settings API (`getSettingDefinitions`, `getControlValue`, `setControlValue`) so plugin settings appear in the Obsidian settings search; the imperative UI remains the fallback for Obsidian < 1.13.
+- Maintainability: upgrade the `obsidian` API typings to 1.13.1 and enable the type-checked `no-unsafe-*` lint rules so local `npm run lint` matches the Obsidian review's linting.
+
 ## 0.7.8 - 2026-08-13
 
 - Fix: sync `package-lock.json` transitive dependency resolution so the release passes the Obsidian review lockfile check.
