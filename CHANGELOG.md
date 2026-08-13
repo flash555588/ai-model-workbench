@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.7 - 2026-08-13
 
 - Format: add OFF and Gmsh (msh) sources via the local Python/trimesh conversion bridge.
 - Format: add Parasolid (x_t, x_b) and CATIA (catpart, catproduct) sources via the FreeCADCmd native-import bridge, generalizing the existing SolidWorks (sldprt) converter.
