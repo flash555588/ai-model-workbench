@@ -848,6 +848,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
       }
       this.rootMesh = rootMesh;
       if (this.rootMesh) this.loadedMeshes = [this.rootMesh];
+    } else if (loaderKind && loaderKind.startsWith("three-")) {
+      throw new Error(
+        `Format .${extLower} is loaded directly by the Three.js renderer. ` +
+        "Switch the preview to the Three.js renderer or convert the file to GLB.",
+      );
     } else {
       const result = await ImportMeshAsync(dataUrl, scene, { meshNames: "", pluginExtension: fileExt });
       assignImportResult(result);

@@ -7,6 +7,7 @@ import type { App } from "obsidian";
 import { EditorView, Decoration, WidgetType } from "@codemirror/view";
 import { Prec, StateField, RangeSet, Range, type Text } from "@codemirror/state";
 import { isSupportedModelExtension } from "../../io/formats/registry";
+import { isThreeDirectRoute } from "../../render/preview/routing";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
 import type { ModelPreview } from "../../render/preview/types";
@@ -237,6 +238,14 @@ export class ModelEmbedWidget extends WidgetType {
         const conversionOutputRoot = resolveConversionOutputRoot(this.app, {
           auxiliaryFileFolder: this.auxiliaryFileFolder,
         });
+        const pins = this.getAnnotations?.(this.modelPath) ?? [];
+        const extForRoute = this.modelPath.split(".").pop()?.toLowerCase() ?? "";
+        const allowThreeDirect = isThreeDirectRoute({
+          ext: extForRoute,
+          annotationMode: pins.length > 0 ? "readonly" : "none",
+          rendererRollout: this.previewRendererRollout,
+          useThreeRenderer: this.useThreeRenderer,
+        });
         const prepared = await prepareModelInput({
           path: this.modelPath,
           absolutePath,
@@ -256,8 +265,8 @@ export class ModelEmbedWidget extends WidgetType {
           },
           convertedAssetCache: this.convertedAssetCache,
           conversionOutputRoot,
+          allowThreeDirect,
         });
-        const pins = this.getAnnotations?.(this.modelPath) ?? [];
         const previewOptions = {
           ext: prepared.effectiveExt,
           annotationMode: pins.length > 0 ? "readonly" : "none",

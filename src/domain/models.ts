@@ -90,6 +90,8 @@ export type ModelAssetFormat =
   | "dae"
   | "off"
   | "msh"
+  | "pcd"
+  | "xyz"
   | "x_t"
   | "x_b"
   | "catpart"

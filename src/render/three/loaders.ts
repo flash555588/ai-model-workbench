@@ -4,7 +4,21 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { BufferGeometry, LoadingManager, Material, Mesh, MeshStandardMaterial, PointsMaterial, Points } from "three";
+import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
+import { ColladaLoader } from "three/examples/jsm/loaders/ColladaLoader.js";
+import { PCDLoader } from "three/examples/jsm/loaders/PCDLoader.js";
+import { XYZLoader } from "three/examples/jsm/loaders/XYZLoader.js";
+import {
+  BufferGeometry,
+  DoubleSide,
+  Float32BufferAttribute,
+  LoadingManager,
+  Material,
+  Mesh,
+  MeshStandardMaterial,
+  PointsMaterial,
+  Points,
+} from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import {
@@ -437,6 +451,110 @@ export async function loadThreeOBJ(
   const object = objLoader.parse(objText);
   prepareObjectMaterials(object);
   return { object, warnings };
+}
+
+/**
+ * Load a 3MF model directly via Three.js (no external converter required).
+ * 3MF is an XML+zlib container; the Three loader parses it in pure JS.
+ */
+export async function loadThree3MF(data: ArrayBuffer): Promise<Object3D> {
+  const loader = new ThreeMFLoader();
+  return loader.parse(data);
+}
+
+/**
+ * Load a COLLADA (DAE) model directly via Three.js. External texture references
+ * are not resolved from the vault in the direct path; the converter bridge
+ * remains the fallback when textures matter.
+ */
+export async function loadThreeDAE(data: ArrayBuffer, modelPath?: string): Promise<{ object: Object3D; animations: AnimationClip[] }> {
+  const loader = new ColladaLoader();
+  const text = new TextDecoder().decode(new Uint8Array(data));
+  const result = loader.parse(text, modelPath ? getPortableDirname(modelPath) : "");
+  if (!result) {
+    throw new Error("Invalid COLLADA data");
+  }
+  return { object: result.scene, animations: result.scene.animations ?? [] };
+}
+
+/**
+ * Load an OFF (Object File Format) model directly. OFF is a minimal ASCII
+ * format (vertex list + face indices), so it is parsed inline without a
+ * converter.
+ */
+export async function loadThreeOFF(text: string): Promise<Object3D> {
+  const { positions, indices } = parseOffGeometry(text);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new MeshStandardMaterial({ color: 0xcccccc, side: DoubleSide });
+  return new Mesh(geometry, material);
+}
+
+/** Load a PCD (Point Cloud Data) model directly; supports ASCII and binary. */
+export async function loadThreePCD(data: ArrayBuffer): Promise<Object3D> {
+  const loader = new PCDLoader();
+  return loader.parse(data);
+}
+
+/** Load an XYZ point cloud directly as a Points object. */
+export async function loadThreeXYZ(text: string): Promise<Object3D> {
+  const loader = new XYZLoader();
+  const geometry = loader.parse(text, () => undefined) as BufferGeometry;
+  const material = new PointsMaterial({ size: getAdaptivePointSize(geometry), color: 0xcccccc });
+  return new Points(geometry, material);
+}
+
+function parseOffGeometry(text: string): { positions: number[]; indices: number[] } {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  let cursor = 0;
+  const header = lines[cursor++] ?? "";
+  if (header !== "OFF" && !header.startsWith("OFF ")) {
+    throw new Error("Invalid OFF header");
+  }
+
+  let vertexCount = 0;
+  let faceCount = 0;
+  if (header === "OFF") {
+    const counts = (lines[cursor++] ?? "").split(/\s+/).map(Number);
+    vertexCount = counts[0] || 0;
+    faceCount = counts[1] || 0;
+  } else {
+    const parts = header.split(/\s+/);
+    vertexCount = Number(parts[1]) || 0;
+    faceCount = Number(parts[2]) || 0;
+  }
+  if (vertexCount <= 0) {
+    throw new Error("Invalid OFF vertex count");
+  }
+
+  const positions: number[] = [];
+  for (let v = 0; v < vertexCount; v++) {
+    const parts = (lines[cursor++] ?? "").split(/\s+/).map(Number);
+    if (parts.length < 3 || !parts.slice(0, 3).every(Number.isFinite)) {
+      throw new Error("Invalid OFF vertex");
+    }
+    positions.push(parts[0], parts[1], parts[2]);
+  }
+
+  const indices: number[] = [];
+  for (let f = 0; f < faceCount; f++) {
+    const parts = (lines[cursor++] ?? "").split(/\s+/).map(Number);
+    const vertsPerFace = parts[0] || 0;
+    if (vertsPerFace < 3) continue;
+    for (let k = 1; k <= vertsPerFace; k++) {
+      if (Number.isFinite(parts[k])) indices.push(parts[k]);
+    }
+  }
+  if (indices.length === 0) {
+    throw new Error("OFF file contains no triangles");
+  }
+  return { positions, indices };
 }
 
 /** Check if a format extension is supported by the Three.js path. */

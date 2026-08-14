@@ -16,6 +16,12 @@ export interface PrepareModelInput {
   conversionManager?: ConversionManagerProvider;
   convertedAssetCache?: ConvertedAssetCache;
   conversionOutputRoot?: string;
+  /**
+   * When true and the format exposes a Three.js-only `directLoader`, skip
+   * conversion and hand the raw file to the Three.js renderer. Callers set
+   * this only when the resolved preview route actually uses the Three backend.
+   */
+  allowThreeDirect?: boolean;
 }
 
 export interface PreparedModel {
@@ -47,6 +53,18 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
 
   const preferConversion = shouldPreferConversion(input, sourceExt);
   const useConversion = cap.strategy === "convert" || (preferConversion && !!cap.converterId);
+
+  if (input.allowThreeDirect && cap.directLoader) {
+    log.info("three direct route", { sourceExt, loaderKind: cap.directLoader });
+    return {
+      sourcePath: input.path,
+      sourceExt,
+      strategy: "direct",
+      effectivePath: input.path,
+      effectiveExt: sourceExt,
+      warnings: [`Loaded directly by the Three.js renderer (${cap.directLoader}).`],
+    };
+  }
 
   if (useConversion) {
     if (isMobile()) {

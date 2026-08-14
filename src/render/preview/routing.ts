@@ -134,3 +134,12 @@ export function resolveGridRoute(): GridRouteDecision {
     reason: "grid previews remain on the Babylon grid renderer",
   };
 }
+
+/**
+ * Whether the resolved route uses the Three.js backend. Callers use this
+ * before preparing a model so formats with a Three-only `directLoader`
+ * (3MF/DAE/OFF/PCD/XYZ) can skip conversion on the Three path.
+ */
+export function isThreeDirectRoute(options: PreviewFactoryOptions): boolean {
+  return resolvePreviewRoute(options).backend === "three";
+}

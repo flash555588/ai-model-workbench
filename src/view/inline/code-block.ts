@@ -4,6 +4,7 @@ import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
 import type { PreviewGridRenderer } from "../../render/preview/grid";
 import { createLoggedGridRenderer, createLoggedModelPreview } from "../../render/preview/selection";
+import { isThreeDirectRoute } from "../../render/preview/routing";
 import type { ModelPreview } from "../../render/preview/types";
 import { supportsAnnotationPreview } from "../../render/preview/types";
 import { getPortableBasename, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
@@ -336,6 +337,14 @@ export function registerCodeBlockProcessor(
             const absolutePath = resolveVaultAbsolutePath(app, modelPath) ?? undefined;
             const conversionOutputRoot = resolveConversionOutputRoot(app, settings);
             loading.setPhaseKey("loading.preparingModel");
+            const pins = getAnnotations?.(modelPath) ?? [];
+            const extForRoute = modelPath.split(".").pop()?.toLowerCase() ?? "";
+            const allowThreeDirect = isThreeDirectRoute({
+              ext: extForRoute,
+              annotationMode: pins.length > 0 ? "readonly" : "none",
+              rendererRollout: settings.previewRendererRollout,
+              useThreeRenderer: settings.useThreeRenderer,
+            });
             const prepared = await prepareModelInput({
               path: modelPath,
               absolutePath,
@@ -343,13 +352,13 @@ export function registerCodeBlockProcessor(
               conversionManager: () => createInlineConversionManager(settings),
               convertedAssetCache,
               conversionOutputRoot,
+              allowThreeDirect,
             });
             const source = toPreviewSource(prepared);
             const initialRenderBudgetPromise = getPreviewPathRenderBudget(app, source.path, settings);
             const dataPromise = readBinaryPath(app, source.path);
             void initialRenderBudgetPromise.catch(() => undefined);
             void dataPromise.catch(() => undefined);
-            const pins = getAnnotations?.(modelPath) ?? [];
             const previewOptions = {
               ext: source.ext,
               annotationMode: pins.length > 0 ? "readonly" : "none",

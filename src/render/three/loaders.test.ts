@@ -10,6 +10,8 @@ let loadThreePLY: typeof import("./loaders").loadThreePLY;
 let loadThreeSTL: typeof import("./loaders").loadThreeSTL;
 let loadThreeGLTF: typeof import("./loaders").loadThreeGLTF;
 let loadThreeOBJ: typeof import("./loaders").loadThreeOBJ;
+let loadThreeOFF: typeof import("./loaders").loadThreeOFF;
+let loadThreeXYZ: typeof import("./loaders").loadThreeXYZ;
 
 beforeAll(async () => {
   vi.stubGlobal("activeWindow", {});
@@ -30,6 +32,8 @@ beforeAll(async () => {
   loadThreePLY = loaders.loadThreePLY;
   loadThreeSTL = loaders.loadThreeSTL;
   loadThreeOBJ = loaders.loadThreeOBJ;
+  loadThreeOFF = loaders.loadThreeOFF;
+  loadThreeXYZ = loaders.loadThreeXYZ;
 });
 
 function encodeAscii(text: string): ArrayBuffer {
@@ -328,5 +332,38 @@ describe("Three loaders", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.warnings[0]).toContain("read failed");
     expect(result.warnings[0]).toContain("vault read denied");
+  });
+
+  it("parses OFF meshes directly without a converter", async () => {
+    const off = [
+      "OFF",
+      "4 2 0",
+      "0 0 0",
+      "1 0 0",
+      "0 1 0",
+      "0 0 1",
+      "3 0 1 2",
+      "3 0 3 1",
+    ].join("\n");
+
+    const object = await loadThreeOFF(off);
+
+    expect(object).toBeInstanceOf(Mesh);
+    const geometry = (object as Mesh).geometry;
+    expect(geometry.getAttribute("position").count).toBe(4);
+    expect(geometry.index?.count).toBe(6);
+  });
+
+  it("parses XYZ point clouds directly without a converter", async () => {
+    const xyz = ["0 0 0", "1 0 0", "0 1 0"].join("\n");
+
+    const object = await loadThreeXYZ(xyz);
+
+    expect(object).toBeInstanceOf(Points);
+    expect((object as Points).geometry.getAttribute("position").count).toBe(3);
+  });
+
+  it("rejects malformed OFF headers", async () => {
+    await expect(loadThreeOFF("NOT-OFF\n1 0 0\n")).rejects.toThrow(/Invalid OFF header/);
   });
 });

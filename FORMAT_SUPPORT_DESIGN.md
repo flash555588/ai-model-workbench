@@ -342,6 +342,18 @@
 - 这些格式依赖 FreeCAD 原生导入器（非 CadQuery/OCCT），转换失败时按现有错误通道提示。
 - 转换器 id 保持 `sldprt` 以兼容已保存的 `enabledConverterIds` 设置。
 
+### 12.10 Three.js 直读格式（2026-08）
+- 新增 3MF（`3mf`）、COLLADA（`dae`）、OFF（`off`）、PCD（`pcd`）、XYZ（`xyz`）
+  的 Three.js 纯 JS 直读路径，无需外部转换器：
+  - 3MF/DAE/OFF 保留 `strategy: "convert"`（Babylon 路径继续走 assimp/trimesh 转换），
+    新增 `directLoader` 供 Three 路径直读；pipeline 通过 `allowThreeDirect` 在路由为
+    Three 时跳过转换。
+  - PCD/XYZ 为 `strategy: "direct"` + Three-only loader，无转换器回退（Babylon 路径
+    明确报错提示改用 Three 渲染器或转 GLB）。
+- 体积预算：5 个 loader 压缩后约 +50KB，无 wasm。
+- 待办：FBX 可复用 Three `FBXLoader` 作为转换器不可用时的降级路径（P1）；Draco 压缩
+  glb/gltf 需按需加载 wasm decoder（P2）。
+
 ---
 
 ## 13. 设计完成判定（Final）

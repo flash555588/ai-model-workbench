@@ -18,9 +18,11 @@ export const FORMAT_CAPABILITIES: readonly FormatCapability[] = [
   { ext: "brep", family: "cad", strategy: "convert", converterId: "freecad", outputFormat: "glb", displayName: "BREP", enabled: true },
   { ext: "sldprt", family: "cad", strategy: "convert", converterId: "sldprt", outputFormat: "glb", displayName: "SLDPRT", enabled: true },
 
-  { ext: "3mf", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", displayName: "3MF", enabled: true },
-  { ext: "dae", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", displayName: "COLLADA", enabled: true },
-  { ext: "off", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", displayName: "OFF", enabled: true },
+  { ext: "3mf", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", directLoader: "three-3mf", displayName: "3MF", enabled: true },
+  { ext: "dae", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", directLoader: "three-dae", displayName: "COLLADA", enabled: true },
+  { ext: "off", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", directLoader: "three-off", displayName: "OFF", enabled: true },
+  { ext: "pcd", family: "point-cloud", strategy: "direct", directLoader: "three-pcd", displayName: "PCD", enabled: true },
+  { ext: "xyz", family: "point-cloud", strategy: "direct", directLoader: "three-xyz", displayName: "XYZ", enabled: true },
   { ext: "msh", family: "mesh", strategy: "convert", converterId: "assimp", outputFormat: "glb", displayName: "Gmsh", enabled: true },
   { ext: "x_t", family: "cad", strategy: "convert", converterId: "sldprt", outputFormat: "glb", displayName: "Parasolid", enabled: true },
   { ext: "x_b", family: "cad", strategy: "convert", converterId: "sldprt", outputFormat: "glb", displayName: "Parasolid", enabled: true },
@@ -87,12 +89,13 @@ export function getFormatCapability(ext: string): FormatCapability | undefined {
 
 /**
  * Resolve the direct-loader kind for an extension, or undefined when the
- * extension is not a direct format. Renderers dispatch on this kind instead of
- * hardcoding per-extension switches.
+ * extension has no direct loader. Renderers dispatch on this kind instead of
+ * hardcoding per-extension switches. Formats that can also be converted (3MF,
+ * DAE, OFF) keep `strategy: "convert"` for the Babylon path while exposing a
+ * Three.js-only `directLoader` used when the pipeline opts into `allowThreeDirect`.
  */
 export function getDirectLoaderKind(ext: string): string | undefined {
-  const capability = getFormatCapability(ext);
-  return capability?.strategy === "direct" ? capability.directLoader : undefined;
+  return getFormatCapability(ext)?.directLoader;
 }
 
 export function isSupportedModelExtension(ext: string): boolean {

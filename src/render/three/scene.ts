@@ -45,10 +45,15 @@ import {
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import {
+  loadThree3MF,
+  loadThreeDAE,
   loadThreeGLTF,
-  loadThreeSTL,
-  loadThreePLY,
   loadThreeOBJ,
+  loadThreeOFF,
+  loadThreePCD,
+  loadThreePLY,
+  loadThreeSTL,
+  loadThreeXYZ,
 } from "./loaders";
 import type {
   CameraConfig,
@@ -669,6 +674,18 @@ export class ThreeModelPreview implements WorkbenchPreview {
         const objResult = await loadThreeOBJ(data, readFile, modelPath);
         root = objResult.object;
         this.resourceWarnings = objResult.warnings;
+      } else if (loaderKind === "three-3mf") {
+        root = await loadThree3MF(data);
+      } else if (loaderKind === "three-dae") {
+        const daeResult = await loadThreeDAE(data, modelPath);
+        root = daeResult.object;
+        animations = daeResult.animations;
+      } else if (loaderKind === "three-off") {
+        root = await loadThreeOFF(new TextDecoder().decode(new Uint8Array(data)));
+      } else if (loaderKind === "three-pcd") {
+        root = await loadThreePCD(data);
+      } else if (loaderKind === "three-xyz") {
+        root = await loadThreeXYZ(new TextDecoder().decode(new Uint8Array(data)));
       } else {
         throw new Error(`Three preview does not support .${this.loadedExt} format`);
       }

@@ -93,6 +93,16 @@ describe("format registry", () => {
     expect(getFormatCapability("msh")?.family).toBe("mesh");
   });
 
+  it("exposes Three.js direct loaders for convertible formats", () => {
+    expect(getFormatCapability("3mf")?.strategy).toBe("convert");
+    expect(getDirectLoaderKind("3mf")).toBe("three-3mf");
+    expect(getDirectLoaderKind("dae")).toBe("three-dae");
+    expect(getDirectLoaderKind("off")).toBe("three-off");
+    expect(getDirectLoaderKind("pcd")).toBe("three-pcd");
+    expect(getDirectLoaderKind("xyz")).toBe("three-xyz");
+    expect(getDirectLoaderKind("step")).toBeUndefined();
+  });
+
   it("routes FreeCAD-native CAD formats through the sldprt converter", () => {
     expect(isSupportedModelExtension("x_t")).toBe(true);
     expect(isSupportedModelExtension("x_b")).toBe(true);

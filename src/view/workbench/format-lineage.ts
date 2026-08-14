@@ -18,6 +18,8 @@ const SUPPORTED_ANALYSIS_FORMATS = new Set<ModelAssetFormat>([
   "dae",
   "off",
   "msh",
+  "pcd",
+  "xyz",
   "x_t",
   "x_b",
   "catpart",

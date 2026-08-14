@@ -17,6 +17,7 @@ export function normalizeModelAssetFormat(value: unknown): ModelAssetFormat | un
     value === "ply" || value === "fbx" || value === "step" || value === "stp" || value === "iges" ||
     value === "igs" || value === "brep" || value === "sldprt" || value === "3mf" || value === "dae" ||
     value === "off" || value === "msh" ||
+    value === "pcd" || value === "xyz" ||
     value === "x_t" || value === "x_b" || value === "catpart" || value === "catproduct"
     ? value
     : undefined;
