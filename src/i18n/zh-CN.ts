@@ -145,6 +145,7 @@ export const zhCN: Record<TranslationKey, string> = {
   "modelLoad.errorTitle": "无法显示这个模型",
   "modelLoad.errorMessage": "加载失败：{reason}",
   "modelLoad.errorHint": "请检查文件格式，或打开开发者控制台查看详细信息。",
+  "modelLoad.dracoUnsupported": "该模型使用了 Draco 网格压缩，当前 Three.js 渲染器尚不支持。请将预览切换到 Babylon.js 渲染器，或将文件转换为未压缩的 GLB/GLTF。",
   "directView.deferredLoadTitle": "模型预览已暂停",
   "directView.deferredLoadMessage": "这个大型或需要转换的模型会先暂停加载，以保持仓库响应。",
   "directView.deferredLoadButton": "加载模型",

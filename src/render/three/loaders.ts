@@ -28,6 +28,8 @@ import {
 } from "./material-quality";
 import { createThreeRemoteUrlError, guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
 import { throwIfPreviewLoadInterrupted, type PreviewLoadOptions } from "../preview/load-control";
+import { detectDracoCompression } from "../../io/formats/draco-detect";
+import { t } from "../../i18n";
 
 const IMAGE_MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
@@ -269,6 +271,10 @@ export async function loadThreeGLTF(
 ): Promise<{ scene: Object3D; animations: AnimationClip[]; warnings: string[] }> {
   const warnings: string[] = [];
   throwIfPreviewLoadInterrupted(options);
+
+  if (detectDracoCompression(data)) {
+    throw new Error(t("modelLoad.dracoUnsupported"));
+  }
 
   if (ext === "gltf" && readFile && modelPath) {
     // GLTF JSON may reference external .bin and textures. Keep the original JSON

@@ -143,6 +143,7 @@ export const en = {
   "modelLoad.errorTitle": "Couldn't display this model",
   "modelLoad.errorMessage": "Failed to load: {reason}",
   "modelLoad.errorHint": "Check the file format or open the developer console for details.",
+  "modelLoad.dracoUnsupported": "This model uses Draco mesh compression, which the Three.js renderer does not support yet. Switch the preview to the Babylon.js renderer or convert the file to an uncompressed GLB/GLTF.",
   "directView.deferredLoadTitle": "Model preview paused",
   "directView.deferredLoadMessage": "This large or conversion-backed model is paused before loading to keep the vault responsive.",
   "directView.deferredLoadButton": "Load model",
