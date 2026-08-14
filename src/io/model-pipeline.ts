@@ -67,6 +67,34 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
   }
 
   if (useConversion) {
+    // Three.js direct degradation: when the conversion route is unusable
+    // (converter disabled/not installed, or mobile without converters) and the
+    // format exposes a Three.js-only loader, hand the raw file to Three.js
+    // instead of failing. FBX/3MF/DAE/OFF keep the converter as the preferred
+    // path when it is available.
+    if (input.allowThreeDirect && cap.directLoader) {
+      const manager = input.conversionManager
+        ? typeof input.conversionManager === "function"
+          ? await input.conversionManager()
+          : input.conversionManager
+        : null;
+      const converterUnavailable = !manager || !manager.canConvert(sourceExt);
+      if (converterUnavailable) {
+        log.info("converter unavailable; falling back to Three direct", {
+          sourceExt,
+          loaderKind: cap.directLoader,
+        });
+        return {
+          sourcePath: input.path,
+          sourceExt,
+          strategy: "direct",
+          effectivePath: input.path,
+          effectiveExt: sourceExt,
+          warnings: [`Loaded directly by the Three.js renderer (${cap.directLoader}); converter unavailable.`],
+        };
+      }
+    }
+
     if (isMobile()) {
       log.warn("conversion unavailable on mobile", { sourceExt, path: input.path });
       throw new MobileConversionUnavailableError(sourceExt);

@@ -47,6 +47,7 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import {
   loadThree3MF,
   loadThreeDAE,
+  loadThreeFBX,
   loadThreeGLTF,
   loadThreeOBJ,
   loadThreeOFF,
@@ -686,6 +687,10 @@ export class ThreeModelPreview implements WorkbenchPreview {
         root = await loadThreePCD(data);
       } else if (loaderKind === "three-xyz") {
         root = await loadThreeXYZ(new TextDecoder().decode(new Uint8Array(data)));
+      } else if (loaderKind === "three-fbx") {
+        const fbxResult = await loadThreeFBX(data, modelPath);
+        root = fbxResult.object;
+        animations = fbxResult.animations;
       } else {
         throw new Error(`Three preview does not support .${this.loadedExt} format`);
       }

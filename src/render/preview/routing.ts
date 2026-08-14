@@ -20,7 +20,7 @@ export interface GridRouteDecision {
 const DEFAULT_RENDERER_ROLLOUT: PreviewRendererRollout = "babylon-safe";
 
 /** Formats that the Three.js renderer can load directly. */
-const THREE_FORMATS = new Set(["glb", "gltf", "stl", "ply", "obj"]);
+const THREE_FORMATS = new Set(["glb", "gltf", "stl", "ply", "obj", "fbx"]);
 const THREE_WORKBENCH_FORMATS = new Set(["glb", "gltf"]);
 
 function resolveRendererRollout(value: PreviewFactoryOptions["rendererRollout"]): PreviewRendererRollout {

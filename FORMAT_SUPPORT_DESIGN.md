@@ -351,8 +351,10 @@
   - PCD/XYZ 为 `strategy: "direct"` + Three-only loader，无转换器回退（Babylon 路径
     明确报错提示改用 Three 渲染器或转 GLB）。
 - 体积预算：5 个 loader 压缩后约 +50KB，无 wasm。
-- 待办：FBX 可复用 Three `FBXLoader` 作为转换器不可用时的降级路径（P1）；Draco 压缩
-  glb/gltf 需按需加载 wasm decoder（P2）。
+- FBX 降级直读（P1 已完成）：FBX 加入 Three 可路由格式集；Three 路由且 FBX2glTF
+  转换器不可用时，pipeline 降级到 Three `FBXLoader` 直读（质量次于转换，但无需
+  外部工具）；转换器可用或 Babylon 路由时保持现有转换行为。
+- 待办：Draco 压缩 glb/gltf 需按需加载 wasm decoder（P2）。
 
 ---
 

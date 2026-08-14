@@ -6,6 +6,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
 import { ColladaLoader } from "three/examples/jsm/loaders/ColladaLoader.js";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { PCDLoader } from "three/examples/jsm/loaders/PCDLoader.js";
 import { XYZLoader } from "three/examples/jsm/loaders/XYZLoader.js";
 import {
@@ -504,6 +505,17 @@ export async function loadThreeXYZ(text: string): Promise<Object3D> {
   const geometry = loader.parse(text, () => undefined) as BufferGeometry;
   const material = new PointsMaterial({ size: getAdaptivePointSize(geometry), color: 0xcccccc });
   return new Points(geometry, material);
+}
+
+/**
+ * Load an FBX model directly via Three.js. Used as a degradation path when the
+ * FBX2glTF converter is unavailable; the converter bridge remains preferred
+ * because it produces higher-fidelity GLB output.
+ */
+export async function loadThreeFBX(data: ArrayBuffer, modelPath?: string): Promise<{ object: Object3D; animations: AnimationClip[] }> {
+  const loader = new FBXLoader();
+  const root = loader.parse(data, modelPath ? getPortableDirname(modelPath) : "");
+  return { object: root, animations: root.animations ?? [] };
 }
 
 function parseOffGeometry(text: string): { positions: number[]; indices: number[] } {

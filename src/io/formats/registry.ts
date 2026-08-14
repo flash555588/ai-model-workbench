@@ -9,7 +9,7 @@ export const FORMAT_CAPABILITIES: readonly FormatCapability[] = [
   { ext: "stl", family: "mesh", strategy: "direct", directLoader: "stl", displayName: "STL", enabled: true },
   { ext: "obj", family: "mesh", strategy: "direct", directLoader: "obj", converterId: "obj2gltf", outputFormat: "glb", displayName: "OBJ", enabled: true },
   { ext: "ply", family: "mesh", strategy: "direct", directLoader: "ply", displayName: "PLY", enabled: true },
-  { ext: "fbx", family: "mesh", strategy: "convert", converterId: "fbx2gltf", outputFormat: "glb", displayName: "FBX", enabled: true },
+  { ext: "fbx", family: "mesh", strategy: "convert", converterId: "fbx2gltf", outputFormat: "glb", directLoader: "three-fbx", displayName: "FBX", enabled: true },
 
   { ext: "step", family: "cad", strategy: "convert", converterId: "freecad", outputFormat: "glb", displayName: "STEP", enabled: true },
   { ext: "stp", family: "cad", strategy: "convert", converterId: "freecad", outputFormat: "glb", displayName: "STP", enabled: true },

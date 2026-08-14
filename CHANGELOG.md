@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Format: load 3MF, COLLADA (DAE), OFF, PCD, and XYZ directly in the Three.js renderer without external converters. The pipeline opts into the direct path when the resolved route uses Three.js; the Babylon path keeps the existing converter bridge for 3MF/DAE/OFF, and PCD/XYZ are Three-only.
+- Format: degrade FBX to the Three.js FBXLoader direct path when the FBX2glTF converter is unavailable (Three.js route only); the converter bridge stays preferred when available, and the Babylon route keeps the existing converter-required behavior.
 - Settings: implement the Obsidian 1.13+ declarative settings API (`getSettingDefinitions`, `getControlValue`, `setControlValue`) so plugin settings appear in the Obsidian settings search; the imperative UI remains the fallback for Obsidian < 1.13.
 - Maintainability: upgrade the `obsidian` API typings to 1.13.1 and enable the type-checked `no-unsafe-*` lint rules so local `npm run lint` matches the Obsidian review's linting.
 
