@@ -227,6 +227,8 @@ If Obsidian is already open, reload the app or disable and re-enable `AI Model W
 
 AI Model Workbench does not collect telemetry, phone home, or run background network sync. Model previews are loaded from files already present in the Obsidian vault, and OBJ material/texture references are resolved from the vault instead of being fetched from the network.
 
+The plugin enumerates vault file paths only for user-triggered features that require discovery: the model picker filters the vault for supported 3D assets, and annotation heading search filters cached Markdown heading metadata. Heading search does not read every note body; note content is read only after the user selects a heading for preview or binding.
+
 The bundled Babylon.js runtime contains generic loader utilities that are capable of loading URLs for web applications. This plugin passes vault file bytes to Babylon as data URLs, overrides OBJ MTL loading to avoid remote fetches, and installs a runtime guard that rejects explicit `http(s)` / `ws(s)` asset or script URLs while disabling Babylon retry hooks for those requests. Optional converter diagnostics and conversions run only after a user action and execute local tools on desktop platforms.
 
 Knowledge-note generation is local-only by default. If you configure an optional remote draft service, the plugin sends only the selected evidence payload to your configured `POST /draft-note` endpoint. The current client refuses raw model upload, and geometry summaries or preview image references must be enabled explicitly before they are included.

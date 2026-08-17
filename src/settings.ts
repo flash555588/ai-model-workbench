@@ -15,7 +15,7 @@ const proc = getRuntimeProcess();
 /** Key prefix used by the declarative converter-enabled toggles (backed by `enabledConverterIds`). */
 const ENABLED_CONVERTER_KEY_PREFIX = "enabledConverter:";
 
-// TODO(P2): split display() into section-builder methods; currently >500 lines (debt: settings-ui).
+// TODO(P2): split renderSettings() into section-builder methods; currently >500 lines (debt: settings-ui).
 
 function getConverterCommandPlaceholders(): {
   python: string;
@@ -66,8 +66,8 @@ export class AI3DSettingTab extends PluginSettingTab {
   }
 
   // ── Obsidian 1.13+ declarative settings ─────────────────────────
-  // `display()` remains the fallback for Obsidian < 1.13; on 1.13+ Obsidian
-  // renders the definitions below and makes them searchable in settings.
+  // `renderSettings()` is called by the lazy compatibility tab on Obsidian
+  // versions older than 1.13. Newer versions render the searchable definitions.
 
   getControlValue(key: string): unknown {
     if (key.startsWith(ENABLED_CONVERTER_KEY_PREFIX)) {
@@ -389,7 +389,7 @@ export class AI3DSettingTab extends PluginSettingTab {
     }
   }
 
-  display(): void {
+  renderSettings(): void {
     const { containerEl } = this;
     containerEl.empty();
     setLocale(this.plugin.getSettings().locale);
@@ -436,8 +436,7 @@ export class AI3DSettingTab extends PluginSettingTab {
             const locale = value as Locale;
             this.plugin.updateSettings({ locale });
             setLocale(locale);
-            // eslint-disable-next-line @typescript-eslint/no-deprecated -- re-render imperative UI for Obsidian < 1.13
-            this.display();
+            this.renderSettings();
           }),
       );
   }

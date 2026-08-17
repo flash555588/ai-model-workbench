@@ -495,12 +495,63 @@ async function verifyPage() {
       assert(canvas.width > 0 && canvas.height > 0, `Canvas ${index} has invalid size`);
     }
 
+    result.settingsTab = await verifySettingsTab(page);
+    assert(result.settingsTab.settingRowCount >= 8, `Settings tab rendered too few rows: ${JSON.stringify(result.settingsTab)}`);
+    assert(result.settingsTab.controlCount >= 5, `Settings tab rendered too few controls: ${JSON.stringify(result.settingsTab)}`);
+
     console.log(JSON.stringify(result, null, 2));
     const directView = await verifyDirectWorkbench(page);
     console.log(JSON.stringify({ directView }, null, 2));
   } finally {
     await browser.close();
   }
+}
+
+async function verifySettingsTab(page) {
+  const opened = await page.evaluate(async (targetPluginId) => {
+    const setting = window.app?.setting;
+    if (typeof setting?.open !== "function" || typeof setting?.openTabById !== "function") {
+      return false;
+    }
+    await setting.open();
+    await setting.openTabById(targetPluginId);
+    return true;
+  }, pluginId);
+  assert(opened, "Obsidian settings API was unavailable");
+
+  const deadline = Date.now() + 10_000;
+  let result = null;
+  const pageStates = [];
+  while (Date.now() < deadline && !result) {
+    pageStates.length = 0;
+    for (const candidate of page.context().pages()) {
+      const state = await candidate.evaluate(() => {
+        const scopes = [...document.querySelectorAll(".modal-container"), document];
+        const scope = scopes.sort((a, b) => b.querySelectorAll(".setting-item").length
+          - a.querySelectorAll(".setting-item").length)[0];
+        return {
+          url: document.location.href,
+          title: document.title,
+          settingRowCount: scope?.querySelectorAll(".setting-item").length ?? 0,
+          controlCount: scope?.querySelectorAll("input, select, button, .dropdown").length ?? 0,
+        };
+      }).catch(() => null);
+      if (!state) continue;
+      pageStates.push(state);
+      if (state.settingRowCount >= 8 && state.controlCount >= 5) {
+        result = state;
+        break;
+      }
+    }
+    if (!result) await sleep(250);
+  }
+  assert(result, `Settings tab did not render: ${JSON.stringify(pageStates)}`);
+
+  await page.evaluate(() => {
+    const setting = window.app?.setting;
+    if (typeof setting?.close === "function") setting.close();
+  });
+  return result;
 }
 
 async function collectPreviewCanvasStats(page) {
@@ -949,11 +1000,17 @@ async function verifyDirectWorkbench(page) {
   return directViewResult;
 }
 
-await registerVault();
-await prepareVault();
-await openObsidian();
-await verifyPage();
-
 if (shouldClean) {
   await cleanupVault();
+}
+
+try {
+  await registerVault();
+  await prepareVault();
+  await openObsidian();
+  await verifyPage();
+} finally {
+  if (shouldClean) {
+    await cleanupVault();
+  }
 }
