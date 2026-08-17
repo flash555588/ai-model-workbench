@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import type { ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
+import type { AgentTaskPlan, AgentTaskStep, ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 import { compactPersistedNumberTuple, isCompactPersistedNumber } from "../utils/compact-number";
@@ -176,14 +176,13 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       const { profiles, changed: profilesChanged } = normalizeModelAssetProfiles(saved.modelAssetProfiles, {
         trustPersistedSchema: schemaCurrent,
       });
+      const agentPlan = normalizeAgentTaskPlan(saved.agentPlan);
       store.setState({
         settings,
         convertedAssetRecords,
         modelAssetProfiles: profiles,
         agentDraft: typeof saved.agentDraft === "string" ? saved.agentDraft : "",
-        agentPlan: saved.agentPlan && typeof saved.agentPlan === "object"
-          ? saved.agentPlan as PersistedPluginState["agentPlan"]
-          : null,
+        agentPlan,
         lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
       });
       const settingsChanged = JSON.stringify(settings) !== JSON.stringify(saved.settings);
@@ -215,6 +214,63 @@ export function createPluginStore(plugin: Plugin): PluginStore {
       flushLatestState().catch(err => console.error("[AI3D] Final save on dispose failed:", err));
     },
   };
+}
+
+const AGENT_PLAN_STATUSES = new Set<AgentTaskPlan["status"]>([
+  "draft",
+  "confirmed",
+  "running",
+  "completed",
+  "failed",
+]);
+const AGENT_STEP_STATUSES = new Set<AgentTaskStep["status"]>([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "skipped",
+]);
+
+function normalizeAgentTaskPlan(value: unknown): AgentTaskPlan | null {
+  if (!isRecord(value) ||
+    !isStringField(value, "targetApp") ||
+    !isStringField(value, "taskType") ||
+    !isStringField(value, "userIntent") ||
+    !isStringField(value, "deliverable") ||
+    !isStringField(value, "primaryBackend") ||
+    !isStringField(value, "fallbackBackend") ||
+    typeof value.status !== "string" ||
+    !AGENT_PLAN_STATUSES.has(value.status as AgentTaskPlan["status"]) ||
+    !isStringArray(value.constraints) ||
+    !isStringArray(value.logs) ||
+    !isStringArray(value.artifacts) ||
+    !Array.isArray(value.steps) ||
+    !value.steps.every(isAgentTaskStep)) {
+    return null;
+  }
+  return value as unknown as AgentTaskPlan;
+}
+
+function isAgentTaskStep(value: unknown): value is AgentTaskStep {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    typeof value.status === "string" &&
+    AGENT_STEP_STATUSES.has(value.status as AgentTaskStep["status"]) &&
+    (value.durationMs === undefined || typeof value.durationMs === "number") &&
+    (value.output === undefined || typeof value.output === "string");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringField(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "string";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
 }
 
 function normalizeModelAssetProfiles(

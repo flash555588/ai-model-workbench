@@ -89,20 +89,20 @@
 
 ## Current Release
 
-`0.7.8` is the current release-review patch. It keeps the `0.7.7` behavior while synchronizing the lockfile and published release notes for Obsidian review.
+`0.8.0` is the current precision-measurement and reliability release.
 
 Release highlights:
 
-- Keeps the `0.7.7` preview, Slice, measurement, conversion, and knowledge behavior unchanged.
-- Synchronizes transitive dependency resolution for Obsidian's lockfile review.
-- Includes the published `0.7.7` release notes in source control.
+- Makes selected-object vertex and edge snapping the default short-distance measurement workflow, with `Alt`/`Option` preserving free surface picks.
+- Shares measurement sessions, endpoint pairing, marker reuse, overlays, and geometry indexing across Babylon.js and Three.js while keeping native renderer drawing adapters.
+- Exposes the Slice board's Move and Rotate controls in the inline inspector.
+- Adds direct Three.js loading for 3MF, DAE, OFF, PCD, and XYZ, plus an FBX direct fallback when FBX2glTF is unavailable.
+- Tightens remote-draft privacy and transport validation, converted-cache persistence, conversion timeout deduplication, and knowledge-write ordering.
+- Removes native preview hover tooltips and adds Obsidian 1.13 settings-search integration.
+- Adds pull-request CI and expands deterministic release verification.
 - Babylon.js compatibility mode remains the default for single-model previews, with Three.js still available as an explicit opt-in route.
-- Converted GLB outputs from STEP/FBX/3MF/DAE/etc. can use a configurable Three.js fast path with silent Babylon fallback.
-- Auxiliary conversion side files can be stored in a user-selected folder instead of only under the Obsidian config directory.
-- Direct file view, `3dgrid`, measurement, camera zoom, and large-model loading paths have tighter performance and stability behavior.
-- README warnings now call out STEP/CAD conversion limits, external converter risk, large-model resource pressure, generated side files, renderer-route differences, mobile limits, and optional remote-draft privacy.
 
-See [docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md), [docs/release-notes/0.7.7.md](docs/release-notes/0.7.7.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
+See [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md), [docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 
@@ -651,7 +651,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.7.8`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.7.8` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.8.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.8.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

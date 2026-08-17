@@ -123,10 +123,22 @@ describe("normalizeRemoteDraftResult", () => {
       analysisMode: "hybrid",
       serviceBaseUrl: "localhost:8787",
     }, input, "local-evidence-v1");
+    const ipv4Loopback = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "http://127.0.0.1:8787",
+    }, input, "local-evidence-v1");
+    const unspecifiedIpv4 = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "http://0.0.0.0:8787",
+    }, input, "local-evidence-v1");
 
     expect(publicHttp.enabled).toBe(false);
     expect(publicShorthand.endpoint).toBe("https://draft.example.com/api/draft-note");
     expect(local.endpoint).toBe("http://localhost:8787/draft-note");
+    expect(ipv4Loopback.endpoint).toBe("http://127.0.0.1:8787/draft-note");
+    expect(unspecifiedIpv4.enabled).toBe(false);
   });
 
   it("strips private vault context even when geometry sharing is enabled", () => {

@@ -333,7 +333,7 @@ describe("createPluginStore persistence", () => {
       }],
       modelAssetProfiles: {},
       agentDraft: 42,
-      agentPlan: null,
+      agentPlan: [],
       lastKnowledgeGeneration: null,
     };
     const { plugin } = createFakePlugin(undefined, malformed);
@@ -350,7 +350,69 @@ describe("createPluginStore persistence", () => {
       },
       convertedAssetRecords: [],
       agentDraft: "",
+      agentPlan: null,
     });
+  });
+
+  it("rejects malformed persisted agent plan objects", async () => {
+    const malformed = {
+      stateSchemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {},
+      agentDraft: "",
+      agentPlan: {
+        targetApp: "Obsidian",
+        taskType: "measure",
+        userIntent: "Measure a part",
+        constraints: [],
+        deliverable: "Measurement",
+        primaryBackend: "babylon",
+        fallbackBackend: "three",
+        status: "running",
+        steps: [{ id: "pick", label: "Pick endpoint", status: "unknown" }],
+        logs: [],
+        artifacts: [],
+      },
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, malformed);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    expect(pluginStore.store.getState().agentPlan).toBeNull();
+  });
+
+  it("preserves structurally valid persisted agent plans", async () => {
+    const agentPlan = {
+      targetApp: "Obsidian",
+      taskType: "measure",
+      userIntent: "Measure a selected part",
+      constraints: ["Use selected-object snapping"],
+      deliverable: "Measurement",
+      primaryBackend: "babylon",
+      fallbackBackend: "three",
+      status: "running" as const,
+      steps: [{ id: "pick", label: "Pick endpoint", status: "completed" as const, durationMs: 12 }],
+      logs: ["Target locked"],
+      artifacts: [],
+    };
+    const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {},
+      agentDraft: "",
+      agentPlan,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    expect(pluginStore.store.getState().agentPlan).toEqual(agentPlan);
   });
 
   it("reuses already normalized registered part arrays during load", async () => {

@@ -66,8 +66,7 @@ function isLoopbackHostname(hostname: string): boolean {
     normalized.endsWith(".localhost") ||
     normalized === "::1" ||
     normalized === "0:0:0:0:0:0:0:1" ||
-    normalized === "0.0.0.0" ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized);
+    /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(normalized);
 }
 
 function stripPreviewImages(input: AnalysisDraftingInput): AnalysisDraftingInput {
