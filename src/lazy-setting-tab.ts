@@ -1,9 +1,11 @@
-import { PluginSettingTab, type App, type SettingDefinitionItem } from "obsidian";
+import { PluginSettingTab, requireApiVersion, type App, type SettingDefinitionItem } from "obsidian";
 import type AI3DModelWorkbench from "./main";
+import type { AI3DSettingTab } from "./settings";
 
 export class LazyAI3DSettingTab extends PluginSettingTab {
-  private delegate: PluginSettingTab | null = null;
-  private delegatePromise: Promise<PluginSettingTab> | null = null;
+  private delegate: AI3DSettingTab | null = null;
+  private delegatePromise: Promise<AI3DSettingTab> | null = null;
+  private declarativeLoadQueued = false;
 
   constructor(app: App, private readonly plugin: AI3DModelWorkbench) {
     super(app, plugin);
@@ -12,52 +14,83 @@ export class LazyAI3DSettingTab extends PluginSettingTab {
   // Obsidian 1.13+ declarative settings: resolve the lazily loaded delegate and
   // forward definitions/value routing so settings stay searchable without
   // forcing the settings module to load at plugin startup.
-  // The 1.13 APIs below are additive: Obsidian < 1.13 never calls them, so the
-  // plugin keeps minAppVersion 1.5.0 and falls back to `display()` there.
-
-  /* eslint-disable obsidianmd/no-unsupported-api -- additive 1.13 APIs, never called on Obsidian < 1.13 */
+  // Obsidian < 1.13 receives an empty definition set and uses the imperative
+  // fallback. The explicit version guard is required by the source-review rule.
   getSettingDefinitions(): SettingDefinitionItem[] {
-    return this.delegate && "getSettingDefinitions" in this.delegate
-      ? this.delegate.getSettingDefinitions()
-      : [];
+    if (!requireApiVersion("1.13.0")) return [];
+    if (!this.delegate) {
+      this.loadDeclarativeDelegate();
+      return [];
+    }
+    return this.delegate.getSettingDefinitions();
   }
 
   getControlValue(key: string): unknown {
-    return this.delegate && "getControlValue" in this.delegate
-      ? this.delegate.getControlValue(key)
-      : undefined;
+    if (requireApiVersion("1.13.0") && this.delegate) {
+      return this.delegate.getControlValue(key);
+    }
+    return undefined;
   }
 
   setControlValue(key: string, value: unknown): void {
-    if (this.delegate && "setControlValue" in this.delegate) {
+    if (requireApiVersion("1.13.0") && this.delegate) {
       void this.delegate.setControlValue(key, value);
     }
   }
-  /* eslint-enable obsidianmd/no-unsupported-api */
 
   display(): void {
-    this.containerEl.empty();
-    this.containerEl.createEl("p", { cls: "setting-item-description", text: "Loading AI model workbench settings..." });
+    this.renderLoadingState();
+    if (requireApiVersion("1.13.0")) {
+      this.loadDeclarativeDelegate();
+      return;
+    }
     void this.ensureDelegate()
       .then((delegate) => {
         delegate.containerEl = this.containerEl;
-        // eslint-disable-next-line @typescript-eslint/no-deprecated -- imperative fallback for Obsidian < 1.13
-        delegate.display();
+        delegate.renderSettings();
       })
-      .catch((error: unknown) => {
-        this.containerEl.empty();
-        this.containerEl.createEl("p", {
-          cls: "setting-item-description",
-          text: `Failed to load AI Model Workbench settings: ${String(error)}`,
-        });
-      });
+      .catch((error: unknown) => this.renderLoadError(error));
   }
 
   hide(): void {
     this.delegate?.hide();
   }
 
-  private ensureDelegate(): Promise<PluginSettingTab> {
+  private loadDeclarativeDelegate(): void {
+    if (this.delegate) {
+      if (requireApiVersion("1.13.0")) this.update();
+      return;
+    }
+    if (this.declarativeLoadQueued) return;
+    this.declarativeLoadQueued = true;
+    void this.ensureDelegate()
+      .then(() => {
+        this.declarativeLoadQueued = false;
+        if (requireApiVersion("1.13.0")) this.update();
+      })
+      .catch((error: unknown) => {
+        this.declarativeLoadQueued = false;
+        this.renderLoadError(error);
+      });
+  }
+
+  private renderLoadingState(): void {
+    this.containerEl.empty();
+    this.containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Loading AI model workbench settings...",
+    });
+  }
+
+  private renderLoadError(error: unknown): void {
+    this.containerEl.empty();
+    this.containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: `Failed to load AI Model Workbench settings: ${String(error)}`,
+    });
+  }
+
+  private ensureDelegate(): Promise<AI3DSettingTab> {
     if (this.delegate) {
       return Promise.resolve(this.delegate);
     }
