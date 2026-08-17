@@ -26,7 +26,7 @@ function cloneState(data: PersistedPluginState): PersistedPluginState {
 
 function createFakePlugin(
   saveDataImpl?: (data: PersistedPluginState) => Promise<void>,
-  loadDataValue: PersistedPluginState | null = null,
+  loadDataValue: unknown = null,
 ) {
   const loadData = vi.fn(async () => loadDataValue);
   const saveData = vi.fn((data: unknown) => {
@@ -307,6 +307,112 @@ describe("createPluginStore persistence", () => {
     await settlePromises();
 
     expect(saveData).not.toHaveBeenCalled();
+  });
+
+  it("normalizes malformed persisted settings and converted records", async () => {
+    const malformed = {
+      stateSchemaVersion: 1,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        locale: "unsupported",
+        defaultCanvasHeight: "huge",
+        renderScale: 99,
+        enabledConverterIds: ["cadquery", 42],
+      },
+      convertedAssetRecords: [{
+        cacheVersion: 2,
+        converterId: "cadquery",
+        converterCacheKey: "cadquery:v1",
+        sourcePath: "models/part.step",
+        sourceExt: "step",
+        targetExt: "glb",
+        outputPath: "models/part.glb",
+        outputExt: "glb",
+        warnings: null,
+        createdAt: Date.now(),
+      }],
+      modelAssetProfiles: {},
+      agentDraft: 42,
+      agentPlan: [],
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, malformed);
+    const pluginStore = createPluginStore(plugin);
+
+    await expect(pluginStore.load()).resolves.toBeUndefined();
+
+    expect(pluginStore.store.getState()).toMatchObject({
+      settings: {
+        locale: DEFAULT_SETTINGS.locale,
+        defaultCanvasHeight: DEFAULT_SETTINGS.defaultCanvasHeight,
+        renderScale: DEFAULT_SETTINGS.renderScale,
+        enabledConverterIds: DEFAULT_SETTINGS.enabledConverterIds,
+      },
+      convertedAssetRecords: [],
+      agentDraft: "",
+      agentPlan: null,
+    });
+  });
+
+  it("rejects malformed persisted agent plan objects", async () => {
+    const malformed = {
+      stateSchemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {},
+      agentDraft: "",
+      agentPlan: {
+        targetApp: "Obsidian",
+        taskType: "measure",
+        userIntent: "Measure a part",
+        constraints: [],
+        deliverable: "Measurement",
+        primaryBackend: "babylon",
+        fallbackBackend: "three",
+        status: "running",
+        steps: [{ id: "pick", label: "Pick endpoint", status: "unknown" }],
+        logs: [],
+        artifacts: [],
+      },
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, malformed);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    expect(pluginStore.store.getState().agentPlan).toBeNull();
+  });
+
+  it("preserves structurally valid persisted agent plans", async () => {
+    const agentPlan = {
+      targetApp: "Obsidian",
+      taskType: "measure",
+      userIntent: "Measure a selected part",
+      constraints: ["Use selected-object snapping"],
+      deliverable: "Measurement",
+      primaryBackend: "babylon",
+      fallbackBackend: "three",
+      status: "running" as const,
+      steps: [{ id: "pick", label: "Pick endpoint", status: "completed" as const, durationMs: 12 }],
+      logs: ["Target locked"],
+      artifacts: [],
+    };
+    const saved: PersistedPluginState = {
+      stateSchemaVersion: 1,
+      settings: { ...DEFAULT_SETTINGS },
+      convertedAssetRecords: [],
+      modelAssetProfiles: {},
+      agentDraft: "",
+      agentPlan,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, saved);
+    const pluginStore = createPluginStore(plugin);
+
+    await pluginStore.load();
+
+    expect(pluginStore.store.getState().agentPlan).toEqual(agentPlan);
   });
 
   it("reuses already normalized registered part arrays during load", async () => {

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify source and release assets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Verify settings
+        run: npm run verify:settings
+
+      - name: Verify remote drafting
+        run: npm run verify:remote-draft
+
+      - name: Verify knowledge index
+        run: npm run verify:knowledge-index
+
+      - name: Verify diagnostics
+        run: npm run verify:diagnostics
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify release assets
+        run: npm run verify:release

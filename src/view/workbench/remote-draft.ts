@@ -37,10 +37,18 @@ function normalizeBaseUrl(value: string): string | null {
   if (!trimmed) {
     return "";
   }
-  const candidate = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const hasScheme = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed);
+  const candidate = hasScheme ? trimmed : `https://${trimmed}`;
   try {
     const url = new URL(candidate);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    const loopback = isLoopbackHostname(url.hostname);
+    if (!hasScheme && loopback) {
+      url.protocol = "http:";
+    }
+    if (url.protocol === "http:" && !loopback) {
       return null;
     }
     if (url.search || url.hash) {
@@ -50,6 +58,15 @@ function normalizeBaseUrl(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(normalized);
 }
 
 function stripPreviewImages(input: AnalysisDraftingInput): AnalysisDraftingInput {
@@ -100,8 +117,42 @@ function vaultPathBasename(path: string): string {
   return segments[segments.length - 1] ?? "";
 }
 
+function stripPrivateVaultContext(input: AnalysisDraftingInput): AnalysisDraftingInput {
+  return {
+    ...input,
+    model: {
+      ...input.model,
+      path: vaultPathBasename(input.model.path),
+      notes: "",
+      tags: [],
+    },
+    evidence: {
+      ...input.evidence,
+      previewImages: input.evidence.previewImages.map(vaultPathBasename),
+    },
+    partCandidates: input.partCandidates.map((candidate) => ({
+      ...candidate,
+      notePath: undefined,
+      registeredMatches: candidate.registeredMatches?.map((match) => ({
+        ...match,
+        sourceNotePath: undefined,
+        sourceModelPath: match.sourceModelPath ? vaultPathBasename(match.sourceModelPath) : undefined,
+      })),
+    })),
+    annotationLinks: input.annotationLinks.map((link) => ({
+      ...link,
+      notePath: undefined,
+      headingRef: undefined,
+    })),
+    knowledgeNodes: input.knowledgeNodes.map((node) => ({
+      ...node,
+      relatedAssetIds: [],
+    })),
+  };
+}
+
 function sanitizeDraftingInput(settings: PluginSettings, input: AnalysisDraftingInput): AnalysisDraftingInput {
-  let next = input;
+  let next = stripPrivateVaultContext(input);
   if (!settings.sendPreviewImagesToRemote) {
     next = stripPreviewImages(next);
   }
@@ -130,7 +181,7 @@ export function createRemoteDraftDecision(
     return { enabled: false, reason: "serviceBaseUrl is empty" };
   }
   if (baseUrl === null) {
-    return { enabled: false, reason: "serviceBaseUrl must be a valid http(s) URL" };
+    return { enabled: false, reason: "serviceBaseUrl must use HTTPS, except HTTP loopback URLs" };
   }
   if (settings.sendRawModelToRemote) {
     return { enabled: false, reason: "raw model upload is not supported by this draft client" };

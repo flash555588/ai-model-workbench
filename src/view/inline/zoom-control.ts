@@ -72,7 +72,6 @@ export function createCameraZoomControl(
     const label = formatT("helper.cameraZoomValue", { value: `${state.percentage}%` });
     input.setAttribute("aria-valuenow", String(percent));
     input.setAttribute("aria-valuetext", label);
-    shell.setAttribute("title", label);
     shell.classList.remove("is-hidden");
   }
 

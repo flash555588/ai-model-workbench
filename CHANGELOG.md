@@ -2,10 +2,21 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-08-17
+
 - Format: load 3MF, COLLADA (DAE), OFF, PCD, and XYZ directly in the Three.js renderer without external converters. The pipeline opts into the direct path when the resolved route uses Three.js; the Babylon path keeps the existing converter bridge for 3MF/DAE/OFF, and PCD/XYZ are Three-only.
 - Format: degrade FBX to the Three.js FBXLoader direct path when the FBX2glTF converter is unavailable (Three.js route only); the converter bridge stays preferred when available, and the Babylon route keeps the existing converter-required behavior.
 - Format: detect `KHR_draco_mesh_compression` in GLB/GLTF payloads before the Three.js loader runs and surface an actionable message (the Babylon path already ships a Draco decoder).
 - Settings: implement the Obsidian 1.13+ declarative settings API (`getSettingDefinitions`, `getControlValue`, `setControlValue`) so plugin settings appear in the Obsidian settings search; the imperative UI remains the fallback for Obsidian < 1.13.
+- UI: expose the Slice cutting-board Move and Rotate mode controls in the inline inspector so the advanced gizmo workflow is visible during local Obsidian testing.
+- Measurement: index large selected-object vertex and edge candidate sets so precision hover snapping avoids a full geometry scan on every pointer frame.
+- Measurement: centralize selected-object session state, endpoint pairing, marker/point registry, overlay lifecycle, observer delivery, snap input construction, and cache lifecycle so Babylon and Three share target-lock, pending-point, marker reuse, hover precedence, segment cleanup, status, invalidation, and indexing behavior while native marker, line, and label drawing stays behind backend adapters.
+- Reliability: validate persisted settings and converted-cache records, preserve in-flight conversion deduplication after caller timeout, and commit knowledge indexes only after their report and sidecar exist.
+- Privacy: require HTTPS for public remote-draft endpoints and strip vault paths, notes, tags, and note references independently of geometry-sharing consent.
+- Security: restrict plaintext remote-draft endpoints to real loopback hosts; unspecified `0.0.0.0` and malformed IPv4 addresses no longer bypass the HTTPS requirement.
+- Reliability: structurally validate persisted agent task plans before restoring them so malformed arrays, objects, steps, and statuses cannot enter runtime state.
+- UI: remove remaining native hover-tooltip attributes from model preview controls and verify the full preview surface stays tooltip-free.
+- Release: add pull-request CI, use lockfile-exact installs, and include unit/settings/remote-draft checks in the release workflow.
 - Maintainability: upgrade the `obsidian` API typings to 1.13.1 and enable the type-checked `no-unsafe-*` lint rules so local `npm run lint` matches the Obsidian review's linting.
 
 ## 0.7.8 - 2026-08-13

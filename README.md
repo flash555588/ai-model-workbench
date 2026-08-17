@@ -82,27 +82,27 @@
   converter diagnostics.
 - **Remote drafting is optional and should be treated as sensitive.** The plugin
   is local-first by default, but configured remote draft requests can include
-  sanitized evidence such as model names, part names, counts, dimensions, tags,
-  and note references depending on privacy settings.
+  sanitized evidence such as model basenames, part names, counts, and dimensions.
+  Vault paths, user notes, tags, and note references are always removed.
 
 ---
 
 ## Current Release
 
-`0.7.6` is a source-review patch for the `0.7.5` Slice and measurement release. It preserves the `0.7.5` interaction behavior while using the review-approved global window animation-frame APIs throughout the Babylon preview.
+`0.8.0` is the current precision-measurement and reliability release.
 
 Release highlights:
 
-- Replaces Babylon preview `activeWindow.requestAnimationFrame()` with `window.requestAnimationFrame()` as required by Obsidian source review.
-- Uses the matching `window.cancelAnimationFrame()` API for Babylon focus and Slice frame cancellation.
-- Keeps the `0.7.5` world-horizontal Slice reset, numeric position/rotation controls, centered rotation pivot, adaptive cutting board, measurement scope, and linked interaction rules unchanged.
+- Makes selected-object vertex and edge snapping the default short-distance measurement workflow, with `Alt`/`Option` preserving free surface picks.
+- Shares measurement sessions, endpoint pairing, marker reuse, overlays, and geometry indexing across Babylon.js and Three.js while keeping native renderer drawing adapters.
+- Exposes the Slice board's Move and Rotate controls in the inline inspector.
+- Adds direct Three.js loading for 3MF, DAE, OFF, PCD, and XYZ, plus an FBX direct fallback when FBX2glTF is unavailable.
+- Tightens remote-draft privacy and transport validation, converted-cache persistence, conversion timeout deduplication, and knowledge-write ordering.
+- Removes native preview hover tooltips and adds Obsidian 1.13 settings-search integration.
+- Adds pull-request CI and expands deterministic release verification.
 - Babylon.js compatibility mode remains the default for single-model previews, with Three.js still available as an explicit opt-in route.
-- Converted GLB outputs from STEP/FBX/3MF/DAE/etc. can use a configurable Three.js fast path with silent Babylon fallback.
-- Auxiliary conversion side files can be stored in a user-selected folder instead of only under the Obsidian config directory.
-- Direct file view, `3dgrid`, measurement, camera zoom, and large-model loading paths have tighter performance and stability behavior.
-- README warnings now call out STEP/CAD conversion limits, external converter risk, large-model resource pressure, generated side files, renderer-route differences, mobile limits, and optional remote-draft privacy.
 
-See [docs/release-notes/0.7.6.md](docs/release-notes/0.7.6.md), [docs/release-notes/0.7.5.md](docs/release-notes/0.7.5.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
+See [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md), [docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 
@@ -651,7 +651,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.7.6`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.7.6` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.8.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.8.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

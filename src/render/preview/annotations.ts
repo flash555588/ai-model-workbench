@@ -381,7 +381,6 @@ export class AnnotationManager {
     for (const c of paletteColors) {
       const swatch = colorRow.createEl("button", { cls: "ai3d-pin-color-swatch" });
       swatch.type = "button";
-      swatch.title = c;
       swatch.setAttribute("aria-label", formatT("annotation.selectColor", { color: c }));
       swatch.style.setProperty("--swatch-color", c);
       swatch.style.backgroundColor = c;
@@ -751,7 +750,6 @@ export class AnnotationManager {
 
     const dot = el.createDiv({ cls: "ai3d-pin-dot" });
     dot.style.setProperty("--pin-color", pin.color);
-    el.title = pin.label;
     el.setAttribute("aria-label", pin.label);
 
     if (this.displayMode !== "dot") {

@@ -421,6 +421,18 @@ async function verifyCanvasAccessibility(page) {
     metadata.tooltip === null,
     `Preview canvas should not expose Obsidian tooltip metadata: ${metadata.tooltip ?? "null"}`,
   );
+  const nativeTooltipAttributes = await page.locator("#preview-shell [title], #preview-shell [data-tooltip]").evaluateAll((entries) =>
+    entries.map((entry) => ({
+      tag: entry.tagName.toLowerCase(),
+      className: entry.getAttribute("class"),
+      title: entry.getAttribute("title"),
+      tooltip: entry.getAttribute("data-tooltip"),
+    })),
+  );
+  assert(
+    nativeTooltipAttributes.length === 0,
+    `Preview controls should not expose native hover tooltips: ${JSON.stringify(nativeTooltipAttributes)}`,
+  );
 
   await canvas.focus();
   const focused = await page.evaluate(() => document.activeElement === document.querySelector("#preview-canvas"));
@@ -825,9 +837,11 @@ async function verifyHelperToolbar(page) {
   const rangeInputs = await sliceDetails.locator(".ai3d-slice-range").count();
   const numericInputs = await sliceDetails.locator("input.ai3d-slice-number-input").count();
   const presetButtons = await sliceDetails.locator(".ai3d-slice-preset-btn").count();
+  const modeButtons = sliceDetails.locator(".ai3d-slice-mode-btn");
+  const modeButtonCount = await modeButtons.count();
   assert(
-    planeButtons === 0 && rangeInputs === 0 && numericInputs === 4 && presetButtons === 0,
-    `Slice inspector still exposed axis/progress controls: ${JSON.stringify({ planeButtons, rangeInputs, numericInputs, presetButtons })}`,
+    planeButtons === 0 && rangeInputs === 0 && numericInputs === 4 && presetButtons === 0 && modeButtonCount === 2,
+    `Slice inspector controls were not in the cutting-board layout: ${JSON.stringify({ planeButtons, rangeInputs, numericInputs, presetButtons, modeButtonCount })}`,
   );
   const offsetInput = sliceDetails.locator("input.ai3d-slice-offset-value").first();
   const rotationInputs = sliceDetails.locator("input.ai3d-slice-rotation-input");
@@ -835,9 +849,24 @@ async function verifyHelperToolbar(page) {
   const rotationValues = await rotationInputs.evaluateAll((inputs) => inputs.map((input) => input.value));
   assert(
     offsetText === "50" &&
-      JSON.stringify(rotationValues) === JSON.stringify(["0", "0", "0"]) &&
-      await sliceDetails.locator(".ai3d-slice-mode-btn").count() === 0,
+      JSON.stringify(rotationValues) === JSON.stringify(["0", "0", "0"]),
     `Slice numeric controls were incomplete: ${JSON.stringify({ offsetText, rotationValues })}`,
+  );
+  await modeButtons.nth(1).click();
+  await page.waitForTimeout(50);
+  let modeState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(modeState?.interactionMode === "rotate", `Slice rotate mode button did not update state: ${JSON.stringify(modeState)}`);
+  assert(
+    await modeButtons.nth(1).evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
+    "Slice rotate mode button did not show active state",
+  );
+  await modeButtons.nth(0).click();
+  await page.waitForTimeout(50);
+  modeState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
+  assert(modeState?.interactionMode === "move", `Slice move mode button did not restore state: ${JSON.stringify(modeState)}`);
+  assert(
+    await modeButtons.nth(0).evaluate((entry) => entry.classList.contains("ai3d-btn-active")),
+    "Slice move mode button did not show active state",
   );
 
   await offsetInput.fill("25");
@@ -905,8 +934,35 @@ async function verifyHelperToolbar(page) {
     Math.abs((sliceState?.offset ?? Number.NaN) - sliceOffsetBeforeDrag) <= 0.0005 && cameraDragNormalDelta <= 0.0005,
     `Dragging away from the gizmo changed the slice: ${JSON.stringify(sliceState)}`,
   );
-  const startX = Math.round(canvasBox.x + canvasBox.width * 0.5);
-  const startY = Math.round(canvasBox.y + canvasBox.height * 0.5);
+  const sliceMoveStart = await page.locator("canvas").first().evaluate((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const fallback = {
+      startX: rect.left + rect.width * 0.5,
+      startY: rect.top + rect.height * 0.5,
+      source: "canvas-center",
+    };
+    const preview = window.__ai3dPreview;
+    const state = preview?.getSliceState?.();
+    const provider = preview?.getAnnotationProvider?.();
+    if (!state?.point || !provider) return fallback;
+    const projection = { screenX: 0, screenY: 0, depth: 0 };
+    if (!provider.projectWorldPoint(state.point, projection)) return fallback;
+    const startX = rect.left + projection.screenX;
+    const startY = rect.top + projection.screenY;
+    if (
+      !Number.isFinite(startX) ||
+      !Number.isFinite(startY) ||
+      startX < rect.left ||
+      startX > rect.right ||
+      startY < rect.top ||
+      startY > rect.bottom
+    ) {
+      return fallback;
+    }
+    return { startX, startY, source: "slice-point" };
+  });
+  const startX = Math.round(sliceMoveStart.startX);
+  const startY = Math.round(sliceMoveStart.startY);
   await page.locator("canvas").first().evaluate((canvas, point) => {
     const target = canvas;
     const options = {
@@ -929,7 +985,7 @@ async function verifyHelperToolbar(page) {
   assert(
     sliceState?.active === true &&
       Math.abs(sliceState.offset - sliceOffsetBeforeDrag) > 0.01,
-    `Touch drag did not move the cutting plane: ${JSON.stringify({ before: sliceOffsetBeforeDrag, after: sliceState })}`,
+    `Touch drag did not move the cutting plane: ${JSON.stringify({ before: sliceOffsetBeforeDrag, dragStart: sliceMoveStart, after: sliceState })}`,
   );
   const normalBeforeRotate = { ...sliceState.normal };
   const centerBeforeRotate = sliceState.point ? { ...sliceState.point } : null;
@@ -1104,7 +1160,7 @@ async function verifyHelperToolbar(page) {
     "Slice activation did not change the rendered preview snapshot",
   );
   const sliceSummary = (await sliceDetails.locator(".ai3d-slice-summary").textContent()) ?? "";
-  assert(sliceSummary.includes("axis ring"), `Slice summary did not reflect gizmo state: ${sliceSummary}`);
+  assert(sliceSummary.includes("colored ring"), `Slice summary did not reflect rotate mode: ${sliceSummary}`);
   await sliceDetails.locator(".ai3d-slice-reset-btn").click();
   await page.waitForTimeout(100);
   sliceState = await page.evaluate(() => window.__ai3dPreview?.getSliceState?.() ?? null);
@@ -1265,7 +1321,9 @@ async function verifyMeasurementTool(page, box, firstPick) {
   );
   const measurementVisualState = await page.evaluate(() => {
     const preview = window.__ai3dPreview;
-    const segment = preview?.measurementSegments?.[0] ?? null;
+    const segment = preview?.measurementOverlay?.getSegments?.()[0]
+      ?? preview?.measurementSegments?.[0]
+      ?? null;
     const line = segment?.line ?? null;
     const geometry = line?.geometry ?? line?._geometry ?? null;
     let lineVertexCount = 0;

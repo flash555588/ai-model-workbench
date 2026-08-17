@@ -108,8 +108,9 @@ The `Generate note` action writes an evidence-backed model knowledge set:
 - Local editable draft sections grounded in captured evidence and profile notes.
 
 Knowledge generation is local-only by default. Optional remote drafting sends
-only sanitized drafting input to the configured `POST /draft-note` endpoint.
-Raw model upload is blocked.
+only sanitized drafting input to the configured HTTPS `POST /draft-note`
+endpoint (HTTP is allowed only for loopback development). Vault paths, user
+notes, tags, and note references are always removed. Raw model upload is blocked.
 
 ## Part Evidence And Small Details
 

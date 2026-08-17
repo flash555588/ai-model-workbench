@@ -181,6 +181,9 @@ describe("generateKnowledgeNote generation marker", () => {
     expect(files.has("Analysis/3D Reports/gear Index.md")).toBe(true);
     expect(files.has("Analysis/3D Reports/gear Analysis.json")).toBe(true);
     expect(files.has("Analysis/3D Reports/gear Report.md")).toBe(true);
+    expect(operations.indexOf("create:Analysis/3D Reports/gear Index.md")).toBeGreaterThan(
+      operations.indexOf("create:Analysis/3D Reports/gear Report.md"),
+    );
     expect(generationRecords[1]).toMatchObject({
       modelPath: "models/gear.glb",
       reportNotePath: "Analysis/3D Reports/gear Report.md",
@@ -201,7 +204,7 @@ describe("generateKnowledgeNote generation marker", () => {
     await expect(generateKnowledgeNote(app, ps)).rejects.toThrow("Unable to write analysis sidecar");
 
     expect(generationRecords.map((record) => record.status)).toEqual(["pending", "failed"]);
-    expect(files.has("Analysis/3D Reports/gear Index.md")).toBe(true);
+    expect(files.has("Analysis/3D Reports/gear Index.md")).toBe(false);
     expect(files.has("Analysis/3D Reports/gear Report.md")).toBe(false);
     expect(generationRecords[1]).toMatchObject({
       modelPath: "models/gear.glb",

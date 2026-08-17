@@ -129,7 +129,7 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
     const distinctColors = [...new Set(entries.map((entry) => entry.color).filter(Boolean))];
     const swatch = badge.createSpan({ cls: "ai3d-heading-pin-badge-swatch" });
     swatch.style.background = buildBadgeSwatchBackground(distinctColors);
-    swatch.title = entries.length > 1 ? t("headingPin.showMultiple") : t("headingPin.showSingle");
+    swatch.setAttribute("aria-label", entries.length > 1 ? t("headingPin.showMultiple") : t("headingPin.showSingle"));
     swatch.setAttribute("role", "button");
     swatch.setAttribute("tabindex", "0");
     if (entries.length > 1) {
@@ -137,7 +137,7 @@ export function setupHeadingPinObserver(context: HeadingPinObserverContext): voi
       count.textContent = `\u00d7${entries.length}`;
     }
     const uniqueModels = [...new Set(entries.map((e) => getPortableStem(e.modelPath)))];
-    badge.title = formatT("headingPin.linkedTo", { models: uniqueModels.join(", ") });
+    badge.setAttribute("aria-label", formatT("headingPin.linkedTo", { models: uniqueModels.join(", ") }));
     const highlightLinkedPins = (e?: Event) => {
       e?.stopPropagation();
       e?.preventDefault();

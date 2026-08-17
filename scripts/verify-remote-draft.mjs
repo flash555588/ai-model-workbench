@@ -79,6 +79,12 @@ await writeFile(entryPath, `
   const badQueryUrl = createRemoteDraftDecision({ ...DEFAULT_SETTINGS, analysisMode: "hybrid", serviceBaseUrl: "https://example.invalid/api?token=bad" }, input, "local-evidence-v1");
   assert(badQueryUrl.enabled === false, "Remote draft should reject base URLs with query strings");
 
+  const publicHttp = createRemoteDraftDecision({ ...DEFAULT_SETTINGS, analysisMode: "hybrid", serviceBaseUrl: "http://example.invalid/api" }, input, "local-evidence-v1");
+  assert(publicHttp.enabled === false, "Remote draft should reject plaintext public endpoints");
+
+  const publicShorthand = createRemoteDraftDecision({ ...DEFAULT_SETTINGS, analysisMode: "hybrid", serviceBaseUrl: "example.invalid/api" }, input, "local-evidence-v1");
+  assert(publicShorthand.enabled === true && publicShorthand.endpoint === "https://example.invalid/api/draft-note", "Public shorthand URL should default to HTTPS");
+
   const localPort = createRemoteDraftDecision({ ...DEFAULT_SETTINGS, analysisMode: "hybrid", serviceBaseUrl: "localhost:8787" }, input, "local-evidence-v1");
   assert(localPort.enabled === true && localPort.endpoint === "http://localhost:8787/draft-note", "Localhost shorthand URL failed");
 
@@ -125,6 +131,11 @@ await writeFile(entryPath, `
   assert(included.endpoint === "https://example.invalid/api/draft-note", "Remote endpoint failed");
   assert(included.request.draftingInput.evidence.previewImages.length === 1, "Preview images should be included when allowed");
   assert(included.request.draftingInput.model.summary.meshCount === 2, "Geometry summary should be included when allowed");
+  assert(included.request.draftingInput.model.path === "example.glb", "Geometry consent must not expose the vault path");
+  assert(included.request.draftingInput.model.notes === "", "Geometry consent must not expose user notes");
+  assert(included.request.draftingInput.model.tags.length === 0, "Geometry consent must not expose user tags");
+  assert(included.request.draftingInput.evidence.previewImages[0] === "example.png", "Preview image references must not expose vault folders");
+  assert(included.request.draftingInput.knowledgeNodes[0].relatedAssetIds.length === 0, "Knowledge nodes must not expose vault asset paths");
 
   globalThis.__remoteDraftRequests = [];
   const draft = await requestRemoteDraft(included);

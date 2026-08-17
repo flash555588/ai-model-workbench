@@ -16,24 +16,28 @@ function makeKey(sourcePath: string, sourceExt: string, targetExt: "glb"): strin
   return `${sourcePath}::${sourceExt}::${targetExt}`;
 }
 
-function isRecordUsable(record: ConvertedAssetRecord, now: number): boolean {
+function isRecordUsable(record: unknown, now: number): record is ConvertedAssetRecord {
+  if (!record || typeof record !== "object") return false;
+  const candidate = record as Partial<ConvertedAssetRecord>;
   return Boolean(
-    record.cacheVersion === CONVERTED_ASSET_CACHE_VERSION &&
-    record.converterId &&
-    record.converterCacheKey &&
-    record.sourcePath &&
-    record.sourceExt &&
-    record.targetExt === "glb" &&
-    record.outputPath &&
-    record.outputExt === "glb" &&
-    Number.isFinite(record.createdAt) &&
-    now - record.createdAt <= MAX_CONVERTED_ASSET_AGE_MS,
+    candidate.cacheVersion === CONVERTED_ASSET_CACHE_VERSION &&
+    typeof candidate.converterId === "string" && candidate.converterId.length > 0 &&
+    typeof candidate.converterCacheKey === "string" && candidate.converterCacheKey.length > 0 &&
+    typeof candidate.sourcePath === "string" && candidate.sourcePath.length > 0 &&
+    typeof candidate.sourceExt === "string" && candidate.sourceExt.length > 0 &&
+    candidate.targetExt === "glb" &&
+    typeof candidate.outputPath === "string" && candidate.outputPath.length > 0 &&
+    candidate.outputExt === "glb" &&
+    Array.isArray(candidate.warnings) && candidate.warnings.every((warning) => typeof warning === "string") &&
+    Number.isFinite(candidate.createdAt) &&
+    now - Number(candidate.createdAt) <= MAX_CONVERTED_ASSET_AGE_MS,
   );
 }
 
-function normalizeRecords(records: readonly ConvertedAssetRecord[], now = Date.now()): ConvertedAssetRecord[] {
+export function normalizeConvertedAssetRecords(records: unknown, now = Date.now()): ConvertedAssetRecord[] {
   const byKey = new Map<string, ConvertedAssetRecord>();
 
+  if (!Array.isArray(records)) return [];
   for (const record of records) {
     if (!isRecordUsable(record, now)) {
       continue;
@@ -52,7 +56,7 @@ function normalizeRecords(records: readonly ConvertedAssetRecord[], now = Date.n
 }
 
 function reuseNormalizedRecords(
-  records: readonly ConvertedAssetRecord[],
+  records: readonly unknown[],
   now: number,
 ): readonly ConvertedAssetRecord[] | null {
   if (records.length > MAX_CONVERTED_ASSET_RECORDS) {
@@ -76,7 +80,7 @@ function reuseNormalizedRecords(
     previousCreatedAt = record.createdAt;
   }
 
-  return records;
+  return records as readonly ConvertedAssetRecord[];
 }
 
 function sameRecord(a: ConvertedAssetRecord | undefined, b: ConvertedAssetRecord | undefined): boolean {
@@ -94,11 +98,11 @@ function sameRecord(a: ConvertedAssetRecord | undefined, b: ConvertedAssetRecord
 }
 
 export function createConvertedAssetCache(
-  initialRecords: readonly ConvertedAssetRecord[] = [],
+  initialRecords: readonly unknown[] = [],
   onChange?: (records: ConvertedAssetRecord[]) => void,
 ): ConvertedAssetCache {
   function snapshot(): ConvertedAssetRecord[] {
-    return normalizeRecords([...map.values()]);
+    return normalizeConvertedAssetRecords([...map.values()]);
   }
 
   function rebuildMap(records: readonly ConvertedAssetRecord[]) {
@@ -109,7 +113,7 @@ export function createConvertedAssetCache(
   }
 
   const now = Date.now();
-  const normalizedInitialRecords = reuseNormalizedRecords(initialRecords, now) ?? normalizeRecords(initialRecords, now);
+  const normalizedInitialRecords = reuseNormalizedRecords(initialRecords, now) ?? normalizeConvertedAssetRecords(initialRecords, now);
   const map = new Map<string, ConvertedAssetRecord>(
     normalizedInitialRecords.map((record) => [makeKey(record.sourcePath, record.sourceExt, record.targetExt), record]),
   );
@@ -122,7 +126,10 @@ export function createConvertedAssetCache(
 
   const initialChanged =
     initialRecords.length !== normalizedInitialRecords.length ||
-    normalizedInitialRecords.some((record, index) => !sameRecord(record, initialRecords[index]));
+    normalizedInitialRecords.some((record, index) => {
+      const initialRecord = initialRecords[index];
+      return !isRecordUsable(initialRecord, now) || !sameRecord(record, initialRecord);
+    });
 
   if (initialChanged) {
     onChange?.([...normalizedInitialRecords]);

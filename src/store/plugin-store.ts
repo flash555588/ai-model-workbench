@@ -1,5 +1,5 @@
 import type { Plugin } from "obsidian";
-import type { ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
+import type { AgentTaskPlan, AgentTaskStep, ModelAssetProfile, PartRecord, PersistedPluginState, PluginState } from "../domain/models";
 import { DEFAULT_SETTINGS } from "../domain/constants";
 import { createStore, type Store } from "./create-store";
 import { compactPersistedNumberTuple, isCompactPersistedNumber } from "../utils/compact-number";
@@ -18,6 +18,8 @@ import {
   isReusableRegisteredPartMatchReviews,
   normalizeRegisteredPartMatchReviews,
 } from "../utils/registered-match-review";
+import { normalizeConvertedAssetRecords } from "../io/cache/converted-asset-cache";
+import { hasPersistedLocale, normalizePluginSettings } from "./settings-persistence";
 
 export interface PluginStore {
   store: Store<PluginState>;
@@ -164,22 +166,28 @@ export function createPluginStore(plugin: Plugin): PluginStore {
     },
 
     async load() {
-      const saved = (await plugin.loadData()) as PersistedPluginState | null;
-      if (!saved) return;
-      localeLoadedFromSaved = !!saved.settings?.locale;
+      const loaded = await plugin.loadData() as unknown;
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return;
+      const saved = loaded as Record<string, unknown>;
+      localeLoadedFromSaved = hasPersistedLocale(saved.settings);
+      const settings = normalizePluginSettings(saved.settings);
+      const convertedAssetRecords = normalizeConvertedAssetRecords(saved.convertedAssetRecords);
       const schemaCurrent = saved.stateSchemaVersion === PERSISTED_STATE_SCHEMA_VERSION;
       const { profiles, changed: profilesChanged } = normalizeModelAssetProfiles(saved.modelAssetProfiles, {
         trustPersistedSchema: schemaCurrent,
       });
+      const agentPlan = normalizeAgentTaskPlan(saved.agentPlan);
       store.setState({
-        settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
-        convertedAssetRecords: saved.convertedAssetRecords ?? [],
+        settings,
+        convertedAssetRecords,
         modelAssetProfiles: profiles,
-        agentDraft: saved.agentDraft ?? "",
-        agentPlan: saved.agentPlan ?? null,
+        agentDraft: typeof saved.agentDraft === "string" ? saved.agentDraft : "",
+        agentPlan,
         lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
       });
-      if (profilesChanged || !schemaCurrent) {
+      const settingsChanged = JSON.stringify(settings) !== JSON.stringify(saved.settings);
+      const recordsChanged = JSON.stringify(convertedAssetRecords) !== JSON.stringify(saved.convertedAssetRecords);
+      if (profilesChanged || settingsChanged || recordsChanged || !schemaCurrent) {
         dirtyRevision += 1;
         if (saveTimer) window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
@@ -208,8 +216,65 @@ export function createPluginStore(plugin: Plugin): PluginStore {
   };
 }
 
+const AGENT_PLAN_STATUSES = new Set<AgentTaskPlan["status"]>([
+  "draft",
+  "confirmed",
+  "running",
+  "completed",
+  "failed",
+]);
+const AGENT_STEP_STATUSES = new Set<AgentTaskStep["status"]>([
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "skipped",
+]);
+
+function normalizeAgentTaskPlan(value: unknown): AgentTaskPlan | null {
+  if (!isRecord(value) ||
+    !isStringField(value, "targetApp") ||
+    !isStringField(value, "taskType") ||
+    !isStringField(value, "userIntent") ||
+    !isStringField(value, "deliverable") ||
+    !isStringField(value, "primaryBackend") ||
+    !isStringField(value, "fallbackBackend") ||
+    typeof value.status !== "string" ||
+    !AGENT_PLAN_STATUSES.has(value.status as AgentTaskPlan["status"]) ||
+    !isStringArray(value.constraints) ||
+    !isStringArray(value.logs) ||
+    !isStringArray(value.artifacts) ||
+    !Array.isArray(value.steps) ||
+    !value.steps.every(isAgentTaskStep)) {
+    return null;
+  }
+  return value as unknown as AgentTaskPlan;
+}
+
+function isAgentTaskStep(value: unknown): value is AgentTaskStep {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    typeof value.status === "string" &&
+    AGENT_STEP_STATUSES.has(value.status as AgentTaskStep["status"]) &&
+    (value.durationMs === undefined || typeof value.durationMs === "number") &&
+    (value.output === undefined || typeof value.output === "string");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringField(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "string";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === "string");
+}
+
 function normalizeModelAssetProfiles(
-  saved: PersistedPluginState["modelAssetProfiles"] | undefined,
+  saved: unknown,
   options: { trustPersistedSchema?: boolean } = {},
 ): { profiles: Record<string, ModelAssetProfile>; changed: boolean } {
   if (!saved || typeof saved !== "object") {
@@ -466,27 +531,28 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
 }
 
 function normalizeKnowledgeGenerationRecord(
-  saved: PersistedPluginState["lastKnowledgeGeneration"] | undefined,
+  saved: unknown,
 ): PersistedPluginState["lastKnowledgeGeneration"] {
   if (!saved || typeof saved !== "object") {
     return null;
   }
 
-  const modelPath = typeof saved.modelPath === "string" ? saved.modelPath : "";
+  const record = saved as Partial<NonNullable<PersistedPluginState["lastKnowledgeGeneration"]>>;
+  const modelPath = typeof record.modelPath === "string" ? record.modelPath : "";
   if (!modelPath) {
     return null;
   }
 
   return {
     modelPath,
-    reportNotePath: typeof saved.reportNotePath === "string" ? saved.reportNotePath : undefined,
-    analysisSidecarPath: typeof saved.analysisSidecarPath === "string" ? saved.analysisSidecarPath : undefined,
-    knowledgeIndexPath: typeof saved.knowledgeIndexPath === "string" ? saved.knowledgeIndexPath : undefined,
-    partNoteCount: Number.isFinite(saved.partNoteCount) ? Math.max(0, Math.floor(saved.partNoteCount)) : 0,
-    previewImageCount: Number.isFinite(saved.previewImageCount) ? Math.max(0, Math.floor(saved.previewImageCount)) : 0,
-    generatedAt: typeof saved.generatedAt === "string" ? saved.generatedAt : new Date().toISOString(),
-    status: saved.status === "failed" || saved.status === "pending" ? saved.status : "success",
-    warningCount: Number.isFinite(saved.warningCount) ? Math.max(0, Math.floor(saved.warningCount)) : 0,
+    reportNotePath: typeof record.reportNotePath === "string" ? record.reportNotePath : undefined,
+    analysisSidecarPath: typeof record.analysisSidecarPath === "string" ? record.analysisSidecarPath : undefined,
+    knowledgeIndexPath: typeof record.knowledgeIndexPath === "string" ? record.knowledgeIndexPath : undefined,
+    partNoteCount: Number.isFinite(record.partNoteCount) ? Math.max(0, Math.floor(Number(record.partNoteCount))) : 0,
+    previewImageCount: Number.isFinite(record.previewImageCount) ? Math.max(0, Math.floor(Number(record.previewImageCount))) : 0,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : new Date().toISOString(),
+    status: record.status === "failed" || record.status === "pending" ? record.status : "success",
+    warningCount: Number.isFinite(record.warningCount) ? Math.max(0, Math.floor(Number(record.warningCount))) : 0,
   };
 }
 

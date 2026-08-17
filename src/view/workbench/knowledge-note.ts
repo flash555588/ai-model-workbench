@@ -1292,7 +1292,17 @@ export async function generateKnowledgeNote(
 ): Promise<void> {
   if (noteGenerationLock !== null) return;
   let resolveLock!: () => void;
-  noteGenerationLock = new Promise<void>((resolve) => { resolveLock = resolve; });
+  const generationLock = new Promise<void>((resolve) => { resolveLock = resolve; });
+  noteGenerationLock = generationLock;
+  let lockReleased = false;
+  const releaseGenerationLock = (): void => {
+    if (lockReleased) return;
+    lockReleased = true;
+    resolveLock();
+    if (noteGenerationLock === generationLock) {
+      noteGenerationLock = null;
+    }
+  };
 
   let pendingGeneration: KnowledgeGenerationRecord | null = null;
   let analysis: AnalysisResult | null = null;
@@ -1398,6 +1408,28 @@ export async function generateKnowledgeNote(
       currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
     }
     await ensureFolder(app, reportFolder);
+    currentAnalysis.knowledgeIndexPath = knowledgeIndexPath;
+    const content = buildKnowledgeNoteContent({
+      baseName,
+      notePath,
+      sourcePath: path,
+      profile,
+      preview,
+      analysis: currentAnalysis,
+      analysisSidecarPath,
+      knowledgeIndexPath,
+    });
+
+    const sidecarFile = await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(currentAnalysis, null, 2)}\n`);
+    if (!sidecarFile) {
+      throw new Error(`Unable to write analysis sidecar: ${analysisSidecarPath}`);
+    }
+    const outputFile = await upsertTextFile(app, notePath, content);
+
+    if (!outputFile) {
+      throw new Error(`Unable to write knowledge report: ${notePath}`);
+    }
+
     const indexFile = await createKnowledgeIndex({
       app,
       baseName,
@@ -1412,25 +1444,13 @@ export async function generateKnowledgeNote(
     if (!indexFile) {
       throw new Error(`Unable to write knowledge index: ${knowledgeIndexPath}`);
     }
-    const content = buildKnowledgeNoteContent({
-      baseName,
-      notePath,
-      sourcePath: path,
-      profile,
-      preview,
-      analysis: currentAnalysis,
+    const finalizedSidecarFile = await upsertTextFile(
+      app,
       analysisSidecarPath,
-      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
-    });
-
-    const sidecarFile = await upsertTextFile(app, analysisSidecarPath, `${JSON.stringify(currentAnalysis, null, 2)}\n`);
-    if (!sidecarFile) {
-      throw new Error(`Unable to write analysis sidecar: ${analysisSidecarPath}`);
-    }
-    const outputFile = await upsertTextFile(app, notePath, content);
-
-    if (!outputFile) {
-      throw new Error(`Unable to write knowledge report: ${notePath}`);
+      `${JSON.stringify(currentAnalysis, null, 2)}\n`,
+    );
+    if (!finalizedSidecarFile) {
+      throw new Error(`Unable to finalize analysis sidecar: ${analysisSidecarPath}`);
     }
 
     ps.updateModelProfile(path, (_existing) => ({
@@ -1438,19 +1458,20 @@ export async function generateKnowledgeNote(
       registeredParts: currentAnalysis.parts.map(stripTransientRegisteredPartData),
       reportNotePath: outputFile.path,
       analysisSidecarPath,
-      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
+      knowledgeIndexPath: indexFile.path,
       previewImagePaths: snapshot.paths,
     }));
     ps.setLastKnowledgeGeneration(createKnowledgeGenerationRecord({
       modelPath: path,
       reportNotePath: outputFile.path,
       analysisSidecarPath,
-      knowledgeIndexPath: currentAnalysis.knowledgeIndexPath,
+      knowledgeIndexPath: indexFile.path,
       partNoteCount: currentAnalysis.partNotePaths?.length ?? 0,
       previewImageCount: currentAnalysis.previewImages.length,
       status: "success",
       warningCount: currentAnalysis.warnings.length,
     }));
+    releaseGenerationLock();
     await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
     new Notice(`Knowledge note updated: ${outputFile.path}`);
   } catch (error) {
@@ -1465,7 +1486,6 @@ export async function generateKnowledgeNote(
     }
     throw error;
   } finally {
-    resolveLock();
-    noteGenerationLock = null;
+    releaseGenerationLock();
   }
 }

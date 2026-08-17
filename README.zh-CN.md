@@ -72,27 +72,27 @@
 - **移动端只支持直读预览。** 移动端可以查看 GLB/GLTF/STL/OBJ/PLY 和已经转换好的 GLB，
   但不能运行本地转换工具，也不能执行转换器诊断。
 - **远程草稿是可选能力，也应按敏感数据处理。** 插件默认本地优先；如果配置了远程草稿，
-  根据隐私设置，请求中仍可能包含经过裁剪的模型名、部件名、数量、尺寸、标签和笔记引用。
+  请求中可能包含经过裁剪的模型文件名、部件名、数量和尺寸。Vault 路径、用户札记、标签和
+  笔记引用始终会被移除；公网端点必须使用 HTTPS。
 
 ---
 
 ## 当前版本
 
-`0.7.1` 是 `0.7.0` 兼容性、性能和支持边界版本的源码审核补丁版。它不改变 `0.7.0` 的渲染路线、转换行为、STEP/CAD 风险提示、生成副文件控制和大型模型加载策略，只修复 Obsidian 源码审核报告中的 source/CSS lint 项。
+`0.8.0` 是当前的精密测量与可靠性版本。
 
 发布亮点：
 
-- 移除不允许的 `obsidianmd/prefer-create-el` 禁用注释，同时保留 CodeMirror widget 和预览 canvas 所需的离线 DOM 创建能力。
-- 收紧路径缓存和二进制 buffer helper 的类型处理，消除不必要断言和 unsafe iterator value 审核提示。
-- 将直接文件视图里的 `!important` CSS 覆盖改为更高特异性的选择器。
-- 保留全部 `0.7.0` 兼容行为：Babylon.js 仍是默认单模型路线，转换 GLB 的 Three 快速路径仍可配置，STEP/CAD 仍是转换支持。
+- 短距离测量默认锁定当前选中对象，并吸附真实网格顶点与三角边；按住 `Alt`/`Option` 可使用自由表面取点。
+- Babylon.js 与 Three.js 共用测量会话、端点配对、标记复用、覆盖层和几何索引，绘制部分仍由各渲染器适配器负责。
+- 在内联检查器中显示切片板的移动与旋转控件。
+- Three.js 增加 3MF、DAE、OFF、PCD、XYZ 直接加载，并在 FBX2glTF 不可用时提供 FBX 直接加载回退。
+- 加强远程草稿隐私与传输校验、转换缓存持久化、转换超时去重和知识文件写入顺序。
+- 移除预览原生悬停提示，并接入 Obsidian 1.13 设置搜索。
+- 新增拉取请求 CI，并扩展可重复的发布验证。
 - Babylon.js 兼容模式仍是单模型预览默认路线，Three.js 继续作为显式启用的可选路线。
-- STEP/FBX/3MF/DAE 等转换后的 GLB 可以通过独立开关使用 Three.js 快速路径，并在失败时静默回退到 Babylon.js。
-- 转换副文件可以放到用户指定的辅助文件夹，不再只能放在 Obsidian 配置目录下。
-- 直接文件视图、`3dgrid`、测量、相机缩放和大型模型加载路径获得更多稳定性与性能优化。
-- README 已集中补充 STEP/CAD 转换限制、外部转换器风险、大模型资源压力、生成副文件、渲染路线差异、移动端限制和远程草稿隐私提醒。
 
-完整发布日志见 [docs/release-notes/0.7.1.md](docs/release-notes/0.7.1.md)、[docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md) 和 [CHANGELOG.md](CHANGELOG.md)。
+完整发布日志见 [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md)、[docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -520,8 +520,9 @@ src/
 │     └─ strategy: "convert" → convertForPreview()            │
 │                                                             │
 │  3. 预览路由决策                                            │
-│     ├─ GLB/GLTF/STL/PLY/OBJ 单模型 → Three.js               │
-│     └─ 3dgrid、保守 workbench、fallback → Babylon           │
+│     ├─ GLB/GLTF/STL/PLY/OBJ 单模型默认 → Babylon.js         │
+│     ├─ 单模型显式 rollout → Three.js                         │
+│     └─ 3dgrid、保守 workbench、fallback → Babylon.js        │
 │                                                             │
 │  4. 渲染器加载                                              │
 │     ├─ Three.js → loadThreeGLTF/STL/PLY/OBJ                 │
@@ -531,7 +532,7 @@ src/
 
 ### 为什么 STL/PLY fallback 使用直接缓冲区加载
 
-Three.js 是 STL 和 PLY 单模型预览的默认路径；Babylon.js 仍然负责 `3dgrid`、保守 workbench 和 fallback 路线。Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `SceneLoader.ImportMeshAsync()` 加载时，接收到的是 data URL 字符串而非 ArrayBuffer。内置加载器（GLTF、OBJ）不受影响。
+Babylon.js 兼容模式是 STL 和 PLY 单模型预览的默认路径；Three.js 保留为显式启用的 rollout。Babylon.js 还负责 `3dgrid`、保守 workbench 和 fallback 路线。Babylon.js v9 的 SceneLoader 存在一个 bug：自定义插件在通过 `SceneLoader.ImportMeshAsync()` 加载时，接收到的是 data URL 字符串而非 ArrayBuffer。内置加载器（GLTF、OBJ）不受影响。
 
 **解决方案**：STL 和 PLY 解析器直接使用原始 ArrayBuffer 调用，完全绕过 SceneLoader。
 
@@ -619,7 +620,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.7.1`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.7.1`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.8.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.8.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 
