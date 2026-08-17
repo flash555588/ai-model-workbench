@@ -65,9 +65,14 @@ export class AI3DSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  display(): void {
+    this.renderSettings();
+  }
+
   // ── Obsidian 1.13+ declarative settings ─────────────────────────
-  // `renderSettings()` is called by the lazy compatibility tab on Obsidian
-  // versions older than 1.13. Newer versions render the searchable definitions.
+  // `display()` and the lazy compatibility tab call `renderSettings()` on
+  // Obsidian versions older than 1.13. Newer versions render the searchable
+  // definitions.
 
   getControlValue(key: string): unknown {
     if (key.startsWith(ENABLED_CONVERTER_KEY_PREFIX)) {

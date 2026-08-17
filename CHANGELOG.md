@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Review: expose `display()` directly on `AI3DSettingTab` so Obsidian versions before 1.13 retain the imperative settings renderer while internal rerenders continue through the plugin-owned `renderSettings()` method.
+
 ## 0.8.1 - 2026-08-17
 
 - Review: remove forbidden `no-unsupported-api` and `no-deprecated` lint suppressions from the settings tabs, guard Obsidian 1.13 declarative APIs with `requireApiVersion`, and keep the pre-1.13 renderer behind a non-deprecated internal method.
