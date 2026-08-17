@@ -232,7 +232,7 @@ export function registerCodeBlockProcessor(
       configureModelPreviewCanvas(canvas, "inline", modelPath);
       host.appendChild(canvas);
 
-      const caption = host.createDiv({ cls: "ai3d-inline-caption", attr: { title: modelPath } });
+      const caption = host.createDiv({ cls: "ai3d-inline-caption" });
       caption.createSpan({ cls: "ai3d-inline-caption-name", text: getPortableBasename(modelPath) ?? modelPath });
       caption.createSpan({ cls: "ai3d-inline-caption-badge", text: ext.toUpperCase() });
 

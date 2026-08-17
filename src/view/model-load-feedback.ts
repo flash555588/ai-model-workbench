@@ -33,11 +33,6 @@ export function renderModelPerformanceFeedback(host: HTMLElement, summary: Model
       ? summary.resourceWarnings[0]
       : `${count} ${unit} · ${summary.materialCount.toLocaleString()} materials`,
   });
-  const titleLines = [
-    ...(summary.resourceWarnings ?? []),
-    ...(summary.performanceHint ? [summary.performanceHint] : []),
-  ];
-  if (titleLines.length > 0) shell.title = titleLines.join("\n");
   window.setTimeout(() => shell.classList.add("is-subtle"), 4200);
   return shell;
 }

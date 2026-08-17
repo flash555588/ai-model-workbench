@@ -45,6 +45,8 @@ Use this page to choose the right document before changing code.
 - `../CHANGELOG.md` - current unreleased and release history.
 - `release-notes/0.6.0-plus.md` - user-facing rolling update log for the
   `0.6.0+` release line.
+- `release-notes/0.7.8.md` - GitHub release notes for the current lockfile review patch.
+- `release-notes/0.7.7.md` - GitHub release notes for the lifecycle and privacy hardening release.
 - `release-notes/0.7.6.md` - GitHub release notes for the Babylon timer source-review patch.
 - `release-notes/0.7.5.md` - GitHub release notes for the Slice and measurement interaction release.
 - `release-notes/0.7.1.md` - GitHub release notes for the `0.7.1` source-review patch.

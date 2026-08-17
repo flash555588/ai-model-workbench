@@ -26,7 +26,7 @@ function cloneState(data: PersistedPluginState): PersistedPluginState {
 
 function createFakePlugin(
   saveDataImpl?: (data: PersistedPluginState) => Promise<void>,
-  loadDataValue: PersistedPluginState | null = null,
+  loadDataValue: unknown = null,
 ) {
   const loadData = vi.fn(async () => loadDataValue);
   const saveData = vi.fn((data: unknown) => {
@@ -307,6 +307,50 @@ describe("createPluginStore persistence", () => {
     await settlePromises();
 
     expect(saveData).not.toHaveBeenCalled();
+  });
+
+  it("normalizes malformed persisted settings and converted records", async () => {
+    const malformed = {
+      stateSchemaVersion: 1,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        locale: "unsupported",
+        defaultCanvasHeight: "huge",
+        renderScale: 99,
+        enabledConverterIds: ["cadquery", 42],
+      },
+      convertedAssetRecords: [{
+        cacheVersion: 2,
+        converterId: "cadquery",
+        converterCacheKey: "cadquery:v1",
+        sourcePath: "models/part.step",
+        sourceExt: "step",
+        targetExt: "glb",
+        outputPath: "models/part.glb",
+        outputExt: "glb",
+        warnings: null,
+        createdAt: Date.now(),
+      }],
+      modelAssetProfiles: {},
+      agentDraft: 42,
+      agentPlan: null,
+      lastKnowledgeGeneration: null,
+    };
+    const { plugin } = createFakePlugin(undefined, malformed);
+    const pluginStore = createPluginStore(plugin);
+
+    await expect(pluginStore.load()).resolves.toBeUndefined();
+
+    expect(pluginStore.store.getState()).toMatchObject({
+      settings: {
+        locale: DEFAULT_SETTINGS.locale,
+        defaultCanvasHeight: DEFAULT_SETTINGS.defaultCanvasHeight,
+        renderScale: DEFAULT_SETTINGS.renderScale,
+        enabledConverterIds: DEFAULT_SETTINGS.enabledConverterIds,
+      },
+      convertedAssetRecords: [],
+      agentDraft: "",
+    });
   });
 
   it("reuses already normalized registered part arrays during load", async () => {

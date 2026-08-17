@@ -31,13 +31,22 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
 
       - name: Lint
         run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Verify settings
+        run: npm run verify:settings
+
+      - name: Verify remote drafting
+        run: npm run verify:remote-draft
 
       - name: Verify knowledge index
         run: npm run verify:knowledge-index

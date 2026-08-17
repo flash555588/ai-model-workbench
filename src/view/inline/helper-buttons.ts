@@ -31,6 +31,7 @@ import type {
   MeasurementUnit,
   WireframePreview,
   SlicePreview,
+  SliceInteractionMode,
   SliceState,
 } from "../../render/preview/types";
 import { isMobile } from "../../utils/device";
@@ -527,7 +528,6 @@ export function createHelperButtons(
     resIndex = findNearestRenderScaleIndex(scale);
     const displayValue = formatRenderScale(scale);
     resBtn.textContent = displayValue;
-    resBtn.setAttribute("title", formatT("helper.resolutionValue", { value: displayValue }));
   }
   syncRenderScaleButton();
   resBtn.addEventListener("click", () => {
@@ -563,7 +563,7 @@ export function createHelperButtons(
   // without expanding the "more" menu.
   const measureBtn = inspectGroup.createEl("button", {
     cls: "ai3d-inline-btn is-hidden",
-    attr: { "aria-label": t("helper.toggleMeasurementLabel"), "aria-pressed": "false", title: t("helper.toggleMeasurementLabel") },
+    attr: { "aria-label": t("helper.toggleMeasurementLabel"), "aria-pressed": "false" },
   });
   setAction(measureBtn, "toggle-measurement");
   measureBtn.appendChild(createSvgIcon(`<line x1="2" y1="21" x2="22" y2="21"/><line x1="2" y1="3" x2="22" y2="3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="6" y1="3" x2="6" y2="12"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="18" y1="3" x2="18" y2="12"/>`));
@@ -1159,6 +1159,30 @@ export function createHelperButtons(
     });
     control.createSpan({ cls: "ai3d-slice-number-unit", text: "°" });
   }
+  const sliceModeRow = sliceDetails.createDiv({ cls: "ai3d-slice-row ai3d-slice-mode-row is-hidden" });
+  sliceModeRow.createSpan({ cls: "ai3d-slice-label", text: t("helper.sliceModeLabel") });
+  const sliceModeGroup = sliceModeRow.createDiv({ cls: "ai3d-slice-mode-buttons" });
+  const sliceModeButtons = {} as Record<SliceInteractionMode, HTMLButtonElement>;
+  const createSliceModeButton = (mode: SliceInteractionMode, labelKey: TranslationKey): void => {
+    const button = sliceModeGroup.createEl("button", {
+      cls: "ai3d-slice-mode-btn",
+      text: t(labelKey),
+      attr: {
+        type: "button",
+        "aria-label": t(labelKey),
+        "aria-pressed": "false",
+      },
+    });
+    button.addEventListener("click", () => {
+      const preview = getSlicePreview();
+      if (!preview?.setSliceInteractionMode) return;
+      preview.setSliceInteractionMode(mode);
+      syncSliceDetails();
+    });
+    sliceModeButtons[mode] = button;
+  };
+  createSliceModeButton("move", "helper.sliceModeMove");
+  createSliceModeButton("rotate", "helper.sliceModeRotate");
 
   function formatSliceInput(value: number): string {
     const rounded = Math.round((Number.isFinite(value) ? value : 0) * 10) / 10;
@@ -1200,6 +1224,13 @@ export function createHelperButtons(
     const state: SliceState = preview.getSliceState();
     setTogglePressed(sliceBtn, state.active);
     sliceDetails.classList.toggle("is-hidden", !state.active);
+    const supportsInteractionMode = typeof preview.setSliceInteractionMode === "function";
+    sliceModeRow.classList.toggle("is-hidden", !supportsInteractionMode);
+    if (supportsInteractionMode) {
+      for (const mode of ["move", "rotate"] as const) {
+        setTogglePressed(sliceModeButtons[mode], state.interactionMode === mode);
+      }
+    }
     if (activeDocument.activeElement !== sliceOffsetInput) {
       sliceOffsetInput.value = formatSliceInput(Math.max(0, Math.min(state.offset, 1)) * 100);
     }
@@ -1211,7 +1242,7 @@ export function createHelperButtons(
     }
     sliceSummary.textContent = state.dragging
       ? t(state.interactionMode === "rotate" ? "helper.sliceRotating" : "helper.sliceMoving")
-      : t("helper.sliceGizmoReady");
+      : t(state.interactionMode === "rotate" ? "helper.sliceRotateReady" : "helper.sliceMoveReady");
   }
 
   sliceResetBtn.addEventListener("click", resetSliceControls);

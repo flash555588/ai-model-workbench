@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildMeasurementGeometrySnapInput,
   cancelOrDeactivateMeasurement,
   createBoundsMeasurementScale,
   createMeasurementDraftingLayout,
   createMeasurementGeometryEdgesFromTriangles,
+  createMeasurementGeometrySnapIndex,
   createMeasurementLabel,
   createMeasurementMarkdown,
   createMeasurementReading,
@@ -15,6 +17,7 @@ import {
   formatMeasurementNumber,
   formatMeasurementValue,
   normalizeMeasurementUnit,
+  MeasurementGeometrySnapInputCache,
   sanitizeMeasurementScale,
   scaleMeasurementPointFromBase,
   setMeasurementCanvasActive,
@@ -175,6 +178,94 @@ describe("measurement helpers", () => {
     );
 
     expect(snapped).toBeNull();
+  });
+
+  it("uses the spatial index without changing snap ranking", () => {
+    const vertices = Array.from({ length: 500 }, (_value, index) => ({
+      point: { x: index, y: index % 7, z: 0 },
+      targetId: "dense",
+    }));
+    const edges = Array.from({ length: 499 }, (_value, index) => ({
+      start: vertices[index].point,
+      end: vertices[index + 1].point,
+      targetId: "dense",
+    }));
+    const spatialIndex = createMeasurementGeometrySnapIndex(vertices, edges);
+    const input = { vertices, edges, vertexRadius: 0.2 };
+    const point = { x: 249.05, y: 4.02, z: 0 };
+
+    expect(spatialIndex).not.toBeNull();
+    const linear = snapMeasurementPointToGeometry(point, input);
+    const indexed = snapMeasurementPointToGeometry(point, { ...input, spatialIndex });
+
+    expect(indexed).toEqual(linear);
+    expect(indexed?.kind).toBe("vertex");
+    const stats = spatialIndex?.getLastQueryStats();
+    expect(stats?.vertexCandidatesVisited).toBeLessThan(vertices.length / 2);
+    expect(stats?.edgeCandidatesVisited).toBeLessThan(edges.length / 2);
+  });
+
+  it("builds indexed snap input and rejects empty geometry", () => {
+    const vertices = Array.from({ length: 100 }, (_value, index) => ({
+      point: { x: index, y: 0, z: 0 },
+      targetId: "dense",
+    }));
+    const edges = vertices.slice(1).map((vertex, index) => ({
+      start: vertices[index].point,
+      end: vertex.point,
+      targetId: "dense",
+    }));
+
+    const input = buildMeasurementGeometrySnapInput({
+      vertices,
+      edges,
+      boundsSize: { x: 99, y: 0, z: 0 },
+      targetId: "dense",
+    });
+
+    expect(input?.targetId).toBe("dense");
+    expect(input?.vertexRadius).toBeGreaterThan(0);
+    expect(input?.spatialIndex).not.toBeNull();
+    expect(buildMeasurementGeometrySnapInput({
+      vertices: [],
+      edges: [],
+      boundsSize: { x: 1, y: 1, z: 1 },
+    })).toBeNull();
+  });
+
+  it("reuses snap input until its target, signature, or lifecycle changes", () => {
+    const cache = new MeasurementGeometrySnapInputCache<object>();
+    const firstTarget = {};
+    const secondTarget = {};
+    const input = buildMeasurementGeometrySnapInput({
+      vertices: [{ point: { x: 0, y: 0, z: 0 } }],
+      edges: [],
+      boundsSize: { x: 1, y: 1, z: 1 },
+    });
+    const createInput = vi.fn(() => input);
+
+    expect(cache.getOrCreate(firstTarget, "v1", createInput)).toBe(input);
+    expect(cache.getOrCreate(firstTarget, "v1", createInput)).toBe(input);
+    expect(createInput).toHaveBeenCalledTimes(1);
+
+    cache.getOrCreate(firstTarget, "v2", createInput);
+    cache.getOrCreate(secondTarget, "v2", createInput);
+    cache.invalidate();
+    cache.getOrCreate(secondTarget, "v2", createInput);
+
+    expect(createInput).toHaveBeenCalledTimes(4);
+  });
+
+  it("caches an empty snap input until its geometry signature changes", () => {
+    const cache = new MeasurementGeometrySnapInputCache<string>();
+    const createInput = vi.fn(() => null);
+
+    expect(cache.getOrCreate("target", "empty", createInput)).toBeNull();
+    expect(cache.getOrCreate("target", "empty", createInput)).toBeNull();
+    expect(createInput).toHaveBeenCalledTimes(1);
+
+    cache.getOrCreate("target", "populated", createInput);
+    expect(createInput).toHaveBeenCalledTimes(2);
   });
 
   it("caps the vertex snap radius by selected-target edge scale", () => {

@@ -67,23 +67,25 @@ export class ConversionManager {
 
     // Deduplicate concurrent conversions for the same source + target
     const key = `${req.sourcePath}::${ext}::${req.targetExt}`;
-    const existing = this.pending.get(key);
-    if (existing) {
+    let conversion = this.pending.get(key);
+    if (conversion) {
       log.info("joining in-flight conversion", { key });
-      return existing;
+    } else {
+      log.info("dispatch conversion", { converterId: converter.id, ext, targetExt: req.targetExt });
+      conversion = converter.convert({ ...req, sourceExt: ext });
+      this.pending.set(key, conversion);
+      const clearPending = (): void => {
+        if (this.pending.get(key) === conversion) {
+          this.pending.delete(key);
+        }
+      };
+      void conversion.then(clearPending, clearPending);
     }
 
-    log.info("dispatch conversion", { converterId: converter.id, ext, targetExt: req.targetExt });
-    const promise = withTimeout(
-      converter.convert({ ...req, sourceExt: ext }),
+    return withTimeout(
+      conversion,
       req.timeoutMs ?? DEFAULT_CONVERSION_TIMEOUT_MS,
       { converterId: converter.id, ext, targetExt: req.targetExt },
     );
-    this.pending.set(key, promise);
-    try {
-      return await promise;
-    } finally {
-      this.pending.delete(key);
-    }
   }
 }

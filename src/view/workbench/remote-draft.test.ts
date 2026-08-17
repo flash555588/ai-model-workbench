@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AnalysisDraftingInput } from "../../domain/models";
 import {
+  createRemoteDraftDecision,
   DEFAULT_REMOTE_DRAFT_TIMEOUT_MS,
   RemoteDraftTimeoutError,
   requestRemoteDraft,
   type RemoteDraftDecision,
 } from "./remote-draft";
 import { normalizeRemoteDraftResult } from "./remote-draft-normalizer";
+import { DEFAULT_SETTINGS } from "../../domain/constants";
 
 interface RequestUrlCall {
   url: string;
@@ -102,6 +104,69 @@ describe("normalizeRemoteDraftResult", () => {
   it("does not call the draft service for disabled decisions", async () => {
     await expect(requestRemoteDraft({ enabled: false, reason: "analysisMode=local" })).resolves.toBeNull();
     expect(requestUrlMock).not.toHaveBeenCalled();
+  });
+
+  it("requires HTTPS for public endpoints while preserving loopback development", () => {
+    const input = createDraftingInput();
+    const publicHttp = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "http://draft.example.com/api",
+    }, input, "local-evidence-v1");
+    const publicShorthand = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "draft.example.com/api",
+    }, input, "local-evidence-v1");
+    const local = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "localhost:8787",
+    }, input, "local-evidence-v1");
+
+    expect(publicHttp.enabled).toBe(false);
+    expect(publicShorthand.endpoint).toBe("https://draft.example.com/api/draft-note");
+    expect(local.endpoint).toBe("http://localhost:8787/draft-note");
+  });
+
+  it("strips private vault context even when geometry sharing is enabled", () => {
+    const input = createDraftingInput();
+    input.model.path = "Private/Projects/example.glb";
+    input.model.notes = "customer note";
+    input.model.tags = ["customer-secret"];
+    input.evidence.previewImages = ["Private/Previews/example.png"];
+    input.annotationLinks = [{
+      annotationId: "a1",
+      label: "Mount",
+      position: [1, 2, 3],
+      notePath: "Private/Notes/customer.md",
+      headingRef: "Customer",
+      confidence: 0.9,
+    }];
+    input.knowledgeNodes = [{
+      id: "k1",
+      title: "Geometry",
+      domain: "geometry",
+      summary: "summary",
+      relatedPartIds: [],
+      relatedAssetIds: ["Private/Projects/example.glb"],
+      confidence: 0.8,
+      source: "rule",
+    }];
+
+    const decision = createRemoteDraftDecision({
+      ...DEFAULT_SETTINGS,
+      analysisMode: "hybrid",
+      serviceBaseUrl: "https://draft.example.com/api",
+      sendGeometrySummaryToRemote: true,
+      sendPreviewImagesToRemote: true,
+    }, input, "local-evidence-v1");
+    const sanitized = decision.request?.draftingInput;
+
+    expect(sanitized?.model).toMatchObject({ path: "example.glb", notes: "", tags: [] });
+    expect(sanitized?.evidence.previewImages).toEqual(["example.png"]);
+    expect(sanitized?.annotationLinks[0]).toMatchObject({ notePath: undefined, headingRef: undefined });
+    expect(sanitized?.knowledgeNodes[0].relatedAssetIds).toEqual([]);
   });
 
   it("uses the default timeout budget when requesting a remote draft", async () => {

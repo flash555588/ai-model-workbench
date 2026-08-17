@@ -92,4 +92,38 @@ describe("ConversionManager", () => {
     expect(a).toBe(b);
     expect(calls).toBe(1);
   });
+
+  it("keeps a timed-out conversion registered until the underlying job settles", async () => {
+    vi.useFakeTimers();
+    const manager = new ConversionManager();
+    let calls = 0;
+    let finish!: (result: ConversionResult) => void;
+    manager.registerConverter({
+      id: "mock",
+      sourceExts: [".test"],
+      targetExt: "glb",
+      getCacheKey: async () => "key",
+      convert: () => {
+        calls++;
+        return new Promise<ConversionResult>((resolve) => { finish = resolve; });
+      },
+    });
+    const req: ConversionRequest = {
+      sourcePath: "/in/model.test",
+      sourceExt: ".test",
+      targetExt: "glb",
+      timeoutMs: 25,
+    };
+
+    const first = manager.convert(req);
+    const firstAssertion = expect(first).rejects.toThrow(ConversionTimeoutError);
+    await vi.advanceTimersByTimeAsync(25);
+    await firstAssertion;
+
+    const retry = manager.convert({ ...req, timeoutMs: 1_000 });
+    finish(successResult);
+    await expect(retry).resolves.toBe(successResult);
+    expect(calls).toBe(1);
+    vi.useRealTimers();
+  });
 });

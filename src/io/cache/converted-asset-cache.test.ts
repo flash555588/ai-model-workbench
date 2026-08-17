@@ -74,6 +74,22 @@ describe("createConvertedAssetCache", () => {
     expect(changes).toHaveLength(0);
   });
 
+  it("discards malformed persisted records without throwing", () => {
+    const valid = createRecord();
+    const malformed = {
+      ...valid,
+      sourcePath: "models/malformed.step",
+      warnings: null,
+    };
+    const changes: ConvertedAssetRecord[][] = [];
+
+    const cache = createConvertedAssetCache([malformed, valid], records => changes.push(records));
+
+    expect(cache.entries()).toEqual([valid]);
+    expect(cache.get("models/malformed.step", "step", "glb")).toBeUndefined();
+    expect(changes).toEqual([[valid]]);
+  });
+
   it("emits sorted snapshots when setting and replacing records", () => {
     const changes: ConvertedAssetRecord[][] = [];
     const cache = createConvertedAssetCache([], records => changes.push(records));

@@ -113,14 +113,18 @@ import {
   type PreviewLoadOptions,
 } from "../preview/load-control";
 import {
+  MeasurementOverlayController,
+  type MeasurementMarkerVisualState,
+} from "../preview/measurement-overlay";
+import { MeasurementSessionController } from "../preview/measurement-session";
+import {
+  buildMeasurementGeometrySnapInput,
   createMeasurementLabel,
   createMeasurementDraftingLayout,
   createMeasurementGeometryEdgesFromTriangles,
   createMeasurementMarkdown,
   createMeasurementReading as buildMeasurementReading,
-  createMeasurementState,
   createMeasurementTrianglesFromIndices,
-  createMeasurementVertexSnapRadius,
   drawMeasurementLabelCanvas,
   MEASUREMENT_LABEL_CANVAS,
   normalizeMeasurementUnit,
@@ -130,6 +134,7 @@ import {
   snapMeasurementPointToGeometry,
   unscaleMeasurementPointToBase,
   type MeasurementGeometrySnapInput,
+  MeasurementGeometrySnapInputCache,
   type MeasurementSnapEdgeCandidate,
   type MeasurementSnapVertexCandidate,
   type MeasurementReading,
@@ -444,24 +449,58 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private focusWorldPointFrame = 0;
   private _lastPickResult: PreviewPickResult = { mesh: null, pickedPoint: null, screenX: 0, screenY: 0 };
   private _onPickCallbacks: Array<(result: PreviewPickResult) => void> = [];
-  private measurementActive = false;
+  private readonly measurementSession = new MeasurementSessionController<BabylonSelectablePartNode, Vector3>();
   private measurementScale: MeasurementScale = { x: 1, y: 1, z: 1 };
   private measurementBaseRootScaling = new Vector3(1, 1, 1);
   private measurementBaseBounds: PreviewBounds | null = null;
   private measurementUnit: MeasurementUnit = "mm";
-  private measurementSegments: BabylonMeasurementSegment[] = [];
-  private measurementMarkers: Mesh[] = [];
-  private measurementMarkerPoints: Vector3[] = [];
-  private measurementTargetNode: BabylonSelectablePartNode | null = null;
+  private readonly measurementOverlay = new MeasurementOverlayController<
+    BabylonSelectablePartNode,
+    Vector3,
+    Mesh,
+    BabylonMeasurementSegment
+  >(this.measurementSession, {
+    clonePoint: (point) => point.clone(),
+    isSamePoint: (left, right) => Vector3.Distance(left, right) < 0.0001,
+    measureMarkerDistance: (left, right) => Vector3.Distance(
+      this.toMeasurementDisplayPoint(left),
+      this.toMeasurementDisplayPoint(right),
+    ),
+    createMarker: (point) => this.createMeasurementMarker(point),
+    disposeMarker: (marker) => marker.dispose(false, true),
+    setMarkerState: (marker, state) => this.setMeasurementMarkerState(marker, state),
+    updateMarkerPosition: (marker, point) => {
+      marker.position = this.toMeasurementDisplayPoint(point);
+    },
+    createSegment: (start, end) => this.createMeasurementSegment(start, end),
+    disposeSegment: (segment) => this.disposeMeasurementSegment(segment),
+    updateSegmentLine: (segment) => this.updateMeasurementLineGeometry(segment),
+    updateSegmentLabel: (segment) => this.updateMeasurementSegmentLabel(segment),
+    ensurePreviewLine: () => this.ensurePreviewLine(),
+    removePreviewLine: () => this.removePreviewLine(),
+  });
   private measurementTargetMeshes: AbstractMesh[] = [];
-  private measurementSnapInputCache: MeasurementGeometrySnapInput | null = null;
-  private measurementSnapInputCacheTargetId: number | null = null;
-  private measurementSnapInputCacheSignature: string | null = null;
-  private measurementSnapKind: MeasurementSnapKind | null = null;
-  private readonly measurementObservers = new Set<() => void>();
-  private pendingPoint: Vector3 | null = null;
-  private pendingMarker: Mesh | null = null;
-  private hoveredMarkerIndex = -1;
+  private readonly measurementSnapInputCache = new MeasurementGeometrySnapInputCache<number>();
+
+  private get measurementActive(): boolean {
+    return this.measurementSession.active;
+  }
+
+  private set measurementActive(active: boolean) {
+    this.measurementSession.setActive(active);
+  }
+
+  private get measurementTargetNode(): BabylonSelectablePartNode | null {
+    return this.measurementSession.target;
+  }
+
+  private set measurementTargetNode(target: BabylonSelectablePartNode | null) {
+    this.measurementSession.setTarget(target);
+  }
+
+  private get pendingPoint(): Vector3 | null {
+    return this.measurementSession.pendingPoint;
+  }
   private hoverPickFrame = 0;
   private pendingHoverPick: { x: number; y: number } | null = null;
   private lastPointerClient = { x: 0, y: 0, altKey: false };
@@ -484,7 +523,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (this.pendingPoint) {
       this.updatePreviewLine();
     }
-    if (this.measurementMarkers.length === 0) return;
+    if (this.measurementOverlay.markerCount === 0) return;
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -507,22 +546,14 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private applyHoverPick(x: number, y: number): void {
     if (!this.measurementActive) return;
-    const pickResult = this.scene.pick(x, y, (mesh) => this.measurementMarkers.includes(mesh as Mesh));
-    const newHover = pickResult.hit ? this.measurementMarkers.indexOf(pickResult.pickedMesh as Mesh) : -1;
-    if (newHover !== this.hoveredMarkerIndex) {
-      if (this.hoveredMarkerIndex >= 0 && this.hoveredMarkerIndex < this.measurementMarkers.length) {
-        const prev = this.measurementMarkers[this.hoveredMarkerIndex];
-        if (prev !== this.pendingMarker) {
-          prev.scaling.setAll(1);
-          setMeasurementMarkerColor(prev, MEASUREMENT_MARKER_COLOR);
-        }
-      }
-      if (newHover >= 0 && newHover < this.measurementMarkers.length) {
-        const next = this.measurementMarkers[newHover];
-        next.scaling.setAll(1.6);
-        setMeasurementMarkerColor(next, MEASUREMENT_HOVER_COLOR);
-      }
-      this.hoveredMarkerIndex = newHover;
+    const pickResult = this.scene.pick(
+      x,
+      y,
+      (mesh) => this.measurementOverlay.includesMarker(mesh as Mesh),
+    );
+    const hoveredMarker = pickResult.hit ? pickResult.pickedMesh as Mesh : null;
+    if (this.measurementOverlay.setHoveredMarker(hoveredMarker)) {
+      this.scene.render();
     }
   };
   private readonly handlePointerCancel = (event: PointerEvent) => {
@@ -613,7 +644,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.camera.lowerRadiusLimit = 0.1;
     this.camera.wheelPrecision = 45;
     this.camera.onViewMatrixChangedObservable.add(() => {
-      if (this.measurementSegments.length > 0) {
+      if (this.measurementOverlay.segmentCount > 0) {
         this.updateMeasurementOverlayPositions();
       }
       this.notifyCameraZoomChanged();
@@ -1355,7 +1386,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   cancelMeasurement(): void {
-    const hadPendingPoint = !!this.pendingPoint;
+    const hadPendingPoint = this.measurementSession.hasPendingPoint;
     this.cancelPendingMeasurement();
     if (hadPendingPoint) {
       this.notifyMeasurementsChanged();
@@ -1378,17 +1409,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
       setMeasurementCanvasActive(this.engine.getRenderingCanvas(), false);
       this.setMeasurementTargetNode(null, false);
     }
-    this.cancelPendingMeasurement(false);
-    for (const segment of this.measurementSegments) {
-      segment.line.dispose(false, true);
-      segment.label.dispose(false, true);
-    }
-    this.measurementSegments = [];
-    for (const marker of this.measurementMarkers) {
-      marker.dispose(false, true);
-    }
-    this.measurementMarkers = [];
-    this.measurementMarkerPoints = [];
+    this.measurementOverlay.clear();
     this.setMeasurementSnapKind(null, false);
     this.notifyMeasurementsChanged();
   }
@@ -1396,7 +1417,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   setMeasurementScale(scale: MeasurementScale): void {
     this.measurementScale = sanitizeMeasurementScale(scale);
-    this.invalidateMeasurementSnapInputCache();
+    this.measurementSnapInputCache.invalidate();
     this.applyMeasurementModelScale();
     if (this.sliceActive) {
       this.setSliceCenterFromOffset(this.sliceOffset);
@@ -1437,17 +1458,13 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   getMeasurementState(): MeasurementState {
-    return createMeasurementState({
-      active: this.measurementActive,
-      pending: !!this.pendingPoint,
+    return this.measurementSession.createState({
       records: this.createMeasurementRecords(),
       unit: this.measurementUnit,
       scale: this.getMeasurementScale(),
       bounds: this.getMeasurementBounds(),
-      targetLocked: !!this.measurementTargetNode,
       targetName: this.getMeasurementTargetName(),
       targetScope: this.measurementTargetNode === this.rootMesh ? "model" : "part",
-      snapKind: this.measurementSnapKind,
     });
   }
 
@@ -1456,27 +1473,12 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   observeMeasurements(callback: () => void): () => void {
-    this.measurementObservers.add(callback);
-    callback();
-    return () => {
-      this.measurementObservers.delete(callback);
-    };
+    return this.measurementSession.observe(callback);
   }
 
   updateMeasurementLabels(): void {
-    if (this.measurementSegments.length === 0) return;
-    const markerSize = this.getMeasurementMarkerSize() * 3.2;
-    for (const segment of this.measurementSegments) {
-      this.updateMeasurementLineGeometry(segment);
-      const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
-      segment.label.dispose(false, true);
-      const layout = this.createBabylonMeasurementDraftingLayout(segment.start, segment.end);
-      const labelPosition = layout?.labelPosition ?? Vector3.Center(
-        this.toMeasurementDisplayPoint(segment.start),
-        this.toMeasurementDisplayPoint(segment.end),
-      );
-      segment.label = this.createMeasurementLabelMesh(labelText, labelPosition, markerSize);
-    }
+    if (this.measurementOverlay.segmentCount === 0) return;
+    this.measurementOverlay.updateSegmentLabels();
   }
 
   private captureMeasurementBaseState(root: Mesh, rootBounds: PreviewBounds | null): void {
@@ -1489,8 +1491,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.measurementScale = { x: 1, y: 1, z: 1 };
     this.measurementBaseRootScaling = new Vector3(1, 1, 1);
     this.measurementBaseBounds = null;
-    this.measurementMarkerPoints = [];
-    this.invalidateMeasurementSnapInputCache();
+    this.measurementSnapInputCache.invalidate();
   }
 
   private applyMeasurementModelScale(): void {
@@ -1572,15 +1573,8 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private updateMeasurementOverlayPositions(): void {
-    for (let i = 0; i < this.measurementMarkers.length; i++) {
-      const basePoint = this.measurementMarkerPoints[i];
-      if (basePoint) {
-        this.measurementMarkers[i].position = this.toMeasurementDisplayPoint(basePoint);
-      }
-    }
-    for (const segment of this.measurementSegments) {
-      this.updateMeasurementLineGeometry(segment);
-    }
+    this.measurementOverlay.updateMarkerPositions();
+    this.measurementOverlay.updateSegmentLines();
     if (this.pendingPoint && this.previewLine) {
       this.updatePreviewLine();
     }
@@ -1606,9 +1600,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private notifyMeasurementsChanged(): void {
-    for (const callback of Array.from(this.measurementObservers)) {
-      callback();
-    }
+    this.measurementSession.notify();
   }
 
   setAnimationSpeed(speed: number): void {
@@ -2181,7 +2173,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     this.restoreSliceMaterialClipping();
     this.disposeSliceOverlay(false);
     this.disposeMeasurementOverlays(true);
-    this.measurementObservers.clear();
+    this.measurementSession.clearObservers();
     this.clearFocusedMesh();
     this.originalMeshVisibility.clear();
     this.bboxMesh?.dispose();
@@ -3088,7 +3080,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
 
   private setMeasurementTargetNode(node: BabylonSelectablePartNode | null, notify = true): void {
     this.clearMeasurementTargetVisual(false);
-    this.invalidateMeasurementSnapInputCache();
+    this.measurementSnapInputCache.invalidate();
     const target = node && !isBabylonNodeDisposed(node) ? this.findSelectableNode(node) : null;
     if (!target || isBabylonNodeDisposed(target)) {
       this.measurementTargetNode = null;
@@ -3144,11 +3136,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private setMeasurementSnapKind(kind: MeasurementSnapKind | null, notify = true): void {
-    if (this.measurementSnapKind === kind) return;
-    this.measurementSnapKind = kind;
-    if (notify) {
-      this.notifyMeasurementsChanged();
-    }
+    this.measurementSession.setSnapKind(kind, notify);
   }
 
   private updateMeasurementModifierAltKey(altKey: boolean): void {
@@ -3157,12 +3145,6 @@ export class BabylonModelPreview implements WorkbenchPreview {
     if (this.measurementActive && this.pendingPoint) {
       this.updatePreviewLine();
     }
-  }
-
-  private invalidateMeasurementSnapInputCache(): void {
-    this.measurementSnapInputCache = null;
-    this.measurementSnapInputCacheTargetId = null;
-    this.measurementSnapInputCacheSignature = null;
   }
 
   private getMeasurementTargetName(): string | null {
@@ -3208,49 +3190,37 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const meshes = this.getMeasurementTargetMeshes(target);
     if (meshes.length === 0) return null;
     const signature = this.createMeasurementSnapInputSignature(meshes);
-    if (
-      this.measurementSnapInputCache &&
-      this.measurementSnapInputCacheTargetId === target.uniqueId &&
-      this.measurementSnapInputCacheSignature === signature
-    ) {
-      return this.measurementSnapInputCache;
-    }
+    return this.measurementSnapInputCache.getOrCreate(target.uniqueId, signature, () => {
+      const vertices: MeasurementSnapVertexCandidate[] = [];
+      const edges: MeasurementSnapEdgeCandidate[] = [];
+      const targetId = `babylon:${target.uniqueId}`;
 
-    const vertices: MeasurementSnapVertexCandidate[] = [];
-    const edges: MeasurementSnapEdgeCandidate[] = [];
-    const targetId = `babylon:${target.uniqueId}`;
-
-    for (const mesh of meshes) {
-      if (mesh.isDisposed()) continue;
-      const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
-      if (!positions || positions.length < 3) continue;
-      const matrix = mesh.computeWorldMatrix(true);
-      const objectVertices: PreviewWorldPoint[] = [];
-      const vertexCount = Math.floor(positions.length / 3);
-      for (let i = 0; i < vertexCount; i++) {
-        const local = new Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-        const world = Vector3.TransformCoordinates(local, matrix);
-        const previewPoint = this.toMeasurementPoint(world);
-        objectVertices.push(previewPoint);
-        vertices.push({ point: previewPoint, targetId });
+      for (const mesh of meshes) {
+        if (mesh.isDisposed()) continue;
+        const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+        if (!positions || positions.length < 3) continue;
+        const matrix = mesh.computeWorldMatrix(true);
+        const objectVertices: PreviewWorldPoint[] = [];
+        const vertexCount = Math.floor(positions.length / 3);
+        for (let i = 0; i < vertexCount; i++) {
+          const local = new Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+          const world = Vector3.TransformCoordinates(local, matrix);
+          const previewPoint = this.toMeasurementPoint(world);
+          objectVertices.push(previewPoint);
+          vertices.push({ point: previewPoint, targetId });
+        }
+        const triangles = createMeasurementTrianglesFromIndices(vertexCount, mesh.getIndices() ?? null);
+        edges.push(...createMeasurementGeometryEdgesFromTriangles(objectVertices, triangles, targetId));
       }
-      const triangles = createMeasurementTrianglesFromIndices(vertexCount, mesh.getIndices() ?? null);
-      edges.push(...createMeasurementGeometryEdgesFromTriangles(objectVertices, triangles, targetId));
-    }
 
-    if (vertices.length === 0 && edges.length === 0) return null;
-    const bounds = this.getMeasurementTargetBounds();
-    const size = bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 };
-    const input = {
-      vertices,
-      edges,
-      targetId,
-      vertexRadius: createMeasurementVertexSnapRadius(size, edges),
-    };
-    this.measurementSnapInputCache = input;
-    this.measurementSnapInputCacheTargetId = target.uniqueId;
-    this.measurementSnapInputCacheSignature = signature;
-    return input;
+      const bounds = this.getMeasurementTargetBounds();
+      return buildMeasurementGeometrySnapInput({
+        vertices,
+        edges,
+        targetId,
+        boundsSize: bounds ? getPreviewBoundsSize(bounds) : { x: 1, y: 1, z: 1 },
+      });
+    });
   }
 
   private createMeasurementSnapInputSignature(meshes: readonly AbstractMesh[]): string {
@@ -3286,7 +3256,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     const pickResult = this.scene.pick(x, y, (mesh) =>
-      mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
+      mesh !== this.previewLine && !this.measurementOverlay.includesMarker(mesh as Mesh));
     return pickResult?.hit
       ? this.getMeasurementTargetPickPoint(pickResult.pickedMesh, pickResult.pickedPoint)
       : null;
@@ -3334,104 +3304,42 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private cancelPendingMeasurement(markDirty = true): void {
-    const pendingMarker = this.pendingMarker;
-    const pendingPoint = this.pendingPoint?.clone() ?? null;
-    this.pendingPoint = null;
-    this.pendingMarker = null;
-    this.hoveredMarkerIndex = -1;
-    if (pendingPoint) {
+    if (this.measurementOverlay.cancelPendingPoint()) {
       this.setMeasurementSnapKind(null, false);
     }
-    this.removePreviewLine();
-
-    if (pendingMarker && pendingPoint && !this.isMeasurementPointUsed(pendingPoint)) {
-      const index = this.measurementMarkers.indexOf(pendingMarker);
-      if (index >= 0) {
-        this.measurementMarkers.splice(index, 1);
-        this.measurementMarkerPoints.splice(index, 1);
-      }
-      pendingMarker.dispose(false, true);
-    } else if (pendingMarker) {
-      pendingMarker.scaling.setAll(1);
-      setMeasurementMarkerColor(pendingMarker, MEASUREMENT_MARKER_COLOR);
-    }
-
     if (markDirty) {
       this.scene.render();
     }
   }
 
-  private isMeasurementPointUsed(point: Vector3): boolean {
-    return this.measurementSegments.some((segment) =>
-      Vector3.Distance(segment.start, point) < 0.0001 || Vector3.Distance(segment.end, point) < 0.0001);
+  private createMeasurementMarker(point: Vector3): Mesh {
+    const size = this.getMeasurementMarkerSize();
+    const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size * 0.76, segments: 12 }, this.scene);
+    marker.position = this.toMeasurementDisplayPoint(point);
+    marker.isPickable = false;
+    marker.material = createMeasurementMarkerMaterial(this.scene);
+    marker.renderingGroupId = 2;
+    return marker;
   }
 
-  private findNearestMarkerIndex(point: Vector3): number {
-    const threshold = this.getMeasurementMarkerSize() * 2.5;
-    const displayPoint = this.toMeasurementDisplayPoint(point);
-    for (let i = 0; i < this.measurementMarkers.length; i++) {
-      const candidate = this.measurementMarkerPoints[i]
-        ? this.toMeasurementDisplayPoint(this.measurementMarkerPoints[i])
-        : this.measurementMarkers[i].position;
-      if (Vector3.Distance(candidate, displayPoint) < threshold) {
-        return i;
-      }
-    }
-    return -1;
+  private setMeasurementMarkerState(marker: Mesh, state: MeasurementMarkerVisualState): void {
+    marker.scaling.setAll(state === "default" ? 1 : 1.6);
+    const color = state === "hover"
+      ? MEASUREMENT_HOVER_COLOR
+      : state === "pending"
+        ? MEASUREMENT_PENDING_COLOR
+        : MEASUREMENT_MARKER_COLOR;
+    setMeasurementMarkerColor(marker, color);
   }
 
   private addMeasurementPoint(point: Vector3): void {
     const basePoint = this.toMeasurementBasePoint(point);
-    const existingIndex = this.findNearestMarkerIndex(basePoint);
-    const usePoint = existingIndex >= 0
-      ? this.measurementMarkerPoints[existingIndex].clone()
-      : basePoint;
-
-    if (this.pendingPoint) {
-      if (Vector3.Distance(usePoint, this.pendingPoint) < 0.0001) {
-        return;
-      }
-      if (existingIndex < 0) {
-        const size = this.getMeasurementMarkerSize();
-        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size * 0.76, segments: 12 }, this.scene);
-        marker.position = this.toMeasurementDisplayPoint(usePoint);
-        marker.isPickable = false;
-        marker.material = createMeasurementMarkerMaterial(this.scene);
-        marker.renderingGroupId = 2;
-        this.measurementMarkers.push(marker);
-        this.measurementMarkerPoints.push(usePoint.clone());
-      }
-      this.createMeasurementSegment(this.pendingPoint, usePoint);
-      if (this.pendingMarker) {
-        this.pendingMarker.scaling.setAll(1);
-        setMeasurementMarkerColor(this.pendingMarker, MEASUREMENT_MARKER_COLOR);
-      }
-      this.pendingPoint = null;
-      this.pendingMarker = null;
-      this.removePreviewLine();
-    } else {
-      if (existingIndex < 0) {
-        const size = this.getMeasurementMarkerSize();
-        const marker = MeshBuilder.CreateSphere("measure-marker", { diameter: size * 0.76, segments: 12 }, this.scene);
-        marker.position = this.toMeasurementDisplayPoint(usePoint);
-        marker.isPickable = false;
-        marker.material = createMeasurementMarkerMaterial(this.scene);
-        marker.renderingGroupId = 2;
-        this.measurementMarkers.push(marker);
-        this.measurementMarkerPoints.push(usePoint.clone());
-        this.pendingMarker = marker;
-      } else {
-        this.pendingMarker = this.measurementMarkers[existingIndex];
-      }
-      this.pendingMarker.scaling.setAll(1.6);
-      setMeasurementMarkerColor(this.pendingMarker, MEASUREMENT_PENDING_COLOR);
-      this.pendingPoint = usePoint;
-      this.ensurePreviewLine();
-    }
+    const result = this.measurementOverlay.selectPoint(basePoint, this.getMeasurementMarkerSize() * 2.5);
+    if (result === "ignored") return;
     this.notifyMeasurementsChanged();
   }
 
-  private createMeasurementSegment(start: Vector3, end: Vector3): void {
+  private createMeasurementSegment(start: Vector3, end: Vector3): BabylonMeasurementSegment {
     const displayStart = this.toMeasurementDisplayPoint(start);
     const displayEnd = this.toMeasurementDisplayPoint(end);
     const layout = this.createBabylonMeasurementDraftingLayout(start, end);
@@ -3447,7 +3355,27 @@ export class BabylonModelPreview implements WorkbenchPreview {
     const mid = layout?.labelPosition ?? Vector3.Center(displayStart, displayEnd);
     const label = this.createMeasurementLabelMesh(labelText, mid, this.getMeasurementMarkerSize() * 3.2);
 
-    this.measurementSegments.push({ start: start.clone(), end: end.clone(), line, label });
+    return { start: start.clone(), end: end.clone(), line, label };
+  }
+
+  private disposeMeasurementSegment(segment: BabylonMeasurementSegment): void {
+    segment.line.dispose(false, true);
+    segment.label.dispose(false, true);
+  }
+
+  private updateMeasurementSegmentLabel(segment: BabylonMeasurementSegment): void {
+    const labelText = createMeasurementLabel(this.createMeasurementReading(segment.start, segment.end));
+    segment.label.dispose(false, true);
+    const layout = this.createBabylonMeasurementDraftingLayout(segment.start, segment.end);
+    const labelPosition = layout?.labelPosition ?? Vector3.Center(
+      this.toMeasurementDisplayPoint(segment.start),
+      this.toMeasurementDisplayPoint(segment.end),
+    );
+    segment.label = this.createMeasurementLabelMesh(
+      labelText,
+      labelPosition,
+      this.getMeasurementMarkerSize() * 3.2,
+    );
   }
 
   private createMeasurementLabelMesh(text: { primary: string; secondary: string }, position: Vector3, scale: number): Mesh {
@@ -3497,7 +3425,11 @@ export class BabylonModelPreview implements WorkbenchPreview {
     let endPoint: Vector3 | null = null;
     if (this.lastPointerClient.altKey) {
       this.setMeasurementSnapKind("free");
-      const pickResult = this.scene.pick(x, y, (mesh) => mesh !== this.previewLine && !this.measurementMarkers.includes(mesh as Mesh));
+      const pickResult = this.scene.pick(
+        x,
+        y,
+        (mesh) => mesh !== this.previewLine && !this.measurementOverlay.includesMarker(mesh as Mesh),
+      );
       endPoint = pickResult.hit && pickResult.pickedPoint
         ? this.resolveMeasurementPickPoint(pickResult.pickedPoint, true)
         : displayStart.add(this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera).direction.scale(5));
@@ -3538,7 +3470,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   private createMeasurementRecords(): MeasurementRecord[] {
-    return this.measurementSegments.map((segment, index) => ({
+    return this.measurementOverlay.getSegments().map((segment, index) => ({
       index: index + 1,
       start: this.toMeasurementPoint(segment.start),
       end: this.toMeasurementPoint(segment.end),

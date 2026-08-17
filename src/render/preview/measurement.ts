@@ -36,6 +36,8 @@ const MEASUREMENT_EDGE_KEY_SCALE = 1_000_000;
 const MEASUREMENT_COPLANAR_EDGE_DOT = 0.9995;
 const MEASUREMENT_VERTEX_RADIUS_SPAN_FACTOR = 0.045;
 const MEASUREMENT_VERTEX_RADIUS_EDGE_FACTOR = 0.1;
+const MEASUREMENT_SNAP_INDEX_THRESHOLD = 96;
+const MEASUREMENT_SNAP_INDEX_LEAF_SIZE = 16;
 
 export interface MeasurementSnapVertexCandidate {
   point: PreviewWorldPoint;
@@ -54,6 +56,15 @@ export interface MeasurementGeometrySnapInput {
   targetId?: string;
   vertexRadius?: number;
   maxDistance?: number;
+  spatialIndex?: MeasurementGeometrySnapIndex | null;
+}
+
+export interface BuildMeasurementGeometrySnapInputOptions {
+  vertices: readonly MeasurementSnapVertexCandidate[];
+  edges: readonly MeasurementSnapEdgeCandidate[];
+  boundsSize: PreviewWorldPoint;
+  targetId?: string;
+  maxDistance?: number;
 }
 
 export interface MeasurementSnapResult {
@@ -61,6 +72,70 @@ export interface MeasurementSnapResult {
   kind: MeasurementSnapKind;
   distance: number;
   targetId?: string;
+}
+
+export interface MeasurementSnapQueryStats {
+  vertexCandidatesVisited: number;
+  edgeCandidatesVisited: number;
+}
+
+export interface MeasurementGeometrySnapIndex {
+  findNearestVertex: (point: PreviewWorldPoint, maxDistance?: number) => MeasurementSnapResult | null;
+  findNearestEdge: (point: PreviewWorldPoint, maxDistance?: number) => MeasurementSnapResult | null;
+  getLastQueryStats: () => MeasurementSnapQueryStats;
+}
+
+export class MeasurementGeometrySnapInputCache<TTargetKey> {
+  private hasEntry = false;
+  private targetKey: TTargetKey | undefined;
+  private signature: string | null = null;
+  private input: MeasurementGeometrySnapInput | null = null;
+
+  getOrCreate(
+    targetKey: TTargetKey,
+    signature: string,
+    createInput: () => MeasurementGeometrySnapInput | null,
+  ): MeasurementGeometrySnapInput | null {
+    if (
+      this.hasEntry
+      && Object.is(this.targetKey, targetKey)
+      && this.signature === signature
+    ) {
+      return this.input;
+    }
+
+    const input = createInput();
+    this.hasEntry = true;
+    this.targetKey = targetKey;
+    this.signature = signature;
+    this.input = input;
+    return input;
+  }
+
+  invalidate(): void {
+    this.hasEntry = false;
+    this.targetKey = undefined;
+    this.signature = null;
+    this.input = null;
+  }
+}
+
+interface MeasurementSpatialBounds {
+  min: PreviewWorldPoint;
+  max: PreviewWorldPoint;
+}
+
+interface MeasurementSpatialItem<T> {
+  value: T;
+  bounds: MeasurementSpatialBounds;
+  center: PreviewWorldPoint;
+}
+
+interface MeasurementSpatialNode<T> {
+  bounds: MeasurementSpatialBounds;
+  left?: MeasurementSpatialNode<T>;
+  right?: MeasurementSpatialNode<T>;
+  items?: readonly MeasurementSpatialItem<T>[];
 }
 
 export interface MeasurementDraftingLayoutOptions {
@@ -170,29 +245,12 @@ export function snapMeasurementPointToGeometry(
     return null;
   }
 
-  let nearestVertex: MeasurementSnapResult | null = null;
-  for (const vertex of input.vertices) {
-    if (!isFiniteMeasurementPoint(vertex.point)) continue;
-    nearestVertex = chooseNearestMeasurementSnapResult(nearestVertex, {
-      point: vertex.point,
-      kind: "vertex",
-      distance: distanceMeasurementPoints(point, vertex.point),
-      targetId: vertex.targetId ?? input.targetId,
-    });
-  }
-
-  let nearestEdge: MeasurementSnapResult | null = null;
-  for (const edge of input.edges) {
-    if (!isFiniteMeasurementPoint(edge.start) || !isFiniteMeasurementPoint(edge.end)) continue;
-    const edgePoint = projectMeasurementPointToSegment(point, edge.start, edge.end);
-    if (!edgePoint) continue;
-    nearestEdge = chooseNearestMeasurementSnapResult(nearestEdge, {
-      point: edgePoint,
-      kind: "edge",
-      distance: distanceMeasurementPoints(point, edgePoint),
-      targetId: edge.targetId ?? input.targetId,
-    });
-  }
+  const nearestVertex = input.spatialIndex
+    ? input.spatialIndex.findNearestVertex(point, input.maxDistance)
+    : findNearestMeasurementVertex(point, input.vertices, input.maxDistance);
+  const nearestEdge = input.spatialIndex
+    ? input.spatialIndex.findNearestEdge(point, input.maxDistance)
+    : findNearestMeasurementEdge(point, input.edges, input.maxDistance);
 
   const vertexRadius = Math.max(input.vertexRadius ?? 0, 0);
   const candidate = nearestVertex && nearestVertex.distance <= vertexRadius
@@ -209,7 +267,91 @@ export function snapMeasurementPointToGeometry(
     point: { ...candidate.point },
     kind: candidate.kind,
     distance: candidate.distance,
-    targetId: candidate.targetId,
+    targetId: candidate.targetId ?? input.targetId,
+  };
+}
+
+export function createMeasurementGeometrySnapIndex(
+  vertices: readonly MeasurementSnapVertexCandidate[],
+  edges: readonly MeasurementSnapEdgeCandidate[],
+): MeasurementGeometrySnapIndex | null {
+  if (vertices.length + edges.length < MEASUREMENT_SNAP_INDEX_THRESHOLD) return null;
+
+  const vertexRoot = buildMeasurementSpatialTree(vertices.flatMap((vertex) => {
+    if (!isFiniteMeasurementPoint(vertex.point)) return [];
+    const point = { ...vertex.point };
+    return [{ value: vertex, bounds: { min: point, max: point }, center: point }];
+  }));
+  const edgeRoot = buildMeasurementSpatialTree(edges.flatMap((edge) => {
+    if (!isFiniteMeasurementPoint(edge.start) || !isFiniteMeasurementPoint(edge.end)) return [];
+    const bounds = createMeasurementSpatialBounds(edge.start, edge.end);
+    return [{
+      value: edge,
+      bounds,
+      center: scaleMeasurementVector(addMeasurementPoints(bounds.min, bounds.max), 0.5),
+    }];
+  }));
+  const stats: MeasurementSnapQueryStats = {
+    vertexCandidatesVisited: 0,
+    edgeCandidatesVisited: 0,
+  };
+
+  return {
+    findNearestVertex(point, maxDistance) {
+      stats.vertexCandidatesVisited = 0;
+      const nearest = findNearestMeasurementSpatialItem(
+        vertexRoot,
+        point,
+        maxDistance,
+        (vertex) => {
+          stats.vertexCandidatesVisited++;
+          return {
+            point: vertex.point,
+            kind: "vertex",
+            distance: distanceMeasurementPoints(point, vertex.point),
+            targetId: vertex.targetId,
+          };
+        },
+      );
+      return nearest;
+    },
+    findNearestEdge(point, maxDistance) {
+      stats.edgeCandidatesVisited = 0;
+      return findNearestMeasurementSpatialItem(
+        edgeRoot,
+        point,
+        maxDistance,
+        (edge) => {
+          stats.edgeCandidatesVisited++;
+          const projected = projectMeasurementPointToSegment(point, edge.start, edge.end);
+          return projected ? {
+            point: projected,
+            kind: "edge",
+            distance: distanceMeasurementPoints(point, projected),
+            targetId: edge.targetId,
+          } : null;
+        },
+      );
+    },
+    getLastQueryStats() {
+      return { ...stats };
+    },
+  };
+}
+
+export function buildMeasurementGeometrySnapInput(
+  options: BuildMeasurementGeometrySnapInputOptions,
+): MeasurementGeometrySnapInput | null {
+  const { vertices, edges, boundsSize, targetId, maxDistance } = options;
+  if (vertices.length === 0 && edges.length === 0) return null;
+
+  return {
+    vertices,
+    edges,
+    targetId,
+    maxDistance,
+    vertexRadius: createMeasurementVertexSnapRadius(boundsSize, edges),
+    spatialIndex: createMeasurementGeometrySnapIndex(vertices, edges),
   };
 }
 
@@ -599,6 +741,159 @@ function chooseNearestMeasurementSnapResult(
   if (right.distance < left.distance) return right;
   if (right.distance === left.distance && right.kind === "vertex" && left.kind !== "vertex") return right;
   return left;
+}
+
+function findNearestMeasurementVertex(
+  point: PreviewWorldPoint,
+  vertices: readonly MeasurementSnapVertexCandidate[],
+  maxDistance?: number,
+): MeasurementSnapResult | null {
+  let nearest: MeasurementSnapResult | null = null;
+  for (const vertex of vertices) {
+    if (!isFiniteMeasurementPoint(vertex.point)) continue;
+    const candidate: MeasurementSnapResult = {
+      point: vertex.point,
+      kind: "vertex",
+      distance: distanceMeasurementPoints(point, vertex.point),
+      targetId: vertex.targetId,
+    };
+    if (Number.isFinite(maxDistance) && candidate.distance > Number(maxDistance)) continue;
+    nearest = chooseNearestMeasurementSnapResult(nearest, candidate);
+  }
+  return nearest;
+}
+
+function findNearestMeasurementEdge(
+  point: PreviewWorldPoint,
+  edges: readonly MeasurementSnapEdgeCandidate[],
+  maxDistance?: number,
+): MeasurementSnapResult | null {
+  let nearest: MeasurementSnapResult | null = null;
+  for (const edge of edges) {
+    if (!isFiniteMeasurementPoint(edge.start) || !isFiniteMeasurementPoint(edge.end)) continue;
+    const edgePoint = projectMeasurementPointToSegment(point, edge.start, edge.end);
+    if (!edgePoint) continue;
+    const candidate: MeasurementSnapResult = {
+      point: edgePoint,
+      kind: "edge",
+      distance: distanceMeasurementPoints(point, edgePoint),
+      targetId: edge.targetId,
+    };
+    if (Number.isFinite(maxDistance) && candidate.distance > Number(maxDistance)) continue;
+    nearest = chooseNearestMeasurementSnapResult(nearest, candidate);
+  }
+  return nearest;
+}
+
+function createMeasurementSpatialBounds(
+  left: PreviewWorldPoint,
+  right: PreviewWorldPoint,
+): MeasurementSpatialBounds {
+  return {
+    min: {
+      x: Math.min(left.x, right.x),
+      y: Math.min(left.y, right.y),
+      z: Math.min(left.z, right.z),
+    },
+    max: {
+      x: Math.max(left.x, right.x),
+      y: Math.max(left.y, right.y),
+      z: Math.max(left.z, right.z),
+    },
+  };
+}
+
+function mergeMeasurementSpatialBounds(
+  left: MeasurementSpatialBounds,
+  right: MeasurementSpatialBounds,
+): MeasurementSpatialBounds {
+  return {
+    min: {
+      x: Math.min(left.min.x, right.min.x),
+      y: Math.min(left.min.y, right.min.y),
+      z: Math.min(left.min.z, right.min.z),
+    },
+    max: {
+      x: Math.max(left.max.x, right.max.x),
+      y: Math.max(left.max.y, right.max.y),
+      z: Math.max(left.max.z, right.max.z),
+    },
+  };
+}
+
+function buildMeasurementSpatialTree<T>(
+  items: readonly MeasurementSpatialItem<T>[],
+): MeasurementSpatialNode<T> | null {
+  if (items.length === 0) return null;
+  const bounds = items.reduce(
+    (current, item) => mergeMeasurementSpatialBounds(current, item.bounds),
+    items[0].bounds,
+  );
+  if (items.length <= MEASUREMENT_SNAP_INDEX_LEAF_SIZE) {
+    return { bounds, items };
+  }
+
+  const spans = {
+    x: bounds.max.x - bounds.min.x,
+    y: bounds.max.y - bounds.min.y,
+    z: bounds.max.z - bounds.min.z,
+  };
+  const axis: keyof PreviewWorldPoint = spans.x >= spans.y && spans.x >= spans.z
+    ? "x"
+    : spans.y >= spans.z ? "y" : "z";
+  const sorted = [...items].sort((left, right) => left.center[axis] - right.center[axis]);
+  const middle = Math.floor(sorted.length / 2);
+  const left = buildMeasurementSpatialTree(sorted.slice(0, middle));
+  const right = buildMeasurementSpatialTree(sorted.slice(middle));
+  if (!left || !right) return { bounds, items };
+  return { bounds, left, right };
+}
+
+function findNearestMeasurementSpatialItem<T>(
+  root: MeasurementSpatialNode<T> | null,
+  point: PreviewWorldPoint,
+  maxDistance: number | undefined,
+  evaluate: (value: T) => MeasurementSnapResult | null,
+): MeasurementSnapResult | null {
+  let nearest: MeasurementSnapResult | null = null;
+  let distanceLimit = Number.isFinite(maxDistance) ? Math.max(Number(maxDistance), 0) : Number.POSITIVE_INFINITY;
+
+  const visit = (node: MeasurementSpatialNode<T>): void => {
+    if (distanceMeasurementPointToBounds(point, node.bounds) > distanceLimit) return;
+    if (node.items) {
+      for (const item of node.items) {
+        if (distanceMeasurementPointToBounds(point, item.bounds) > distanceLimit) continue;
+        nearest = chooseNearestMeasurementSnapResult(nearest, evaluate(item.value));
+        if (nearest) distanceLimit = Math.min(distanceLimit, nearest.distance);
+      }
+      return;
+    }
+
+    const children = [node.left, node.right]
+      .filter((child): child is MeasurementSpatialNode<T> => !!child)
+      .sort((left, right) =>
+        distanceMeasurementPointToBounds(point, left.bounds) - distanceMeasurementPointToBounds(point, right.bounds));
+    for (const child of children) visit(child);
+  };
+
+  if (root) visit(root);
+  return nearest;
+}
+
+function distanceMeasurementPointToBounds(
+  point: PreviewWorldPoint,
+  bounds: MeasurementSpatialBounds,
+): number {
+  const dx = point.x < bounds.min.x
+    ? bounds.min.x - point.x
+    : point.x > bounds.max.x ? point.x - bounds.max.x : 0;
+  const dy = point.y < bounds.min.y
+    ? bounds.min.y - point.y
+    : point.y > bounds.max.y ? point.y - bounds.max.y : 0;
+  const dz = point.z < bounds.min.z
+    ? bounds.min.z - point.z
+    : point.z > bounds.max.z ? point.z - bounds.max.z : 0;
+  return Math.hypot(dx, dy, dz);
 }
 
 function projectMeasurementPointToSegment(

@@ -18,6 +18,8 @@ import {
   isReusableRegisteredPartMatchReviews,
   normalizeRegisteredPartMatchReviews,
 } from "../utils/registered-match-review";
+import { normalizeConvertedAssetRecords } from "../io/cache/converted-asset-cache";
+import { hasPersistedLocale, normalizePluginSettings } from "./settings-persistence";
 
 export interface PluginStore {
   store: Store<PluginState>;
@@ -164,22 +166,29 @@ export function createPluginStore(plugin: Plugin): PluginStore {
     },
 
     async load() {
-      const saved = (await plugin.loadData()) as PersistedPluginState | null;
-      if (!saved) return;
-      localeLoadedFromSaved = !!saved.settings?.locale;
+      const loaded = await plugin.loadData() as unknown;
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return;
+      const saved = loaded as Record<string, unknown>;
+      localeLoadedFromSaved = hasPersistedLocale(saved.settings);
+      const settings = normalizePluginSettings(saved.settings);
+      const convertedAssetRecords = normalizeConvertedAssetRecords(saved.convertedAssetRecords);
       const schemaCurrent = saved.stateSchemaVersion === PERSISTED_STATE_SCHEMA_VERSION;
       const { profiles, changed: profilesChanged } = normalizeModelAssetProfiles(saved.modelAssetProfiles, {
         trustPersistedSchema: schemaCurrent,
       });
       store.setState({
-        settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
-        convertedAssetRecords: saved.convertedAssetRecords ?? [],
+        settings,
+        convertedAssetRecords,
         modelAssetProfiles: profiles,
-        agentDraft: saved.agentDraft ?? "",
-        agentPlan: saved.agentPlan ?? null,
+        agentDraft: typeof saved.agentDraft === "string" ? saved.agentDraft : "",
+        agentPlan: saved.agentPlan && typeof saved.agentPlan === "object"
+          ? saved.agentPlan as PersistedPluginState["agentPlan"]
+          : null,
         lastKnowledgeGeneration: normalizeKnowledgeGenerationRecord(saved.lastKnowledgeGeneration),
       });
-      if (profilesChanged || !schemaCurrent) {
+      const settingsChanged = JSON.stringify(settings) !== JSON.stringify(saved.settings);
+      const recordsChanged = JSON.stringify(convertedAssetRecords) !== JSON.stringify(saved.convertedAssetRecords);
+      if (profilesChanged || settingsChanged || recordsChanged || !schemaCurrent) {
         dirtyRevision += 1;
         if (saveTimer) window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
@@ -209,7 +218,7 @@ export function createPluginStore(plugin: Plugin): PluginStore {
 }
 
 function normalizeModelAssetProfiles(
-  saved: PersistedPluginState["modelAssetProfiles"] | undefined,
+  saved: unknown,
   options: { trustPersistedSchema?: boolean } = {},
 ): { profiles: Record<string, ModelAssetProfile>; changed: boolean } {
   if (!saved || typeof saved !== "object") {
@@ -466,27 +475,28 @@ function normalizeRegisteredParts(value: unknown, fallbackAssetId: string): { pa
 }
 
 function normalizeKnowledgeGenerationRecord(
-  saved: PersistedPluginState["lastKnowledgeGeneration"] | undefined,
+  saved: unknown,
 ): PersistedPluginState["lastKnowledgeGeneration"] {
   if (!saved || typeof saved !== "object") {
     return null;
   }
 
-  const modelPath = typeof saved.modelPath === "string" ? saved.modelPath : "";
+  const record = saved as Partial<NonNullable<PersistedPluginState["lastKnowledgeGeneration"]>>;
+  const modelPath = typeof record.modelPath === "string" ? record.modelPath : "";
   if (!modelPath) {
     return null;
   }
 
   return {
     modelPath,
-    reportNotePath: typeof saved.reportNotePath === "string" ? saved.reportNotePath : undefined,
-    analysisSidecarPath: typeof saved.analysisSidecarPath === "string" ? saved.analysisSidecarPath : undefined,
-    knowledgeIndexPath: typeof saved.knowledgeIndexPath === "string" ? saved.knowledgeIndexPath : undefined,
-    partNoteCount: Number.isFinite(saved.partNoteCount) ? Math.max(0, Math.floor(saved.partNoteCount)) : 0,
-    previewImageCount: Number.isFinite(saved.previewImageCount) ? Math.max(0, Math.floor(saved.previewImageCount)) : 0,
-    generatedAt: typeof saved.generatedAt === "string" ? saved.generatedAt : new Date().toISOString(),
-    status: saved.status === "failed" || saved.status === "pending" ? saved.status : "success",
-    warningCount: Number.isFinite(saved.warningCount) ? Math.max(0, Math.floor(saved.warningCount)) : 0,
+    reportNotePath: typeof record.reportNotePath === "string" ? record.reportNotePath : undefined,
+    analysisSidecarPath: typeof record.analysisSidecarPath === "string" ? record.analysisSidecarPath : undefined,
+    knowledgeIndexPath: typeof record.knowledgeIndexPath === "string" ? record.knowledgeIndexPath : undefined,
+    partNoteCount: Number.isFinite(record.partNoteCount) ? Math.max(0, Math.floor(Number(record.partNoteCount))) : 0,
+    previewImageCount: Number.isFinite(record.previewImageCount) ? Math.max(0, Math.floor(Number(record.previewImageCount))) : 0,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : new Date().toISOString(),
+    status: record.status === "failed" || record.status === "pending" ? record.status : "success",
+    warningCount: Number.isFinite(record.warningCount) ? Math.max(0, Math.floor(Number(record.warningCount))) : 0,
   };
 }
 

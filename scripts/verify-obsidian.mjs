@@ -479,8 +479,11 @@ async function verifyPage() {
     assert(result.activeFile === noteName, `Unexpected active file: ${result.activeFile}`);
     assert(result.previewHostCount >= 2, `Expected 2 preview hosts, got ${result.previewHostCount}`);
     assert(result.helperToolbarCount >= 2, `Expected 2 helper toolbars, got ${result.helperToolbarCount}`);
-    assert(result.loadFeedback.length >= 1, "Expected conversion-chain load feedback for FBX without converter");
-    assert(result.loadFeedback.some((text) => text.includes("FBX2glTF")), "Conversion-chain feedback does not mention FBX2glTF");
+    assert(result.loadFeedback.length >= 1, "Expected load feedback for FBX without converter");
+    assert(
+      result.loadFeedback.some((text) => text.includes("FBX2glTF") || text.includes("three-fbx") || text.includes("FBXLoader")),
+      `FBX load feedback mentions neither FBX2glTF conversion nor Three.js direct fallback: ${JSON.stringify(result.loadFeedback)}`,
+    );
     assert(result.ai3dErrors.length === 0, `Plugin rendered errors: ${result.ai3dErrors.join("; ")}`);
     assert(result.canvases.length >= 2, `Expected at least 2 preview canvases, got ${result.canvases.length}`);
     const renderedCanvases = result.canvases.filter((canvas) => canvas.nonEmptyRatio > 0.05 && canvas.contrast > 20);
@@ -576,6 +579,9 @@ async function verifyDirectWorkbench(page) {
       && !view?.querySelector('[data-ai3d-action="set-explode"]');
   }, null, { timeout: 20_000 });
   await page.waitForTimeout(1200);
+  // On a brand-new verification vault Obsidian may defer its community-plugin
+  // trust prompt until after the direct workbench has rendered.
+  await trustVaultIfPrompted(page);
 
   const before = await page.evaluate(() => {
     const canvas = document.querySelector(".ai3d-direct-view .ai3d-preview-host canvas");
@@ -738,7 +744,14 @@ async function verifyDirectWorkbench(page) {
       throw new Error(`Missing generated index for preservation check: ${path}`);
     }
     const content = await window.app.vault.read(file);
-    await window.app.vault.modify(file, content.replace("## User Notes\n\n- ", `## User Notes\n\n${line}\n- `));
+    const edited = content.replace(
+      /## User Notes\r?\n\r?\n-\s*(?=\r?\n)/,
+      `## User Notes\n\n${line}\n- `,
+    );
+    if (edited === content) {
+      throw new Error("Generated index did not contain the expected user-notes placeholder");
+    }
+    await window.app.vault.modify(file, edited);
   }, { path: analysis.knowledgeIndexPath, line: preservedLine });
 
   await page.evaluate(async (modelPath) => {
@@ -829,7 +842,10 @@ async function verifyDirectWorkbench(page) {
       while (Date.now() < deadline && writes.length === 0) {
         await new Promise((resolve) => window.setTimeout(resolve, 50));
       }
-      return writes.at(-1) ?? "";
+      if (writes.length > 0) {
+        return writes.at(-1) ?? "";
+      }
+      return await clipboard.readText().catch(() => "");
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(clipboard, "writeText", originalDescriptor);

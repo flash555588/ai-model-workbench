@@ -8,7 +8,7 @@ README, implementation, verification scripts, and release/security docs.
 
 AI Model Workbench is an Obsidian plugin that renders 3D model files inside a vault,
 adds 3D annotations/bookmarks, and generates linked knowledge notes from model evidence.
-The current package version is `0.7.6`.
+The current package version is `0.7.8`.
 
 Important runtime files:
 
@@ -66,6 +66,26 @@ This is not the same as changing all production workbench behavior.
 
 Use `docs/workbench-3dgrid-feasibility-note.md` before reopening broader workbench or
 `3dgrid` migration decisions.
+
+### Measurement Architecture
+
+Short-distance measurement has renderer-neutral state and overlay ownership:
+
+- `src/render/preview/measurement-session.ts` owns active mode, locked target,
+  pending endpoint, snap status, endpoint pairing, and observers.
+- `src/render/preview/measurement-overlay.ts` owns endpoint markers, completed
+  segments, hover/pending visual state, preview-line lifecycle, endpoint reuse,
+  calibration refresh dispatch, and disposal.
+- `src/render/preview/measurement-markers.ts` is an internal atomic point/marker
+  collection used by the overlay controller. Renderer classes must not maintain
+  parallel marker and point arrays.
+- `src/render/three/scene.ts` and `src/render/babylon/scene.ts` provide only native
+  drawing adapters for marker creation/style/position, line geometry, labels,
+  preview lines, and resource disposal.
+
+Keep completed endpoint coordinates in base-model space. Calibration transforms are
+applied only when adapters position or redraw overlays. New render backends should
+implement `MeasurementOverlayDrawingAdapter` instead of copying measurement state flow.
 
 ### Knowledge Notes And Part Registration
 
@@ -246,11 +266,12 @@ npm run verify:preview -- --model "models/resource-fixtures/grouped-parts/groupe
 
 ## Current Follow-Up Direction
 
-Short-term product direction after `0.7.6`:
+Short-term product direction after `0.7.8`:
 
 - Keep tightening auto part registration and cross-model part reuse feedback.
 - Keep improving direct workbench UX without prematurely moving all workbench routes.
-- Maintain Three.js as the single-model main path.
+- Maintain Babylon.js compatibility mode as the default single-model path while
+  keeping Three.js as an explicit rollout and converted-GLB fast path.
 - Keep `3dgrid` and production workbench conservative until workflow-level evidence says
   migration is worth it.
 - Continue improving release safety, diagnostics, and real Obsidian verification.
