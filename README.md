@@ -89,20 +89,17 @@
 
 ## Current Release
 
-`0.8.0` is the current precision-measurement and reliability release.
+`0.8.1` is the current Obsidian source-review compatibility release.
 
 Release highlights:
 
-- Makes selected-object vertex and edge snapping the default short-distance measurement workflow, with `Alt`/`Option` preserving free surface picks.
-- Shares measurement sessions, endpoint pairing, marker reuse, overlays, and geometry indexing across Babylon.js and Three.js while keeping native renderer drawing adapters.
-- Exposes the Slice board's Move and Rotate controls in the inline inspector.
-- Adds direct Three.js loading for 3MF, DAE, OFF, PCD, and XYZ, plus an FBX direct fallback when FBX2glTF is unavailable.
-- Tightens remote-draft privacy and transport validation, converted-cache persistence, conversion timeout deduplication, and knowledge-write ordering.
-- Removes native preview hover tooltips and adds Obsidian 1.13 settings-search integration.
-- Adds pull-request CI and expands deterministic release verification.
-- Babylon.js compatibility mode remains the default for single-model previews, with Three.js still available as an explicit opt-in route.
+- Removes the forbidden source-review lint suppressions from the settings implementation.
+- Uses `requireApiVersion("1.13.0")` to expose declarative settings only when the host supports them, while retaining the older imperative renderer through a plugin-owned method.
+- Documents the limited, user-triggered vault enumeration used by model selection and annotation heading search.
+- Verifies the real settings window in Obsidian 1.13 and guarantees temporary verification-vault cleanup.
+- Preserves all `0.8.0` measurement, preview, conversion, privacy, and renderer behavior.
 
-See [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md), [docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
+See [docs/release-notes/0.8.1.md](docs/release-notes/0.8.1.md), [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 

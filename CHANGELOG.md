@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-08-17
+
 - Review: remove forbidden `no-unsupported-api` and `no-deprecated` lint suppressions from the settings tabs, guard Obsidian 1.13 declarative APIs with `requireApiVersion`, and keep the pre-1.13 renderer behind a non-deprecated internal method.
 - Docs: clarify that vault-path enumeration is intentional and limited to user-triggered model selection and annotation heading search.
 - Verification: make `verify:obsidian -- --clean` reset its temporary vault before setup and guarantee cleanup after failures, then assert the lazy declarative settings tab renders real rows and controls in Obsidian 1.13.
