@@ -45,6 +45,7 @@ Use this page to choose the right document before changing code.
 - `../CHANGELOG.md` - current unreleased and release history.
 - `release-notes/0.6.0-plus.md` - user-facing rolling update log for the
   `0.6.0+` release line.
+- `release-notes/0.8.1.md` - GitHub release notes for the Obsidian source-review compatibility patch.
 - `release-notes/0.8.0.md` - GitHub release notes for the precision measurement and reliability release.
 - `release-notes/0.7.8.md` - GitHub release notes for the current lockfile review patch.
 - `release-notes/0.7.7.md` - GitHub release notes for the lifecycle and privacy hardening release.
