@@ -16,7 +16,7 @@ export function attachDirectSidebarResize(handle: HTMLElement, track: HTMLElemen
   const hostWindow = handle.ownerDocument.defaultView;
   const applyWidth = (next: number): void => {
     width = clampDirectSidebarWidth(next, workspace.clientWidth);
-    track.style.gridTemplateColumns = `minmax(0, 1fr) 4px ${width}px`;
+    track.setCssProps({ "--ai3d-sidebar-width": `${width}px` });
     handle.setAttribute("aria-valuenow", String(Math.round(width)));
     handle.setAttribute("aria-valuemax", String(clampDirectSidebarWidth(MAX_SIDEBAR_WIDTH, workspace.clientWidth)));
   };

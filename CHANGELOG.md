@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Docs: update English/Chinese README entry points for one-step insertion, registered-part inspection and release downloads.
+- Review: create image and registered-part placeholders with Obsidian helpers in their existing parent containers.
+- CSS: remove all four important declarations; keep sidebar widths in a CSS variable and preserve unavailable-control hiding through selector specificity.
+
 ## 0.9.11 - 2026-10-03
 
 - UI: separate note insertion location, live dimensions and guidance; stack labeled options in narrow windows and use host theme colors.

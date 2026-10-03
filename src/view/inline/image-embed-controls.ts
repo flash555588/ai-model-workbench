@@ -31,9 +31,9 @@ export function createImageEmbedControls(
   for (const type of ["pointerdown", "mousedown", "click"]) bar.addEventListener(type, event => event.stopPropagation());
 
   const open = (): void => {
-    if (destroyed || dialog || !getPreview() || !frame.parentElement) return;
-    const placeholder = frame.ownerDocument.createElement("div");
-    placeholder.className = "ai3d-image-reservation";
+    const parent = frame.parentElement;
+    if (destroyed || dialog || !getPreview() || !parent) return;
+    const placeholder = parent.createDiv({ cls: "ai3d-image-reservation" });
     placeholder.style.height = `${frame.getBoundingClientRect().height}px`;
     frame.before(placeholder);
     const modal = new Modal(app);

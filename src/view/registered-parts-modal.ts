@@ -23,8 +23,9 @@ export class RegisteredPartsModal extends Modal {
   }
 
   onOpen(): void {
-    if (!this.host.parentElement) { this.close(); return; }
-    this.placeholder = this.host.ownerDocument.createElement("div");
+    const parent = this.host.parentElement;
+    if (!parent) { this.close(); return; }
+    this.placeholder = parent.createDiv();
     this.placeholder.style.height = `${this.host.getBoundingClientRect().height}px`;
     this.host.before(this.placeholder);
     this.contentEl.createEl("p", { cls: "ai3d-registered-parts-hint", text: t("registeredDisplay.hint") });

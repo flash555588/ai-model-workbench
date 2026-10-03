@@ -1,12 +1,16 @@
 # AI Model Workbench
 
-> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）默认走 Babylon.js 兼容模式，Three.js 作为显式启用的可选预览路线保留；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 保留 Babylon.js 路线，当前打包版仍关闭 SPLAT/SPZ/SOG。
+> 在 Obsidian 笔记中直接查看 3D 模型、检查已登记零件，并将模型证据整理为可链接的知识笔记。模型渲染与知识生成默认在本地完成。
+
+GLB/GLTF/STL/PLY/OBJ 单模型预览默认使用 Babylon.js 兼容模式。Three.js 可显式启用，实验性文件工作台保留 Babylon.js 回退；`3dgrid` 使用 Babylon.js，当前打包版关闭 SPLAT/SPZ/SOG。
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
 [English](README.md) | **简体中文**
 
-![preview](docs/assets/preview.gif)
+[下载 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11) | [使用指南](docs/usage-guide.zh-CN.md) | [更新日志](CHANGELOG.md)
+
+![preview](https://raw.githubusercontent.com/flash555588/ai-model-workbench/main/docs/assets/preview.gif)
 
 > **醒目提示：STEP/STP 是“转换支持”，不是直接渲染。**
 > STEP 文件需要在 Obsidian 桌面端配置本地 Python + CadQuery/OCCT 转换器后才能转成 GLB 预览。
@@ -18,6 +22,7 @@
 ## 目录
 
 - [功能特性](#功能特性)
+- [功能演示](#功能演示)
 - [警告与风险](#警告与风险)
 - [当前版本](#当前版本)
 - [平台支持矩阵](#平台支持矩阵)
@@ -38,6 +43,10 @@
 
 ## 功能特性
 
+- **一键插入**：从命令面板或编辑器右键菜单选择模型，根据光标位置自动设置尺寸和语法。
+- **图片式笔记嵌入**：在正文、列表、引用和表格中放置可交互模型，支持阅读视图与实时预览。
+- **已登记零件检查**：在笔记正文或完整检查窗口查看当前模型的零件，复制嵌入内容可保留选择和间距。
+
 - **直接预览** GLB/GLTF、STL、OBJ、PLY（默认走 Babylon.js 兼容模式，Three.js 可显式启用）
 - **可选转换** CAD、FBX、3MF、DAE 等资产到 GLB
 - **混合预览路由**：单模型预览（GLB/GLTF/STL/PLY/OBJ）默认走 Babylon.js 兼容模式，可在设置中显式启用 Three.js
@@ -49,6 +58,51 @@
 - **国际化**：英文和简体中文，自动检测系统语言
 - **桌面端支持**：Windows、macOS、Linux 上的 Obsidian Desktop
 - **移动端支持**：iOS、iPadOS、Android 支持直读格式和简化后的工作台布局
+
+---
+
+## 功能演示
+
+以下截图来自 Windows 上的 Obsidian 1.13.7，使用仓库自带的魔方示例模型。
+界面支持切换简体中文和英文。
+
+### 不写语法，一键插入模型
+
+运行 **在笔记中插入 3D 模型**，选中文件后按 Enter。窗口显示当前位置和实际
+尺寸：文字中默认 240 × 180，表格中默认 160 × 120，独立展示默认 400 × 300。
+
+![模型插入窗口：位置、尺寸和操作提示](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-insert-zh.png)
+
+### 将模型放在需要解释的位置
+
+正文两侧文字、列表层级、引用和表格列都会保留。悬停或键盘聚焦后显示
+“重置视图”“放大查看”和“零件”控件。
+
+![正文文字之间的可交互模型](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-inline.png)
+
+![表格单元格中的模型与精简控件](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-table.png)
+
+### 在笔记中展示已登记零件
+
+用“零件”切换当前模型的零件展示，选择单个零件并调整间距。“复制嵌入内容”
+复制可粘贴到笔记的展示内容。拆解依据已有节点登记，不能把单个整体网格自动切成
+推测的物理零件。
+
+![笔记中的已登记零件与展示控件](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-parts.png)
+
+### 打开完整零件检查窗口
+
+点击“查看零件”，搜索名称、显示或隐藏零件、单独查看，并打开关联笔记。
+返回后恢复笔记的展示方式、视角和键盘焦点。
+
+![完整零件检查窗口：搜索、显示和单独查看](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/parts-inspection.png)
+
+### 检查模型并生成知识笔记
+
+直接打开模型文件，进行标注、测量、截图和知识笔记生成。知识侧栏可收起和
+调整宽度，窄分栏下自动改为上下布局。
+
+![模型工作台、知识笔记操作与检查工具](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/direct-workbench.png)
 
 ---
 
@@ -79,14 +133,18 @@
 
 ## 当前版本
 
-`0.9.11` 优化笔记操作界面与中英文提示。
+`0.9.11` 包含近期的笔记工作流与稳定性升级。
 
-- 插入窗口分别显示位置、尺寸和操作提示，小窗口下自动改为单列。
-- 模型列表突出文件名，保留可搜索的完整路径和格式标签，方便区分同名文件。
-- 零件控件统一间距与选中状态；‘复制嵌入内容’明确复制后还需粘贴到笔记。
-- 简化空状态和登记提示，浅色、深色主题保持一致。
+| 版本 | 主要更新 |
+|------|----------|
+| 0.9.0–0.9.2 | 转换错误更清晰，生成文件按来源模型隔离，知识生成状态更可靠。 |
+| 0.9.3–0.9.5 | 知识操作优先的工作台，可收起、调整宽度的侧栏，检查工具联动和统一笔记控件。 |
+| 0.9.6–0.9.7 | 正文、列表、引用和表格中的图片式嵌入；精简控件及复用原画布的放大检查窗口。 |
+| 0.9.8–0.9.9 | 按已登记零件在模型视图和笔记中检查，保留零件选择与间距，登记变化后自动刷新。 |
+| 0.9.10 | 一键插入，按位置设置尺寸，保留引用和列表层级，处理表格分隔符，并防止旧窗口写入变化后的笔记。 |
+| 0.9.11 | 可搜索名称和路径的模型列表，更清晰的中英文提示，统一零件控件，适配深浅主题和窄窗口。 |
 
-完整日志见 [0.9.11 发布说明](docs/release-notes/0.9.11.md) 和 [CHANGELOG.md](CHANGELOG.md)。
+[下载 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11)。详细内容见 [发布说明](docs/release-notes/0.9.11.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 平台支持矩阵
 
@@ -104,9 +162,12 @@
 
 ## 快速入门
 
-1. 通过 Obsidian、发布版下载或本地构建安装插件。
-2. 把一个受支持的模型文件放进 vault，例如 `model.glb`。
-3. 在任意笔记中这样嵌入：
+1. 通过 Obsidian、[发行版下载](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11)或本地构建安装插件。
+2. 把受支持的模型文件放进笔记库，例如 `model.glb`。
+3. 将光标放到笔记中，从命令面板或编辑器右键菜单运行 **在笔记中插入 3D 模型**。
+4. 选中文件后按 Enter。窗口自动设置所在位置的尺寸；空白行可选择“零件展示”以保留拆解方式。
+
+也可以手写嵌入语法：
 
 ```markdown
 ![[model.glb]]
@@ -119,7 +180,7 @@
 
 ## 安装
 
-选择一种安装方式，然后使用 [快速入门](#快速入门) 中的嵌入语法。
+选择一种安装方式，再按 [快速入门](#快速入门) 一键插入模型，或手写嵌入语法。
 
 ### 前提
 
@@ -136,9 +197,9 @@
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `main.js` | ~3.9 MB | 插件运行时 bundle |
-| `manifest.json` | ~1 KB | Obsidian 插件清单 |
-| `styles.css` | ~40 KB | 插件样式 |
+| `main.js` | ~4.4 MB | 插件运行时 bundle |
+| `manifest.json` | ~0.3 KB | Obsidian 插件清单 |
+| `styles.css` | ~79 KB | 插件样式 |
 
 直接渲染在桌面端和移动端都可用。CAD、FBX、3MF、DAE 的本地转换工具只适用于桌面系统。
 
@@ -284,6 +345,8 @@ README 只保留常用入口，完整工作流和复制即用语法已拆到独�
 
 - [使用指南](docs/usage-guide.zh-CN.md)：预览入口、直接文件视图、标注、测量、截图、知识笔记、部件证据、转换、性能建议和排查。
 - [常见用法语法](docs/common-usage-syntax.zh-CN.md)：Wikilink、`3d`、`3dgrid`、常用字段、支持扩展名和快捷键。
+
+在图片式预览中，用“零件”切换拆解展示，用“放大查看”调整展示方式；完整检查窗口通过“查看零件”打开。保存当前零件选择和间距时，复制嵌入内容并粘贴到笔记。
 
 快速示例：
 
