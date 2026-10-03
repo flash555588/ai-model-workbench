@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.9.12 - 2026-10-03
 
 - Docs: update English/Chinese README entry points for one-step insertion, registered-part inspection and release downloads.
+- Demos: add seven real Obsidian screenshots covering insertion, inline/table embeds, note parts, full inspection and the direct workbench.
 - Review: create image and registered-part placeholders with Obsidian helpers in their existing parent containers.
 - CSS: remove all four important declarations; keep sidebar widths in a CSS variable and preserve unavailable-control hiding through selector specificity.
+- Verification: cover collapsed sidebar grids at narrow widths and unavailable active secondary controls in compact note toolbars.
+- Release: synchronize 0.9.12 metadata, download links and bilingual release notes.
 
 ## 0.9.11 - 2026-10-03
 
