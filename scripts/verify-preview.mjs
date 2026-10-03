@@ -747,6 +747,15 @@ async function verifyNoteToolbar(page) {
   const toolbar = page.locator(".ai3d-note-toolbar").first();
   const more = toolbar.locator(".ai3d-mobile-more-toggle");
   const slice = toolbar.locator('[data-ai3d-action="toggle-slice"]');
+  // A stale active class must not expose an unavailable action in the compact note toolbar.
+  const unavailable = toolbar.locator('.ai3d-inline-btn.is-hidden').first();
+  if (await unavailable.count()) {
+    const original = await unavailable.getAttribute('class');
+    try {
+      await unavailable.evaluate(button => button.classList.add('is-secondary', 'ai3d-btn-active'));
+      assert(!await unavailable.isVisible(), "Compact note toolbar exposed an unavailable active action");
+    } finally { await unavailable.evaluate((button, original) => button.setAttribute('class', original ?? ''), original); }
+  }
   assert(!await slice.isVisible(), "Advanced note tools are visible before More expands");
   const pins = toolbar.locator('[data-ai3d-action="toggle-annotation"]');
   if (await pins.isVisible()) {

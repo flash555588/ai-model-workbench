@@ -1,12 +1,16 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use Babylon.js compatibility mode by default, with Three.js available as an explicit opt-in rollout across reading surfaces and direct file view. The file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` stays on Babylon.js. SPLAT/SPZ/SOG are currently disabled in packaged builds.
+> View 3D models directly in your Obsidian notes, inspect registered parts, and turn model evidence into linked knowledge notes. Rendering and knowledge generation are local-first.
+
+Single-model GLB/GLTF/STL/PLY/OBJ previews use Babylon.js compatibility mode by default. Three.js is an explicit opt-in, with Babylon.js fallback for the experimental direct-file workbench. `3dgrid` stays on Babylon.js; SPLAT/SPZ/SOG are disabled in packaged builds.
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
 **English** | [简体中文](README.zh-CN.md)
 
-![preview](docs/assets/preview.gif)
+[Download 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11) | [Usage guide](docs/usage-guide.md) | [Changelog](CHANGELOG.md)
+
+![preview](https://raw.githubusercontent.com/flash555588/ai-model-workbench/main/docs/assets/preview.gif)
 
 > **Important: STEP/STP support is conversion-only, not direct rendering.**
 > STEP files require Obsidian Desktop plus a configured local Python + CadQuery/OCCT
@@ -20,6 +24,7 @@
 ## Table of Contents
 
 - [Features](#features)
+- [Feature Demos](#feature-demos)
 - [Warnings And Risks](#warnings-and-risks)
 - [Current Release](#current-release)
 - [Platform Support Matrix](#platform-support-matrix)
@@ -40,6 +45,10 @@
 
 ## Features
 
+- **One-step insertion**: use the command palette or editor context menu; size and syntax follow the cursor location.
+- **Image-style note embeds**: place interactive models inside text, lists, quotes and table cells in Reading view and Live Preview.
+- **Registered-part inspection**: view the current model's registered parts in a note or a full inspection window; retain part selection and spacing through copied embeds.
+
 - **Direct mesh preview** for GLB/GLTF, STL, OBJ, and PLY (Babylon.js compatibility mode by default, Three.js opt-in)
 - **Optional conversion** for CAD, FBX, 3MF, and DAE assets
 - **Hybrid preview routing**: single-model previews default to Babylon.js compatibility mode, with explicit Three.js rollouts for GLB/GLTF/STL/PLY/OBJ
@@ -51,6 +60,53 @@
 - **i18n**: English and Simplified Chinese with auto-detect system locale
 - **Desktop support**: Obsidian Desktop on Windows, macOS, and Linux
 - **Mobile support**: iOS, iPadOS, and Android support direct formats, inline previews, and direct file view
+
+---
+
+## Feature Demos
+
+Screenshots captured in Obsidian 1.13.7 on Windows using the repository's sample
+Rubik's Cube model. Interface language can be switched between English and Chinese.
+
+### Insert a model without writing syntax
+
+Run **Insert a 3D model in note**, choose a model and press Enter. The picker shows
+the placement and actual dimensions; automatic defaults are 240 × 180 in text,
+160 × 120 in table cells and 400 × 300 for standalone previews.
+
+![Model insertion picker with automatic placement and size](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-insert-en.png)
+
+### Embed models wherever the explanation needs them
+
+Keep surrounding text, list nesting, quotes and table columns. Hover or focus the
+preview to reveal **Reset**, **Expand** and **Parts** controls.
+
+![Interactive model inside paragraph text](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-inline.png)
+
+![Interactive model inside a table cell with compact controls](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-table.png)
+
+### Show registered parts directly in a note
+
+Use **Parts** to switch to the current model's registered-part catalog, select a
+part and adjust spacing. **Copy embed** copies a persistent presentation for
+pasting into a note. Registration identifies existing model nodes; it does not
+cut a single mesh into inferred physical parts.
+
+![Registered-part catalog and presentation controls in a note](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/note-parts.png)
+
+### Open the full inspection window
+
+Use **Inspect parts** to search, hide or inspect individual parts and open linked
+notes. Returning restores the note presentation, camera and keyboard focus.
+
+![Full registered-part inspection with search and visibility controls](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/parts-inspection.png)
+
+### Review the model and create knowledge notes
+
+Open a model file for annotation, measurement, snapshots and knowledge generation.
+The knowledge sidebar can collapse or resize; narrow leaves stack the layout.
+
+![Direct model workbench with knowledge actions and inspection tools](https://raw.githubusercontent.com/flash555588/ai-model-workbench/cb27388af8d1a19d0d25c49ca4b9575b2d26aa36/docs/assets/screenshots/direct-workbench.png)
 
 ---
 
@@ -89,14 +145,18 @@
 
 ## Current Release
 
-`0.9.11` refines note controls and English/Chinese guidance.
+`0.9.11` brings together the recent note workflows and stability upgrades.
 
-- Show placement, dimensions and insertion guidance separately; stack options in narrow windows.
-- Emphasize model names while retaining searchable vault paths and format labels to distinguish duplicate names.
-- Align part controls and selected states; Copy embed clearly copies content for pasting into a note.
-- Shorten empty-state and registration guidance, with consistent light and dark themes.
+| Versions | Main improvements |
+|----------|-------------------|
+| 0.9.0–0.9.2 | Clearer conversion errors, source-specific generated files and reliable knowledge-generation state. |
+| 0.9.3–0.9.5 | Knowledge-first workbench, resizable/collapsible sidebar, coordinated inspection tools and shared note controls. |
+| 0.9.6–0.9.7 | Image-style embeds inside text, lists, quotes and tables; compact controls and an expanded viewer that reuses the canvas. |
+| 0.9.8–0.9.9 | Exact registered-part inspection in the model view and notes, persistent part selection/spacing and automatic registration refresh. |
+| 0.9.10 | One-step insertion with placement defaults, quote/list preservation, table escaping and stale-note protection. |
+| 0.9.11 | Searchable model rows, clearer Chinese/English guidance, consistent part controls and light/dark/narrow layouts. |
 
-See [0.9.11 release notes](docs/release-notes/0.9.11.md) and [CHANGELOG.md](CHANGELOG.md).
+[Download 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11). See [release notes](docs/release-notes/0.9.11.md) and [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Platform Support Matrix
 
@@ -113,9 +173,12 @@ See [0.9.11 release notes](docs/release-notes/0.9.11.md) and [CHANGELOG.md](CHAN
 
 ## Quick Start
 
-1. Install the plugin from Obsidian, a release download, or a local build.
+1. Install the plugin from Obsidian, a [release download](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11), or a local build.
 2. Put a supported model file into your vault, for example `model.glb`.
-3. Embed it in any note:
+3. Place the cursor in a note, then run **Insert a 3D model in note** from the command palette or editor context menu.
+4. Choose a model and press Enter. The picker sets the placement dimensions; choose **Registered parts** on an empty line to keep a saved part presentation.
+
+For hand-written embeds, use:
 
 ```markdown
 ![[model.glb]]
@@ -128,7 +191,7 @@ You can also click a supported model file in the file explorer to open the direc
 
 ## Installation
 
-Choose one install path, then use the embed syntax from [Quick Start](#quick-start).
+Choose an install path, then follow [Quick Start](#quick-start) for one-step insertion or hand-written embeds.
 
 ### Requirements
 
@@ -145,9 +208,9 @@ All install methods place the same three files in that folder:
 
 | File | Size | Description |
 |------|------|-------------|
-| `main.js` | ~3.9 MB | Plugin runtime bundle |
-| `manifest.json` | ~1 KB | Obsidian plugin manifest |
-| `styles.css` | ~40 KB | Plugin styles |
+| `main.js` | ~4.4 MB | Plugin runtime bundle |
+| `manifest.json` | ~0.3 KB | Obsidian plugin manifest |
+| `styles.css` | ~79 KB | Plugin styles |
 
 Direct rendering works on desktop and mobile. Local converter tools for CAD, FBX, 3MF, and DAE require desktop OS access.
 
@@ -308,6 +371,8 @@ now live in dedicated docs:
 - [Common Usage Syntax](docs/common-usage-syntax.md) - copy-paste examples for
   wikilink embeds, `3d` blocks, `3dgrid` blocks, common fields, supported
   extensions, and shortcuts.
+
+In image-style previews, use Parts for the catalog and Expand for presentation controls. Inspect parts opens the full window; copy and paste an embed to retain the selected part and spacing.
 
 Quick examples:
 

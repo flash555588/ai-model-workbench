@@ -1134,6 +1134,11 @@ async function verifyDirectWorkbench(page) {
   // trust prompt until after the direct workbench has rendered.
   await trustVaultIfPrompted(page);
   const workspaceComfort = await verifyDirectWorkspaceComfort(page);
+  if (process.argv.includes("--capture-note-ui")) {
+    const output = join(rootDir, ".tmp", "note-ui-showcase");
+    await mkdir(output, { recursive: true });
+    await page.locator('.ai3d-direct-view:visible').last().screenshot({ path: join(output, "direct-workbench.png") });
+  }
   const knowledgeUx = await verifyDirectWorkbenchKnowledgeUx(page);
 
   const before = await page.evaluate(() => {
@@ -1869,7 +1874,16 @@ async function verifyDirectWorkbenchKnowledgeUx(page) {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         const track = root.querySelector(".ai3d-workspace-track-top");
         const handle = root.querySelector(".ai3d-resize-handle-h");
+        const toggle = root.querySelector('[data-ai3d-action="toggle-knowledge-sidebar"]');
+        toggle.click();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const collapsed = { columns: getComputedStyle(track).gridTemplateColumns,
+          rows: getComputedStyle(track).gridTemplateRows,
+          sidebarHidden: getComputedStyle(root.querySelector('.ai3d-workspace-sidebar')).display === 'none' };
+        toggle.click();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         layouts.push({ width, measured: workspace.clientWidth, scroll: workspace.scrollWidth,
+          collapsed,
           columns: getComputedStyle(track).gridTemplateColumns,
           handleHidden: getComputedStyle(handle).display === "none",
           contentOverlaps: root.querySelector(".ai3d-sidebar-body").getBoundingClientRect().bottom
@@ -1886,6 +1900,8 @@ async function verifyDirectWorkbenchKnowledgeUx(page) {
     assert(layout.scroll <= layout.measured + 1, `Narrow leaf overflow: ${JSON.stringify(layout)}`);
     assert(layout.handleHidden === (layout.width <= 640), `Wrong container layout: ${JSON.stringify(layout)}`);
     assert(!layout.contentOverlaps, `Sidebar statistics overlap knowledge actions: ${JSON.stringify(layout)}`);
+    assert(layout.collapsed.sidebarHidden && layout.collapsed.columns.trim().split(/\s+/).length === 1
+      && layout.collapsed.rows.trim().split(/\s+/).length === 1, `Collapsed sidebar left unused grid space: ${JSON.stringify(layout)}`);
   }
 
   await page.evaluate(() => {

@@ -1605,7 +1605,7 @@ body {
 }
 .ai3d-workspace-track-top {
   display: grid;
-  grid-template-columns: 1fr 4px 200px;
+  grid-template-columns: minmax(0, 1fr) 4px var(--ai3d-sidebar-width, 200px);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1632,8 +1632,8 @@ body {
 }
 
 .ai3d-workspace.is-sidebar-collapsed .ai3d-workspace-track-top {
-  grid-template-columns: minmax(0, 1fr) !important;
-  grid-template-rows: minmax(0, 1fr) !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .ai3d-workspace.is-sidebar-collapsed .ai3d-workspace-sidebar,
@@ -2186,7 +2186,7 @@ body {
 /* Respond to the leaf width, including narrow splits in a wide desktop window. */
 @container ai3d-workspace (max-width: 640px) {
   .ai3d-workspace-track-top {
-    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 35%);
   }
   .ai3d-workspace-track-top > .ai3d-resize-handle-h {
@@ -3110,8 +3110,10 @@ body .is-hidden.is-hidden.is-hidden {
 }
 
 /* More must never reveal unavailable capabilities or vault-only actions. */
-.ai3d-helper-toolbar .ai3d-inline-btn.is-hidden {
-  display: none !important;
+body .ai3d-helper-toolbar .ai3d-inline-btn.is-hidden,
+body .ai3d-helper-toolbar.show-secondary .ai3d-inline-btn.is-hidden,
+body .ai3d-note-preview .ai3d-note-toolbar:not(.show-secondary) .ai3d-inline-btn.is-secondary.ai3d-btn-active.is-hidden {
+  display: none;
 }
 
 /* Measurement details inside the helper toolbar */
