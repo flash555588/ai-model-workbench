@@ -3,7 +3,7 @@ import type { Text, Transaction } from "@codemirror/state";
 export const LIVE_PREVIEW_EMBED_MARKER = "![[";
 
 function lineMayContainModelEmbed(text: string): boolean {
-  return text.includes(LIVE_PREVIEW_EMBED_MARKER);
+  return text.includes(LIVE_PREVIEW_EMBED_MARKER) || text.includes("`") || text.includes("~~~") || /^(---|\.\.\.)$/.test(text.trim());
 }
 
 export function docMayContainModelEmbed(doc: Text): boolean {

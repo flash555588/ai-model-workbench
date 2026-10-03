@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use Babylon.js compatibility mode by default, with Three.js available as an explicit opt-in rollout across reading surfaces and direct file view. The file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` and SPLAT stay on the Babylon.js capability path that fits them best.
+> A local-first Obsidian 3D viewer focused on knowledge workflows. It renders common 3D assets in local WebGL viewports, lets you annotate key parts, and turns models into linked notes. Single-model previews (GLB, GLTF, STL, PLY, OBJ) use Babylon.js compatibility mode by default, with Three.js available as an explicit opt-in rollout across reading surfaces and direct file view. The file-view workbench can opt into an experimental Three.js GLB/GLTF path with Babylon.js fallback, while `3dgrid` stays on Babylon.js. SPLAT/SPZ/SOG are currently disabled in packaged builds.
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
@@ -89,19 +89,14 @@
 
 ## Current Release
 
-`0.8.1` is the current Obsidian source-review compatibility release.
+`0.9.11` refines note controls and English/Chinese guidance.
 
-Release highlights:
+- Show placement, dimensions and insertion guidance separately; stack options in narrow windows.
+- Emphasize model names while retaining searchable vault paths and format labels to distinguish duplicate names.
+- Align part controls and selected states; Copy embed clearly copies content for pasting into a note.
+- Shorten empty-state and registration guidance, with consistent light and dark themes.
 
-- Removes the forbidden source-review lint suppressions from the settings implementation.
-- Uses `requireApiVersion("1.13.0")` to expose declarative settings only when the host supports them, while retaining the older imperative renderer through a plugin-owned method.
-- Documents the limited, user-triggered vault enumeration used by model selection and annotation heading search.
-- Verifies the real settings window in Obsidian 1.13 and guarantees temporary verification-vault cleanup.
-- Preserves all `0.8.0` measurement, preview, conversion, privacy, and renderer behavior.
-
-See [docs/release-notes/0.8.1.md](docs/release-notes/0.8.1.md), [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md), and [CHANGELOG.md](CHANGELOG.md) for the full release history.
-
----
+See [0.9.11 release notes](docs/release-notes/0.9.11.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Platform Support Matrix
 
@@ -253,6 +248,16 @@ AI Model Workbench does not include donation prompts, payment flows, or cryptocu
 | OBJ | `.obj` | MTL materials, vault-relative texture resolution, case-insensitive same-folder texture fallback |
 | PLY | `.ply` | ASCII/binary, vertex colors, point cloud support |
 
+With **Use Three renderer** enabled and **Preview compatibility mode** set to
+**Reading + file view**, 3MF, DAE, OFF, PCD, and XYZ also load directly on desktop
+and mobile. **Reading surfaces only** enables these loaders for embeds. FBX uses
+registered local conversion on desktop and falls back to direct Three loading
+when no FBX converter is registered, or on mobile. Converter failures stay visible.
+Explicit OBJ conversion preferences remain authoritative. Direct 3MF/DAE/FBX
+loading accepts embedded textures only; pre-convert externally textured assets
+to an embedded GLB. Compatibility mode keeps the existing conversion routes;
+PCD/XYZ require Three.js. SPLAT/SPZ/SOG remain disabled in packaged builds.
+
 SPLAT preview is temporarily disabled in packaged builds while its loader is replaced with a local-only implementation.
 
 ### SPLAT Status and Roadmap
@@ -356,7 +361,7 @@ physical units.
 | Auto-rotate | off | Start with turntable animation |
 | Auto-rotate speed | 0.5 | Rotation speed (0.1-2.0) |
 | Render quality | high | Quality preset (low/medium/high) |
-| Render scale | 1.0 | Resolution multiplier (0.25-2.0) |
+| Render scale | 1.5 | Resolution multiplier (0.25-2.0) |
 | Snapshot folder | Media/3D Previews | Export folder |
 | Snapshot naming | model-name | File naming mode for exported PNG snapshots |
 | Report folder | Analysis/3D Reports | Knowledge notes folder |
@@ -568,10 +573,10 @@ Babylon.js compatibility mode is the default single-model path, while Three.js r
 
 ### Conversion Caching
 
-- **Location**: Same directory as source file
-- **Format**: `{filename}.ai3d-converted.glb`
-- **Validation**: Checks converter identity, cache key, file existence
-- **Invalidation**: Automatic when converter settings change
+- **Location**: The vault configuration directory used by the preview pipeline; callers without an output root write beside the source.
+- **Format**: `{stem}-{source-path-hash}.ai3d-converted.glb` in the configured cache, or `{filename-with-extension}.ai3d-converted.glb` beside the source.
+- **Validation**: Requires the same source path and converter ID, a nonempty output, and an output modification time at least as recent as the source.
+- **Migration**: Exact-source persisted records can still reuse old output names. Untracked legacy files and moved sources require conversion; same basenames do not establish identity.
 - **Manual clear**: Command palette > "Clear Conversion Cache"
 
 ---
@@ -650,7 +655,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.8.0`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.8.0` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.9.7`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.9.11` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 

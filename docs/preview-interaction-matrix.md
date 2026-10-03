@@ -19,7 +19,36 @@ Only one primary interaction mode may be active at a time:
 Switching modes cancels incomplete pointer work from the previous mode. Completed
 measurement records remain visible because they are evidence overlays, not an active mode.
 
+Primary inspection tools have visible short labels. Active modes show persistent
+next-action guidance in a live status region; switching back to idle hides it.
+Keep the existing tooltip-free contract and mutual exclusion when editing these
+controls. Mobile tool hit areas are at least 40 CSS px.
+
+Exit mode deactivates the active tool without clearing completed rulers. Escape
+is scoped to the preview/toolbar: cancel a pending endpoint before exiting
+measurement; editors can consume Escape first. Extra actions use visible labels
+and wrap within the toolbar. Keyboard measurement must deactivate annotation
+before the canvas shortcut runs. Switching mobile interaction back to scroll
+exits active tools without deleting completed evidence.
+
 ## Coexisting view features
+
+The registered-part catalog is a separate direct-file inspection window that
+reuses the current single-model canvas. Entering exits primary tools and pauses
+animations. Exact current-profile identities/references determine rigid part
+groups. Search, visibility and single-part inspection are independent controls;
+unregistered geometry has its own checkbox. The catalog captures/restores geometry
+and camera on close or file changes. Its canvas only exposes Reset assembly and
+Escape shortcuts, so measurement/animation shortcuts cannot alter the catalog.
+Both default Babylon and opt-in Three implement this contract. The responsive
+window refits its catalog when the preview area changes dimensions.
+
+Image-style wikilinks expose only Reset and Expand in their compact action bar.
+The expanded dialog hosts the same preview frame; reserve its original size and
+restore it on close. Advanced canvas shortcuts open this dialog before activating
+tools. Its Obsidian key scope routes Escape through toolbar dismissal first.
+Closing exits interaction modes while retaining completed records; disposing the
+owning widget closes the dialog and releases its preview resources.
 
 The following features are not primary interaction modes and remain available:
 

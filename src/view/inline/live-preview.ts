@@ -4,33 +4,29 @@
  */
 
 import type { App } from "obsidian";
-import { EditorView, Decoration, WidgetType } from "@codemirror/view";
-import { Prec, StateField, RangeSet, Range, type Text } from "@codemirror/state";
-import { isSupportedModelExtension } from "../../io/formats/registry";
+import { WidgetType } from "@codemirror/view";
 import { isThreeDirectRoute } from "../../render/preview/routing";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
 import type { ModelPreview } from "../../render/preview/types";
-import { readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "../../utils/resolve-path";
+import { readBinaryPath, resolveVaultAbsolutePath } from "../../utils/resolve-path";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { resolveConversionOutputRoot } from "../../io/conversion/output-root";
 import { createLoadingOverlay, type LoadingOverlay } from "./loading-overlay";
 import { createStagedDiv, createStagedEl } from "../../utils/dom";
 import { isMobile } from "../../utils/device";
-import { t } from "../../i18n";
 import { createLogger } from "../../utils/log";
 import {
   attachModelPreviewCanvasShortcuts,
   configureModelPreviewCanvas,
 } from "./preview-canvas-accessibility";
-import { createCameraZoomControl, type CameraZoomControl } from "./zoom-control";
-import {
-  docMayContainModelEmbed,
-  LIVE_PREVIEW_EMBED_MARKER,
-  transactionMayAffectModelEmbeds,
-} from "./live-preview-embed-scan";
+import { createHelperButtons, type HelperToolbar } from "./helper-buttons";
+import { createNotePreviewHeader } from "./note-preview-header";
 import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
+import { createImageEmbedControls } from "./image-embed-controls";
+import type { NotePartsAccess } from "./note-parts-config";
+import { createNoteRegisteredPartsControls, type NotePartsControls } from "./note-registered-parts";
 
 const log = createLogger("inline-live-preview");
 
@@ -46,7 +42,10 @@ export class ModelEmbedWidget extends WidgetType {
   private destroyed = false;
   private initGeneration = 0;
   private viewportReady = false;
-  private zoomControl: CameraZoomControl | null = null;
+  private helperToolbar: HelperToolbar | null = null;
+  private imageControls: ReturnType<typeof createImageEmbedControls> | null = null;
+  private modelReady = false;
+  private partsControls: NotePartsControls | null = null;
 
   constructor(
     private app: App,
@@ -70,6 +69,8 @@ export class ModelEmbedWidget extends WidgetType {
     private renderScale: PluginSettings["renderScale"],
     private convertedAssetCache: ConvertedAssetCache,
     private getAnnotations?: (modelPath: string) => AnnotationPin[],
+    private getToolbarSettings?: () => PluginSettings,
+    private partsAccess?: NotePartsAccess,
   ) {
     super();
   }
@@ -100,53 +101,49 @@ export class ModelEmbedWidget extends WidgetType {
 
   override toDOM(): HTMLElement {
     const mobile = isMobile();
-    const host = createStagedDiv("ai3d-embed-preview ai3d-cm-widget");
-    host.setAttribute("contenteditable", "false");
+    const frame = createStagedDiv("ai3d-embed-preview ai3d-note-preview ai3d-cm-widget");
+    frame.setAttribute("contenteditable", "false");
+    createNotePreviewHeader(frame, this.modelPath);
+    const host = frame.createDiv({ cls: "ai3d-preview-host" });
     if (mobile) {
-      host.classList.add("is-mobile", "is-mobile-scroll-mode");
+      frame.classList.add("is-mobile");
     }
 
     const canvas = createStagedEl("canvas", "ai3d-embed-canvas");
     const effectiveHeight = mobile ? Math.min(this.height, 220) : this.height;
     canvas.style.setProperty("--ai3d-embed-height", `${effectiveHeight}px`);
-    configureModelPreviewCanvas(canvas, "live-preview", this.modelPath);
-    attachModelPreviewCanvasShortcuts(canvas, () => this.destroyed ? null : this.preview);
     host.appendChild(canvas);
-    this.zoomControl = createCameraZoomControl(host, () => this.preview);
+    configureModelPreviewCanvas(canvas, "live-preview", this.modelPath);
+    attachModelPreviewCanvasShortcuts(canvas, () => this.destroyed || !this.modelReady ? null : this.preview);
+    let annotationsVisible = true;
+    this.helperToolbar = createHelperButtons(frame, host, this.app,
+      () => this.destroyed || !this.modelReady ? null : this.preview, () => this.modelPath, null,
+      () => this.getToolbarSettings?.() ?? { renderScale: this.renderScale, snapshotFolder: "Media/3D Previews", snapshotNaming: "model-name" },
+      () => {
+        annotationsVisible = !annotationsVisible;
+        host.querySelector(".ai3d-annotation-overlay")?.classList.toggle("is-hidden", !annotationsVisible);
+        return annotationsVisible;
+      }, undefined, {
+        kind: "visibility",
+        labelKey: "helper.toggleAnnotationsVisibilityLabel",
+        activeTooltipKey: "helper.annotationsVisible",
+        inactiveTooltipKey: "helper.annotationsHidden",
+      });
+
+    this.imageControls = createImageEmbedControls(this.app, frame, canvas,
+      () => this.destroyed || !this.modelReady ? null : this.preview,
+      () => this.helperToolbar?.exitInteractionMode(),
+      () => this.helperToolbar?.handleEscape() ?? false,
+      () => this.helperToolbar?.syncCapabilities());
+    this.partsControls = createNoteRegisteredPartsControls(this.app, frame, host,
+      () => this.destroyed || !this.modelReady ? null : this.preview, this.modelPath, this.partsAccess,
+      () => this.helperToolbar?.exitInteractionMode(), () => this.helperToolbar?.syncCapabilities());
 
     const loading = createLoadingOverlay(host);
 
     const error = createStagedDiv("ai3d-embed-error is-hidden");
     host.appendChild(error);
 
-    if (mobile) {
-      let mobileInteractive = false;
-      const footer = createStagedDiv("ai3d-mobile-mode-bar");
-      const hint = createStagedDiv("ai3d-mobile-mode-hint");
-      hint.textContent = t("livePreview.mobileHint");
-      const modeBtn = createStagedEl("button", "ai3d-mobile-mode-btn");
-      modeBtn.type = "button";
-
-      const renderInteractionMode = () => {
-        host.classList.toggle("is-mobile-interactive", mobileInteractive);
-        host.classList.toggle("is-mobile-scroll-mode", !mobileInteractive);
-        modeBtn.textContent = mobileInteractive ? t("helper.scrollAction") : t("helper.interactAction");
-        modeBtn.classList.toggle("ai3d-btn-active", mobileInteractive);
-        modeBtn.setAttribute(
-          "aria-label",
-          mobileInteractive ? t("helper.disableInteractionLabel") : t("helper.enableInteractionLabel"),
-        );
-      };
-
-      modeBtn.addEventListener("click", () => {
-        mobileInteractive = !mobileInteractive;
-        renderInteractionMode();
-      });
-
-      renderInteractionMode();
-      footer.append(hint, modeBtn);
-      host.appendChild(footer);
-    }
 
     const tryInit = () => {
       if (this.destroyed || this.initStarted) return;
@@ -193,7 +190,7 @@ export class ModelEmbedWidget extends WidgetType {
       this.viewportObs.observe(host);
     }
 
-    return host;
+    return frame;
   }
 
   private stopReadyPoll(): void {
@@ -280,7 +277,7 @@ export class ModelEmbedWidget extends WidgetType {
         const dataPromise = readBinaryPath(this.app, prepared.effectivePath);
         void initialRenderBudgetPromise.catch(() => undefined);
         void dataPromise.catch(() => undefined);
-        const { preview } = await createLoggedModelPreview(
+        const { preview, route } = await createLoggedModelPreview(
           log,
           { surface: "live-preview", modelPath: this.modelPath },
           canvas,
@@ -291,7 +288,8 @@ export class ModelEmbedWidget extends WidgetType {
           return;
         }
         this.preview = preview;
-        this.zoomControl?.sync();
+        host.dataset.ai3dBackend = route.backend;
+        this.helperToolbar?.syncCapabilities();
         const initialRenderBudget = await initialRenderBudgetPromise;
         this.preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
         loading.setPhaseKey("loading.loadingModel");
@@ -310,11 +308,11 @@ export class ModelEmbedWidget extends WidgetType {
         if (this.destroyed || generation !== this.initGeneration) {
           this.preview?.destroy();
           this.preview = null;
-          this.zoomControl?.sync();
+          this.helperToolbar?.syncCapabilities();
           return;
         }
         renderModelPerformanceFeedback(host, summary);
-        this.zoomControl?.sync();
+        this.modelReady = true;
 
         if (this.autoRotate) {
           this.preview.applyConfig({
@@ -322,6 +320,9 @@ export class ModelEmbedWidget extends WidgetType {
             scene: { autoRotate: true, autoRotateSpeed: 0.5 },
           });
         }
+        this.helperToolbar?.syncCapabilities();
+        this.imageControls?.sync();
+        this.partsControls?.sync();
 
         // Readonly annotations
         if (pins.length > 0 && supportsAnnotationPreview(this.preview)) {
@@ -341,6 +342,8 @@ export class ModelEmbedWidget extends WidgetType {
                 displayMode: this.annotationDisplayMode,
               },
             );
+            this.helperToolbar?.showAnnotateButton();
+            this.helperToolbar?.updateAnnotationBadge(pins.length);
           }
         }
 
@@ -351,6 +354,10 @@ export class ModelEmbedWidget extends WidgetType {
       if (this.destroyed || generation !== this.initGeneration) {
         return;
       }
+      this.modelReady = false;
+      this.partsControls?.destroy();
+      this.imageControls?.destroy();
+      this.helperToolbar?.destroy();
       this.preview?.destroy();
       this.preview = null;
       loading.hide();
@@ -377,13 +384,18 @@ export class ModelEmbedWidget extends WidgetType {
 
   override destroy(): void {
     this.destroyed = true;
+    this.partsControls?.destroy();
+    this.partsControls = null;
+    this.imageControls?.destroy();
+    this.imageControls = null;
+    this.modelReady = false;
     this.stopReadyPoll();
     this.stopReadyWatch();
     this.stopViewportWatch();
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
-    this.zoomControl?.destroy();
-    this.zoomControl = null;
+    this.helperToolbar?.destroy();
+    this.helperToolbar = null;
     if (this.preview) {
       this.preview.destroy();
       this.preview = null;
@@ -407,198 +419,4 @@ export class ModelEmbedWidget extends WidgetType {
   }
 }
 
-// ── Document scanner ──────────────────────────────────────────────
-
-function findEmbeds(
-  viewOrState: { state: import("@codemirror/state").EditorState } | import("@codemirror/state").EditorState,
-  app: App,
-  autoRotate: boolean,
-  enabledConverterIds: string[],
-  freecadCommand: string,
-  obj2gltfCommand: string,
-  fbx2gltfCommand: string,
-  freecadcmdCommand: string,
-  preferObj2gltfForObj: boolean,
-  preferFbx2gltfForFbx: boolean,
-  annotationPreviewMode: PluginSettings["annotationPreviewMode"],
-  annotationDisplayMode: PluginSettings["annotationDisplayMode"],
-  previewRendererRollout: PluginSettings["previewRendererRollout"],
-  useThreeRenderer: boolean,
-  auxiliaryFileFolder: string,
-  renderQuality: PluginSettings["renderQuality"],
-  renderScale: PluginSettings["renderScale"],
-  convertedAssetCache: ConvertedAssetCache,
-  getAnnotations?: (modelPath: string) => AnnotationPin[],
-): Range<Decoration>[] {
-  const doc: Text = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
-  const ranges: Range<Decoration>[] = [];
-  if (!docMayContainModelEmbed(doc)) {
-    return ranges;
-  }
-
-  let lineFrom = 0;
-  for (const text of doc.iterLines()) {
-    const nextLineFrom = lineFrom + text.length + 1;
-
-    if (!text.includes(LIVE_PREVIEW_EMBED_MARKER)) {
-      lineFrom = nextLineFrom;
-      continue;
-    }
-
-    let pos = 0;
-    while (pos < text.length) {
-      const start = text.indexOf(LIVE_PREVIEW_EMBED_MARKER, pos);
-      if (start === -1) break;
-
-      // Skip escaped embeds: \![[model.glb]]
-      if (start > 0 && text[start - 1] === "\\") {
-        pos = start + LIVE_PREVIEW_EMBED_MARKER.length;
-        continue;
-      }
-
-      const end = text.indexOf("]]", start + LIVE_PREVIEW_EMBED_MARKER.length);
-      if (end === -1) break;
-
-      const raw = text.slice(start + LIVE_PREVIEW_EMBED_MARKER.length, end);
-      const parts = raw.split("|");
-      const filename = parts[0].trim();
-
-      const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-      if (!isSupportedModelExtension(ext)) {
-        pos = end + 2;
-        continue;
-      }
-
-      // Parse optional size: ![[model.glb|400x300]]
-      let w = 400;
-      let h = 300;
-      if (parts.length > 1) {
-        const sizeMatch = parts[1].trim().match(/^(\d+)\s*x\s*(\d+)$/);
-        if (sizeMatch) {
-          w = parseInt(sizeMatch[1], 10);
-          h = parseInt(sizeMatch[2], 10);
-        }
-      }
-
-      const modelPath = resolveVaultPath(app, filename);
-      if (!modelPath) {
-        pos = end + 2;
-        continue;
-      }
-
-      ranges.push(
-        Decoration.replace({
-          widget: new ModelEmbedWidget(
-            app,
-            modelPath,
-            w,
-            h,
-            autoRotate,
-            enabledConverterIds,
-            freecadCommand,
-            obj2gltfCommand,
-            fbx2gltfCommand,
-            freecadcmdCommand,
-            preferObj2gltfForObj,
-            preferFbx2gltfForFbx,
-            annotationPreviewMode,
-            annotationDisplayMode,
-            previewRendererRollout,
-            useThreeRenderer,
-            auxiliaryFileFolder,
-            renderQuality,
-            renderScale,
-            convertedAssetCache,
-            getAnnotations,
-          ),
-          block: true,
-        }).range(lineFrom + start, lineFrom + end + 2),
-      );
-
-      pos = end + 2;
-    }
-    lineFrom = nextLineFrom;
-  }
-
-  return ranges;
-}
-
-// ── StateField + ViewPlugin ───────────────────────────────────────
-
-type DecoSet = RangeSet<Decoration>;
-
-function toDecoSet(ranges: Range<Decoration>[]): DecoSet {
-  if (ranges.length === 0) {
-    return RangeSet.empty as DecoSet;
-  }
-  return RangeSet.of<Decoration>(ranges, true);
-}
-
-export function registerLivePreviewExtension(
-  app: App,
-  getSettings: () => PluginSettings,
-  convertedAssetCache: ConvertedAssetCache,
-  getAnnotations?: (modelPath: string) => AnnotationPin[],
-) {
-  const embedField = StateField.define<DecoSet>({
-    create(state): DecoSet {
-      const s = getSettings();
-      const ranges = findEmbeds(
-        state,
-        app,
-        s.autoRotateDefault,
-        s.enabledConverterIds,
-        s.freecadCommand,
-        s.obj2gltfCommand,
-        s.fbx2gltfCommand,
-        s.freecadcmdCommand,
-        s.preferObj2gltfForObj,
-        s.preferFbx2gltfForFbx,
-        s.annotationPreviewMode,
-        s.annotationDisplayMode,
-        s.previewRendererRollout,
-        s.useThreeRenderer,
-        s.auxiliaryFileFolder,
-        s.renderQuality,
-        s.renderScale,
-        convertedAssetCache,
-        getAnnotations,
-      );
-      return toDecoSet(ranges);
-    },
-    update(value, tr): DecoSet {
-      if (tr.docChanged) {
-        if (!transactionMayAffectModelEmbeds(tr)) {
-          return value.map(tr.changes);
-        }
-        const s = getSettings();
-        const ranges = findEmbeds(
-          tr.state,
-          app,
-          s.autoRotateDefault,
-          s.enabledConverterIds,
-          s.freecadCommand,
-          s.obj2gltfCommand,
-          s.fbx2gltfCommand,
-          s.freecadcmdCommand,
-          s.preferObj2gltfForObj,
-          s.preferFbx2gltfForFbx,
-          s.annotationPreviewMode,
-          s.annotationDisplayMode,
-          s.previewRendererRollout,
-          s.useThreeRenderer,
-          s.auxiliaryFileFolder,
-          s.renderQuality,
-          s.renderScale,
-          convertedAssetCache,
-          getAnnotations,
-        );
-        return toDecoSet(ranges);
-      }
-      return value.map(tr.changes);
-    },
-    provide: (f) => EditorView.decorations.from(f),
-  });
-
-  return [Prec.highest(embedField)];
-}
+export { registerLazyLivePreviewExtension as registerLivePreviewExtension } from "./lazy-live-preview";

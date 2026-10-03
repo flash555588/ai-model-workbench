@@ -43,11 +43,22 @@ export class MobileConversionUnavailableError extends Error {
   }
 }
 
+export class ThreeRendererRequiredError extends Error {
+  readonly name = "ThreeRendererRequiredError";
+
+  constructor(readonly sourceExt: string) {
+    super(`${formatSourceExt(sourceExt)} files require the Three.js preview renderer.`);
+  }
+}
+
 export function isMissingConverterError(err: unknown): err is MissingConverterError {
   return err instanceof MissingConverterError;
 }
 
 export function formatModelLoadFailure(err: unknown): string {
+  if (err instanceof ThreeRendererRequiredError) {
+    return formatT("modelLoad.threeRequiredMessage", { ext: formatSourceExt(err.sourceExt) });
+  }
   if (err instanceof MissingConverterError) {
     const converterName = CONVERTER_DISPLAY_NAMES[err.converterId] ?? err.converterId;
     return formatT("modelLoad.warningMessage", {
@@ -68,6 +79,14 @@ export function formatModelLoadFailure(err: unknown): string {
 }
 
 export function describeModelLoadFailure(err: unknown): ModelLoadFailureDetails {
+  if (err instanceof ThreeRendererRequiredError) {
+    return {
+      level: "warning",
+      title: t("modelLoad.warningTitle"),
+      message: formatModelLoadFailure(err),
+      hint: t("modelLoad.threeRequiredHint"),
+    };
+  }
   if (err instanceof MissingConverterError) {
     return {
       level: "warning",

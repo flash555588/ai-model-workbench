@@ -2,6 +2,120 @@
 
 ## Unreleased
 
+## 0.9.11 - 2026-10-03
+
+- UI: separate note insertion location, live dimensions and guidance; stack labeled options in narrow windows and use host theme colors.
+- Picker: emphasize file names, keep searchable vault paths and format labels, and preserve fuzzy highlighting and native keyboard selection.
+- Parts: align note controls, clarify copy-and-paste actions, highlight unavailable selections, and make single-part button text reflect the next action.
+- Language: shorten Chinese/English hints and empty states, and replace internal geometry/configuration terms with operation-oriented wording.
+- Verification: cover duplicate-name path search, fuzzy highlighting, keyboard insertion, size summary updates and light/dark/narrow native picker layouts.
+
+## 0.9.10 - 2026-10-03
+
+- Feature: insert a model from the command palette or editor context menu without writing embed syntax or JSON.
+- Defaults: choose dimensions by note placement, escape table separators, and preserve quote/list nesting for saved part displays.
+- Guidance: offer display/size presets, disable saved part blocks inside text/tables, and provide next steps for empty vaults and missing registration.
+- Reliability: preserve surrounding text, use one undoable editor insertion, keep cancellation read-only, and reject stale note/content/cursor selections.
+- UX: use the existing note action for missing registration instead of an extra dialog on full code-block part display.
+- Verification: cover insertion rules plus native Obsidian placement, presets, undo, cancellation, stale selection and registration refresh.
+
+## 0.9.9 - 2026-10-03
+
+- Feature: show registered parts directly in note code blocks and image-style embeds, with a full inspection dialog from either surface.
+- Configuration: add parts shorthand, stable part selection, separation and unregistered visibility; copy a presentation block without editing Markdown.
+- Lifecycle: reuse the original canvas, restore note selection/focus on return, refresh mounted previews after profile changes, and close nested dialogs on source switches.
+- Fix: normalize the generated GLTF import root across Babylon/Three and resolve code-block paths relative to their source note.
+- Rendering: hide assembly measurement and bounding-box overlays while displaying registered parts, restoring their visibility on exit.
+- Verification: cover configuration validation, exact selection, note rendering, nested inspection and unchanged Markdown in native Obsidian on both renderers.
+
+## 0.9.8 - 2026-10-03
+
+- Feature: inspect a single model split according to its existing registered part records from the direct-file sidebar.
+- UI: add a responsive catalog with search, per-part visibility, single-part inspection, separation control, assembly reset and linked part notes.
+- Matching: use exact node identities and unambiguous mesh references; report partial, missing and conflicting registrations and separate unregistered geometry.
+- Rendering: keep geometry within each part rigid, translate through nested parent transforms, and support Babylon and opt-in Three without changing routing.
+- Lifecycle: reuse the current canvas, pause animations during inspection, and restore geometry, camera, visibility and focus on close or file changes.
+- Verification: add identity/ownership and nested-transform regression tests plus native Obsidian inspection checks for both renderers.
+
+## 0.9.7 - 2026-10-03
+
+- UI: replace crowded image-embed tools with a compact Reset/Expand action bar, revealed on hover or keyboard focus.
+- UX: move the existing preview into a responsive inspection dialog without reloading the model, changing its camera, or shifting surrounding Markdown.
+- Interaction: open the inspector before advanced canvas shortcuts; Escape leaves the current tool before closing, and Return to note restores button focus.
+- Reliability: gate actions until the model is ready, exit tools when returning to the thumbnail, and close the dialog when its widget is disposed.
+- Fix: remount reused Live Preview decorations after viewport removal and ignore obsolete async mounts instead of leaving blank placeholders.
+- Verification: cover small table controls, canvas identity, layout reservation, keyboard inspection, narrow dialogs, Live Preview Markdown preservation, and source-switch cleanup in native Obsidian.
+
+## 0.9.6 - 2026-10-02
+
+- Feature: render image-style model wikilinks inside paragraphs, lists, quotes, and tables in reading and Live Preview surfaces.
+- Layout: apply embed width and viewport height, infer a 4:3 viewport for width-only sizes, and float hover/focus controls without shifting surrounding text.
+- Fix: retain standalone embeds on the editor's block layer while using inline widgets within text; expose original syntax in source mode.
+- Reliability: share embed parsing and lazy rendering, skip code examples/frontmatter, and isolate source-relative path resolution across notes.
+- Verification: exercise native Markdown placements, dimensions, hidden controls, source-mode editing, and unchanged note content.
+
+## 0.9.5 - 2026-10-02
+
+- UI: share a compact note frame, model title, and grouped advanced actions between reading code blocks and Live Preview embeds.
+- Fix: separate readonly pin visibility from annotation editing; preserve pins and the active inspection mode across visibility toggles and mode exit.
+- UX: keep active advanced tools visible when More collapses and coordinate note measurement/slice inspectors.
+- Layout: bound note viewport heights and wrap labeled controls in narrow panes.
+- Reliability: dispose note toolbar observers and keyboard handlers; forward current snapshot settings through lazy Live Preview widgets.
+- Fix: preserve CodeMirror's widget root while mounting Live Preview, preventing toolbar DOM from becoming Markdown edits; keep unavailable actions hidden when More expands.
+- Showcase: generate an offline interactive page from actual preview components with theme/width controls; disable vault-only actions there.
+- Verification: cover note controls on Babylon/Three, real Obsidian reading/Live Preview, Markdown preservation, and offline rendering.
+
+## 0.9.4 - 2026-10-02
+
+- UX: label More/Less and extra actions, wrap tool groups in narrow panes, and use persistent mode status instead of duplicate transient mode popups.
+- UX: add Exit mode and preview-scoped Escape behavior; measurement endpoint hints track the current phase, and completed records survive exit.
+- Fix: keyboard measurement leaves annotation mode first; returning to mobile scroll mode exits active tools.
+- UX: hide/show the knowledge sidebar without reloading the model; add pointer/keyboard width adjustment, minimum readable width, viewport reservation, and default-width reset.
+- Reliability: dispose divider resize listeners on model switches and view close.
+- UX: show note-opening failures in place while preserving successful generation; open actions follow deleted, renamed, and restored output files.
+- Verification: exercise narrow English toolbars, mode exit with saved rulers, mobile browser emulation, sidebar controls, and real Obsidian knowledge navigation recovery including rename restoration.
+- Release: synchronize 0.9.4 metadata, documentation, and installation assets.
+
+## 0.9.3 - 2026-10-02
+
+- UI: label common inspection tools and keep current-mode instructions visible.
+- UI: prioritize knowledge actions, show live generation stages and inline failure reasons, and promote retry or the saved knowledge index.
+- UI: compact summary metrics, localize performance tiers, and fold backend/route strings into renderer diagnostics.
+- Layout: use the actual leaf width for a stacked workspace at 640 CSS px or less; keep mobile tool hit areas at least 40 px.
+- Reliability: bind file-view generation to its clicked model before lazy loading; do not confuse stale persisted pending records with active work.
+- Reliability: keep runtime progress ownership across successive runs, isolate progress observer errors, and clear progress after writes before optional report opening.
+- Verification: cover progress ownership, model binding, retry state, localization, and real Obsidian generation failure/retry and narrow leaves.
+- Release: synchronize 0.9.3 metadata and rebuild installation assets.
+
+## 0.9.2 - 2026-10-01
+
+- Fix: capture model evidence and screenshot data before asynchronous vault ownership reads so a model switch cannot mix another model's evidence into the report.
+- Reliability: record pending before checking existing artifacts, record ownership-read failures, and release the generation lock for retry.
+- Reliability: treat screenshot capture exceptions as optional evidence warnings and continue generating the report, sidecar, index, and part drafts.
+- Fix: keep generation successful after artifacts are saved even if opening the report fails; delayed view failures from older runs cannot overwrite a newer generation record.
+- Verification: add five reproductions covering model switches, ownership-read failures and retry, screenshot exceptions, failed report opening, and late failures across successive runs.
+- Release: synchronize 0.9.2 metadata, installation assets, and English/Chinese documentation.
+
+## 0.9.1 - 2026-10-01
+
+- Reliability: check ownership of report, analysis sidecar, and index paths before writing. Same-named models and unrelated existing user files get stable suffixes instead of sharing or overwriting knowledge artifacts.
+- Reliability: reuse part drafts only when their source model and part ID match, preserve user edits, and normalize report paths including vault-root output.
+- Fix: remove same-basename conversion relocation inference and untracked legacy output reuse. Adjacent outputs retain the source extension; persisted exact-source legacy records remain usable.
+- Fix: invalidate previously relocated cache records whose output filename hash belongs to a different source path.
+- Fix: stop scheduling GLTF resource reads on the first failure, drain in-flight reads, and revoke all allocated Blob URLs before propagating the original error.
+- Verification: cover same-named model isolation, existing user files, edited indexes and part drafts, component identity changes, source moves, old cache contamination, and failed parallel resource cleanup.
+- Release: synchronize 0.9.1 metadata, installation assets, and English/Chinese documentation.
+
+## 0.9.0 - 2026-10-01
+
+- Fix: route bundled Three.js 3MF, DAE, OFF, PCD, XYZ, and FBX loaders consistently across inline previews, Live Preview, and direct file view when explicitly enabled; Babylon.js remains the default and `3dgrid`/conservative workbench routing is unchanged.
+- Fix: preserve explicit OBJ conversion preferences and prefer registered FBX conversion on desktop instead of unconditionally skipping the converter. Mobile Three FBX loading never discovers desktop tools.
+- Reliability: explain how to enable Three.js for PCD/XYZ before allocating a preview, and preserve Three-only format errors instead of retrying them through an unsupported Babylon loader.
+- Privacy: restrict 3MF/DAE/FBX texture loading to embedded resources; unresolved external textures require conversion to an embedded GLB and cannot trigger network requests.
+- Diagnostics: derive Three format capabilities from enabled, implemented registry loaders so diagnostic output and route selection stay aligned.
+- Reliability: validate OFF geometry counts and vertex references, reject truncated input, and triangulate polygon faces with preserved winding instead of treating polygon indices as triangles.
+- Verification: add conversion-priority, mobile, format-routing, registry, and localized feedback regression tests plus synthetic 3MF/DAE/OFF/PCD/XYZ browser fixtures and direct-edit checks.
+- Release: synchronize package/lock/manifest/versions metadata, rebuild the plugin, and update English and Chinese release documentation for 0.9.0.
 - Review: expose `display()` directly on `AI3DSettingTab` so Obsidian versions before 1.13 retain the imperative settings renderer while internal rerenders continue through the plugin-owned `renderSettings()` method.
 
 ## 0.8.1 - 2026-08-17

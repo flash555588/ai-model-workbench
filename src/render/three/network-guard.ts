@@ -7,6 +7,8 @@
  * default Three loader and triggers a real network request.
  */
 
+import { LoadingManager } from "three";
+
 /** Blob/data URLs are produced locally by the resource resolver and stay allowed. */
 const LOCAL_URL_SCHEME_RE = /^(blob:|data:)/i;
 const REMOTE_URL_RE = /^(https?:|wss?:|ftp:)\/\//i;
@@ -34,4 +36,15 @@ export function guardThreeUrl(url: string, channel: string): string {
     throw createThreeRemoteUrlError(url, channel);
   }
   return url;
+}
+
+/** DAE/FBX textures have no vault resolver; only embedded resources are safe. */
+export function createThreeEmbeddedResourceManager(): LoadingManager {
+  const manager = new LoadingManager();
+  manager.setURLModifier((url) => {
+    guardThreeUrl(url, "embedded texture loading");
+    if (LOCAL_URL_SCHEME_RE.test(url.trim())) return url;
+    throw new Error("External textures cannot be resolved on this direct preview path. Convert the model to a GLB with embedded textures first.");
+  });
+  return manager;
 }

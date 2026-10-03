@@ -1,4 +1,5 @@
-import { FileView, TFile, type WorkspaceLeaf } from "obsidian";
+import { FileView, Notice, TFile, type WorkspaceLeaf } from "obsidian";
+import { RegisteredPartsModal } from "./registered-parts-modal";
 import type { PluginSettings, ModelPreviewSummary, ModelEvidence, ModelEvidenceFormatLineage, ModelPartSummary, PartRecord } from "../domain/models";
 import type { AnnotationManager } from "../render/preview/annotations";
 import { createLoggedModelPreview } from "../render/preview/selection";
@@ -29,9 +30,13 @@ import {
 } from "../utils/registered-match-review";
 import { inferModelAssetFormat } from "./workbench/format-lineage";
 import { createDirectViewLayout } from "./direct-view-layout";
+import { attachDirectSidebarResize } from "./direct-view-sidebar";
 import { markDirectViewDom, unmarkDirectViewDom } from "./direct-view-dom";
 import { renderDirectWorkbenchOverview } from "./direct-workbench-panel";
-import { createDirectViewPreviewOptions, type DirectViewPreviewOptions } from "./direct-view-routing";
+import { getDirectKnowledgeState } from "./direct-workbench-knowledge";
+import { getKnowledgeGenerationProgress, subscribeKnowledgeGenerationProgress } from "./workbench/knowledge-generation-progress";
+import { createDirectViewPreviewOptions, shouldPrepareThreeDirectFileView, type DirectViewPreviewOptions } from "./direct-view-routing";
+import { supportsBabylonDirectFormat } from "../io/formats/renderer-support";
 import { DIRECT_VIEW_TYPE } from "./direct-view-type";
 import {
   getPreviewPathRenderBudget,
@@ -234,6 +239,9 @@ function applyEvidenceFormatLineage(
 
 export class DirectModelView extends FileView {
   private preview: AnnotationPreview | null = null;
+  private registeredPartsModal: RegisteredPartsModal | null = null;
+  private previewHost: HTMLElement | null = null;
+  private toolbar: ReturnType<typeof createHelperButtons> | null = null;
   private annotationMgr: AnnotationManager | null = null;
   private annotationMode = false;
   private loadGeneration = 0;
@@ -241,7 +249,7 @@ export class DirectModelView extends FileView {
   private getSettings: () => PluginSettings;
   private convertedAssetCache: ConvertedAssetCache;
   private ps: PluginStore;
-  private escHandler: ((e: KeyboardEvent) => void) | null = null;
+  private releaseSidebarResize: (() => void) | null = null;
   private workbenchPanel: HTMLElement | null = null;
   private workbenchSummary: ModelPreviewSummary | null = null;
   private workbenchRoute: { backend: string; reason: string } | null = null;
@@ -253,12 +261,49 @@ export class DirectModelView extends FileView {
   private evidenceRegistrationTimer: number | null = null;
   private registeredMatchPreviewTimer: number | null = null;
   private sidebarContent: HTMLElement | null = null;
+  private knowledgeControls: HTMLElement | null = null;
+  private knowledgeStartingModelPath: string | null = null;
+  private knowledgeError: { modelPath: string; message: string } | null = null;
+  private knowledgeOpenError: { modelPath: string; message: string } | null = null;
 
   constructor(leaf: WorkspaceLeaf, getSettings: () => PluginSettings, convertedAssetCache: ConvertedAssetCache, ps: PluginStore) {
     super(leaf);
     this.getSettings = getSettings;
     this.convertedAssetCache = convertedAssetCache;
     this.ps = ps;
+    let lastGeneration = ps.store.getState().lastKnowledgeGeneration;
+    let lastRegisteredParts: readonly PartRecord[] | undefined;
+    this.register(ps.store.subscribe(() => {
+      const parts = this.workbenchModelPath ? ps.store.getState().modelAssetProfiles[this.workbenchModelPath]?.registeredParts : undefined;
+      if (parts !== lastRegisteredParts) {
+        lastRegisteredParts = parts;
+        this.refreshWorkbenchPanel();
+      }
+      const record = ps.store.getState().lastKnowledgeGeneration;
+      if (record === lastGeneration) return;
+      lastGeneration = record;
+      if (record && this.knowledgeError && record.modelPath === this.knowledgeError.modelPath && record.status !== "failed") {
+        this.knowledgeError = null;
+      }
+      this.refreshKnowledgeControls();
+    }));
+    this.register(subscribeKnowledgeGenerationProgress(ps, () => {
+      if (getKnowledgeGenerationProgress(ps)?.modelPath === this.knowledgeStartingModelPath) {
+        this.knowledgeStartingModelPath = null;
+      }
+      this.refreshKnowledgeControls();
+    }));
+    const refreshRemovedKnowledge = (path: string): void => {
+      const modelPath = this.workbenchModelPath;
+      const profile = modelPath ? ps.store.getState().modelAssetProfiles[modelPath] : null;
+      if (path === profile?.reportNotePath || path === profile?.knowledgeIndexPath) this.refreshKnowledgeControls();
+    };
+    this.registerEvent(this.app.vault.on("delete", file => refreshRemovedKnowledge(file.path)));
+    this.registerEvent(this.app.vault.on("create", file => refreshRemovedKnowledge(file.path)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      refreshRemovedKnowledge(oldPath);
+      refreshRemovedKnowledge(file.path);
+    }));
   }
 
   getViewType(): string {
@@ -283,22 +328,28 @@ export class DirectModelView extends FileView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    this.registeredPartsModal?.close();
     this.contentEl.empty();
     markDirectViewDom(this.contentEl);
     await this.loadModel(file);
   }
 
   onClose(): Promise<void> {
+    this.registeredPartsModal?.close();
+    this.toolbar?.destroy();
+    this.toolbar = null;
+    this.previewHost = null;
+    this.workbenchPanel = null;
+    this.sidebarContent = null;
+    this.workbenchModelPath = null;
     unmarkDirectViewDom(this.contentEl);
     this.loadGeneration++;
     this.activeLoadController?.abort();
     this.activeLoadController = null;
     this.clearDeferredEvidenceRegistration();
     this.clearRegisteredMatchPreview();
-    if (this.escHandler) {
-      activeDocument.removeEventListener("keydown", this.escHandler);
-      this.escHandler = null;
-    }
+    this.releaseSidebarResize?.();
+    this.releaseSidebarResize = null;
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     this.preview?.destroy();
@@ -307,6 +358,12 @@ export class DirectModelView extends FileView {
   }
 
   private async loadModel(file: TFile): Promise<void> {
+    this.registeredPartsModal?.close();
+    this.toolbar?.destroy();
+    this.toolbar = null;
+    this.previewHost = null;
+    this.releaseSidebarResize?.();
+    this.releaseSidebarResize = null;
     markDirectViewDom(this.contentEl);
     this.activeLoadController?.abort();
     const loadController = new AbortController();
@@ -324,6 +381,7 @@ export class DirectModelView extends FileView {
     this.annotationMgr?.destroy();
     this.annotationMgr = null;
     this.workbenchPanel = null;
+    this.annotationMode = false;
     this.workbenchSummary = null;
     this.workbenchRoute = null;
     this.workbenchModelPath = null;
@@ -332,6 +390,8 @@ export class DirectModelView extends FileView {
     this.workbenchEvidenceModelPath = null;
     this.workbenchEvidence = null;
     this.sidebarContent = null;
+    this.knowledgeControls = null;
+    this.knowledgeStartingModelPath = null;
     this.preview?.destroy();
     this.preview = null;
     this.ps.setCurrentModel(file.path, null);
@@ -344,7 +404,6 @@ export class DirectModelView extends FileView {
       canvas,
       modeOverlay,
       sidebarContent,
-      vHandle,
       workbenchPanel,
     } = createDirectViewLayout({
       contentEl: this.contentEl,
@@ -361,14 +420,6 @@ export class DirectModelView extends FileView {
       this.annotationMgr?.hideEditor();
       modeOverlay.classList.toggle("is-hidden", !active);
     };
-    // ESC key to exit annotation mode
-    if (this.escHandler) activeDocument.removeEventListener("keydown", this.escHandler);
-    this.escHandler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && this.annotationMode) {
-        setAnnotationMode(false);
-      }
-    };
-    activeDocument.addEventListener("keydown", this.escHandler);
     toolbar = createHelperButtons(
       mainArea,
       host,
@@ -390,9 +441,11 @@ export class DirectModelView extends FileView {
         }
       },
     );
+    this.toolbar = toolbar;
+    this.previewHost = host;
     this.sidebarContent = sidebarContent;
     this.workbenchPanel = workbenchPanel;
-    this.setupResizeHandles(hHandle, vHandle, topTrack, workspace);
+    this.releaseSidebarResize = attachDirectSidebarResize(hHandle, topTrack, workspace);
     const loading = createLoadingOverlay(host);
     try {
       const settings = this.getSettings();
@@ -409,6 +462,7 @@ export class DirectModelView extends FileView {
         },
         convertedAssetCache: this.convertedAssetCache,
         conversionOutputRoot,
+        allowThreeDirect: shouldPrepareThreeDirectFileView(settings, file.extension),
       });
       throwIfPreviewLoadInterrupted(loadOptions);
       const source = toPreviewSource(prepared);
@@ -645,12 +699,26 @@ export class DirectModelView extends FileView {
   }
 
   private createKnowledgePreviewAdapter(): Pick<AnnotationPreview, "captureSnapshot" | "getModelEvidence"> | null {
-    if (!this.preview) {
+    const preview = this.preview;
+    if (!preview) {
       return null;
     }
+    const evidence = this.getCurrentModelEvidence();
+    let snapshot: string | null = null;
+    let snapshotFailed = false;
+    let snapshotError: unknown;
+    try {
+      snapshot = preview.captureSnapshot();
+    } catch (error) {
+      snapshotFailed = true;
+      snapshotError = error;
+    }
     return {
-      captureSnapshot: () => this.preview?.captureSnapshot() ?? null,
-      getModelEvidence: () => this.getCurrentModelEvidence(),
+      captureSnapshot: () => {
+        if (snapshotFailed) throw snapshotError;
+        return snapshot;
+      },
+      getModelEvidence: () => evidence,
     };
   }
 
@@ -671,8 +739,34 @@ export class DirectModelView extends FileView {
     if (!this.sidebarContent) return;
     this.clearRegisteredMatchPreview();
     this.sidebarContent.empty();
-    this.renderKnowledgeControls(this.sidebarContent, modelPath);
+    this.knowledgeControls = this.sidebarContent.createDiv({ cls: "ai3d-direct-workbench-knowledge-host" });
+    this.renderKnowledgeControls(this.knowledgeControls, modelPath);
+    const section = this.sidebarContent.createDiv({ cls: "ai3d-registered-parts-entry" });
+    const parts = this.ps.store.getState().modelAssetProfiles[modelPath]?.registeredParts ?? [];
+    section.createEl("h4", { text: t("registeredDisplay.title") });
+    section.createEl("p", { text: parts.length ? t("registeredDisplay.entryHint") : t("registeredDisplay.empty") });
+    const open = section.createEl("button", { text: t("registeredDisplay.open"), attr: { type: "button", "data-ai3d-action": "show-registered-parts", "aria-haspopup": "dialog" } });
+    open.disabled = !parts.length || !this.preview?.createRegisteredPartDisplay;
+    open.addEventListener("click", () => this.openRegisteredParts(open));
     this.renderRegisteredPartMatches(this.sidebarContent, modelPath, summary);
+  }
+
+  private openRegisteredParts(trigger: HTMLButtonElement): void {
+    const parts = this.workbenchModelPath ? this.ps.store.getState().modelAssetProfiles[this.workbenchModelPath]?.registeredParts : undefined;
+    if (this.registeredPartsModal || !this.previewHost || !this.preview || !parts?.length) return;
+    this.toolbar?.exitInteractionMode();
+    this.annotationMgr?.hideEditor();
+    const modal = new RegisteredPartsModal(this.app, this.previewHost, this.preview, parts, () => {
+      this.registeredPartsModal = null;
+      this.toolbar?.syncCapabilities();
+      if (trigger.isConnected) trigger.focus({ preventScroll: true });
+    });
+    this.registeredPartsModal = modal;
+    try { modal.open(); } catch (error) {
+      modal.close();
+      log.warn("registered part display failed", { error: error instanceof Error ? error.message : String(error) });
+      new Notice(t("registeredDisplay.failed"));
+    }
   }
   private refreshWorkbenchPanel(): void {
     if (!this.workbenchPanel || !this.workbenchSummary || !this.workbenchRoute || !this.workbenchModelPath) {
@@ -681,111 +775,135 @@ export class DirectModelView extends FileView {
     this.renderWorkbenchPanel(this.workbenchPanel, this.workbenchSummary, this.workbenchRoute, this.workbenchModelPath);
     this.renderSidebarContent(this.workbenchModelPath, this.workbenchSummary);
   }
-  private setupResizeHandles(
-    hHandle: HTMLElement,
-    vHandle: HTMLElement,
-    topTrack: HTMLElement,
-    workspace: HTMLElement,
-  ): void {
-    const setupDrag = (
-      handle: HTMLElement,
-      onMove: (dx: number, dy: number) => void,
-      onEnd: () => void,
-    ): void => {
-      let startX = 0;
-      let startY = 0;
-      const onMouseMove = (e: MouseEvent) => {
-        onMove(e.clientX - startX, e.clientY - startY);
-        startX = e.clientX;
-        startY = e.clientY;
-      };
-      const onMouseUp = () => {
-        activeDocument.removeEventListener("mousemove", onMouseMove);
-        activeDocument.removeEventListener("mouseup", onMouseUp);
-        onEnd();
-      };
-      handle.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        startX = e.clientX;
-        startY = e.clientY;
-        activeDocument.addEventListener("mousemove", onMouseMove);
-        activeDocument.addEventListener("mouseup", onMouseUp);
-      });
-    };
-    // Horizontal resize: adjust sidebar width
-    let sidebarWidth = 200;
-    setupDrag(hHandle, (dx) => {
-      sidebarWidth = Math.max(48, Math.min(400, sidebarWidth - dx));
-      topTrack.style.gridTemplateColumns = `1fr 4px ${sidebarWidth}px`;
-    }, () => {});
-    // Vertical resize: adjust bottom panel height
-    let bottomHeight = 220;
-    setupDrag(vHandle, (_dx, dy) => {
-      bottomHeight = Math.max(120, Math.min(500, bottomHeight - dy));
-      workspace.style.gridTemplateRows = `1fr 4px ${bottomHeight}px`;
-    }, () => {});
-  }
   private renderKnowledgeControls(parent: HTMLElement, modelPath: string): void {
-    const profile = this.ps.store.getState().modelAssetProfiles[modelPath];
+    parent.empty();
+    const storeState = this.ps.store.getState();
+    const profile = storeState.modelAssetProfiles[modelPath];
+    const reportExists = !!profile?.reportNotePath && this.app.vault.getAbstractFileByPath(profile.reportNotePath) instanceof TFile;
+    const indexExists = !!profile?.knowledgeIndexPath && this.app.vault.getAbstractFileByPath(profile.knowledgeIndexPath) instanceof TFile;
+    const availableProfile = profile ? { ...profile,
+      reportNotePath: reportExists ? profile.reportNotePath : undefined,
+      knowledgeIndexPath: indexExists ? profile.knowledgeIndexPath : undefined,
+    } : undefined;
+    const error = this.knowledgeError?.modelPath === modelPath ? this.knowledgeError.message : undefined;
+    const state = getDirectKnowledgeState({
+      modelPath,
+      profile: availableProfile,
+      record: storeState.lastKnowledgeGeneration,
+      progress: getKnowledgeGenerationProgress(this.ps),
+      starting: this.knowledgeStartingModelPath === modelPath,
+      error,
+    });
     const control = parent.createDiv({ cls: "ai3d-direct-workbench-control ai3d-direct-workbench-knowledge" });
+    control.dataset.ai3dKnowledgeStatus = state.status;
+    control.setAttribute("aria-busy", String(state.status === "generating"));
     control.createDiv({ cls: "ai3d-direct-workbench-label", text: t("directWorkbench.knowledgeTitle") });
     control.createDiv({
-      cls: "ai3d-direct-workbench-value",
-      text: profile?.knowledgeIndexPath
-        ? t("workbench.indexReady")
-        : profile?.reportNotePath
-          ? t("workbench.noteReady")
-          : t("workbench.noReportYet"),
+      cls: "ai3d-direct-workbench-value ai3d-direct-workbench-knowledge-status",
+      text: state.message,
+      attr: { role: "status", "aria-live": "polite" },
     });
+    if (error && state.status === "failed") {
+      control.createDiv({ cls: "ai3d-direct-workbench-error", text: error });
+    }
+    if (this.knowledgeOpenError?.modelPath === modelPath) {
+      control.createDiv({ cls: "ai3d-direct-workbench-error ai3d-direct-workbench-open-error", text: this.knowledgeOpenError.message, attr: { role: "alert" } });
+    }
+    if ((!reportExists && profile?.reportNotePath) || (!indexExists && profile?.knowledgeIndexPath)) {
+      control.createDiv({ cls: "ai3d-direct-workbench-evidence-hint", text: t("directWorkbench.savedNoteMissing") });
+    }
+    control.createDiv({ cls: "ai3d-direct-workbench-evidence-hint", text: t("directWorkbench.evidenceHint") });
 
     const actions = control.createDiv({ cls: "ai3d-direct-workbench-actions" });
     const generateButton = actions.createEl("button", {
-      cls: "ai3d-direct-workbench-action",
-      text: t("workbench.generateNoteAction"),
+      cls: `ai3d-direct-workbench-action${state.primary === "generate-note" ? " is-primary" : ""}`,
+      text: state.generateLabel,
       attr: { type: "button", "data-ai3d-action": "generate-note" },
     });
+    generateButton.disabled = state.generateDisabled;
     generateButton.addEventListener("click", () => {
-      generateButton.disabled = true;
+      const loadGeneration = this.loadGeneration;
+      const summary = this.workbenchSummary;
+      this.knowledgeStartingModelPath = modelPath;
+      this.knowledgeError = null;
+      this.knowledgeOpenError = null;
+      this.refreshKnowledgeControls();
+      let preview: ReturnType<DirectModelView["createKnowledgePreviewAdapter"]>;
+      try {
+        preview = this.createKnowledgePreviewAdapter();
+      } catch (error) {
+        this.knowledgeStartingModelPath = null;
+        this.knowledgeError = { modelPath, message: error instanceof Error ? error.message : String(error) };
+        this.refreshKnowledgeControls();
+        return;
+      }
       void import("./workbench/knowledge-note")
-        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview: this.createKnowledgePreviewAdapter() }))
+        .then(({ generateKnowledgeNote }) => generateKnowledgeNote(this.app, this.ps, { preview, modelPath, modelPreview: summary }))
         .catch((err) => {
           console.error("[AI3D] Generate knowledge note failed:", err);
+          if (loadGeneration === this.loadGeneration && this.workbenchModelPath === modelPath) {
+            this.knowledgeError = { modelPath, message: err instanceof Error ? err.message : String(err) };
+          }
         })
         .finally(() => {
-          generateButton.disabled = false;
-          this.refreshWorkbenchPanel();
+          if (loadGeneration === this.loadGeneration && this.workbenchModelPath === modelPath) {
+            this.knowledgeStartingModelPath = null;
+            this.refreshKnowledgeControls();
+          }
         });
     });
 
     const openButton = actions.createEl("button", {
-      cls: "ai3d-direct-workbench-action",
+      cls: `ai3d-direct-workbench-action${state.primary === "open-note" ? " is-primary" : ""}`,
       text: t("workbench.openNoteAction"),
       attr: { type: "button", "data-ai3d-action": "open-note" },
     });
-    openButton.disabled = !profile?.reportNotePath;
+    openButton.disabled = !reportExists;
     openButton.addEventListener("click", () => {
       const reportPath = this.ps.store.getState().modelAssetProfiles[modelPath]?.reportNotePath;
       if (!reportPath) return;
-      const file = this.app.vault.getAbstractFileByPath(reportPath);
-      if (file instanceof TFile) {
-        void this.app.workspace.getLeaf(true).openFile(file, { active: true });
-      }
+      this.openKnowledgeFile(modelPath, reportPath);
     });
 
     const openIndexButton = actions.createEl("button", {
-      cls: "ai3d-direct-workbench-action",
+      cls: `ai3d-direct-workbench-action${state.primary === "open-index" ? " is-primary" : ""}`,
       text: t("workbench.openIndexAction"),
       attr: { type: "button", "data-ai3d-action": "open-index" },
     });
-    openIndexButton.disabled = !profile?.knowledgeIndexPath;
+    openIndexButton.disabled = !indexExists;
     openIndexButton.addEventListener("click", () => {
       const indexPath = this.ps.store.getState().modelAssetProfiles[modelPath]?.knowledgeIndexPath;
       if (!indexPath) return;
-      const file = this.app.vault.getAbstractFileByPath(indexPath);
-      if (file instanceof TFile) {
-        void this.app.workspace.getLeaf(true).openFile(file, { active: true });
-      }
+      this.openKnowledgeFile(modelPath, indexPath);
     });
+  }
+
+  private openKnowledgeFile(modelPath: string, path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    this.knowledgeOpenError = null;
+    if (!(file instanceof TFile)) {
+      this.refreshKnowledgeControls();
+      return;
+    }
+    const generation = this.loadGeneration;
+    void (async () => {
+      try {
+        await this.app.workspace.getLeaf(true).openFile(file, { active: true });
+      } catch (error) {
+        if (generation !== this.loadGeneration || modelPath !== this.workbenchModelPath) return;
+        this.knowledgeOpenError = { modelPath, message: formatT("directWorkbench.openSavedNoteFailed", {
+          message: error instanceof Error ? error.message : String(error),
+        }) };
+        this.refreshKnowledgeControls();
+      }
+    })();
+    this.refreshKnowledgeControls();
+  }
+
+  private refreshKnowledgeControls(): void {
+    if (this.knowledgeControls?.isConnected && this.workbenchModelPath) {
+      this.renderKnowledgeControls(this.knowledgeControls, this.workbenchModelPath);
+    }
   }
 
   private renderRegisteredPartMatches(parent: HTMLElement, modelPath: string, summary: ModelPreviewSummary): void {
@@ -977,7 +1095,7 @@ export class DirectModelView extends FileView {
       if (isPreviewLoadInterruptedError(error)) {
         throw error;
       }
-      if (created.route.backend !== "three") {
+      if (created.route.backend !== "three" || !supportsBabylonDirectFormat(source.ext)) {
         throw error;
       }
       throwIfPreviewLoadInterrupted(loadOptions);

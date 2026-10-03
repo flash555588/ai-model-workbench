@@ -81,7 +81,7 @@ describe("diagnostics report", () => {
     });
 
     expect(report).toContain("Current route: three");
-    expect(report).toContain("Route capability profile: three; formats=glb/gltf/stl/ply/obj");
+    expect(report).toContain("Route capability profile: three; formats=glb/gltf/stl/obj/ply/fbx/3mf/dae/off/pcd/xyz");
     expect(report).toContain("Route color pipeline: sRGB output, no tone mapping");
     expect(report).toContain("Converted GLB Three fast path: on");
     expect(report).toContain("Path: <redacted .glb>");

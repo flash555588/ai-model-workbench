@@ -6,6 +6,18 @@ const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const verifyScriptPath = join(rootDir, "scripts", "verify-preview.mjs");
 
 const cases = [
+  {
+    label: "Note preview tools and readonly pins (Babylon)",
+    args: ["--mode", "readonly-pin", "--note-ui"],
+  },
+  {
+    label: "Note preview tools and readonly pins (Three)",
+    args: ["--mode", "readonly-pin", "--note-ui", "--rollout", "three-readonly-glb"],
+  },
+  {
+    label: "Mobile toolbar scroll exit preserves completed ruler (browser emulation)",
+    args: ["--rollout", "three-direct-glb", "--mobile-toolbar-only"],
+  },
   // GLB format tests
   {
     label: "Default simple GLB preview",
@@ -161,6 +173,16 @@ const cases = [
     ],
   },
   // GLB alternate path (confirms path resolution works)
+  ...["3mf", "dae", "off", "pcd", "xyz"].flatMap((ext) => [
+    {
+      label: `${ext.toUpperCase()} bundled direct loader`,
+      args: ["--model", join(rootDir, "models", "resource-fixtures", "three-direct", `tetrahedron.${ext}`), "--rollout", "three-direct-glb", "--expect-backend", "three", "--route-only"],
+    },
+    {
+      label: `${ext.toUpperCase()} direct-edit route`,
+      args: ["--model", join(rootDir, "models", "resource-fixtures", "three-direct", `tetrahedron.${ext}`), "--mode", "direct-edit", "--rollout", "three-direct-glb", "--expect-backend", "three", "--route-only"],
+    },
+  ]),
   {
     label: "GLB alternate path (Three.js)",
     args: ["--model", join(rootDir, "models", "test-model.glb"), "--rollout", "three-direct-glb"],

@@ -1,9 +1,20 @@
 import type { PluginSettings } from "../domain/models";
 import type { PreviewSource } from "../io/preview/preview-source";
 import type { PreviewFactoryOptions } from "../render/preview/types";
+import { supportsThreeDirectFormat } from "../io/formats/renderer-support";
+import { isThreeDirectRoute } from "../render/preview/routing";
 
-const THREE_DIRECT_VIEW_FORMATS = new Set(["glb", "gltf", "stl", "ply", "obj"]);
 const THREE_WORKBENCH_DIRECT_EXTS = new Set(["glb", "gltf"]);
+
+export function shouldPrepareThreeDirectFileView(settings: PluginSettings, ext: string): boolean {
+  return isThreeDirectRoute({
+    ext,
+    annotationMode: "edit",
+    allowEditModeOnThree: true,
+    rendererRollout: settings.previewRendererRollout,
+    useThreeRenderer: settings.useThreeRenderer,
+  });
+}
 
 export type DirectViewPreviewOptions = PreviewFactoryOptions & {
   annotationMode: "edit";
@@ -23,11 +34,11 @@ function canUseExperimentalThreeWorkbench(settings: PluginSettings, source: Prev
 }
 
 function canUseThreeDirectFileView(source: PreviewSource): boolean {
-  if (!THREE_DIRECT_VIEW_FORMATS.has(source.ext)) {
+  if (!supportsThreeDirectFormat(source.ext)) {
     return false;
   }
   if (source.strategy === "direct") {
-    return THREE_DIRECT_VIEW_FORMATS.has(source.sourceExt);
+    return supportsThreeDirectFormat(source.sourceExt);
   }
   return source.strategy === "convert" && THREE_WORKBENCH_DIRECT_EXTS.has(source.ext);
 }

@@ -3,23 +3,23 @@
  * The full model widget is imported only when an embed approaches the viewport.
  */
 
-import type { App } from "obsidian";
+import { editorInfoField, editorLivePreviewField, type App } from "obsidian";
 import { EditorView, Decoration, WidgetType } from "@codemirror/view";
 import { Prec, StateField, RangeSet, type Range, type Text } from "@codemirror/state";
-import { isSupportedModelExtension } from "../../io/formats/registry";
 import type { AnnotationPin, PluginSettings } from "../../domain/models";
+import type { NotePartsAccess } from "./note-parts-config";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { resolveVaultPath } from "../../utils/resolve-path";
 import {
   docMayContainModelEmbed,
-  LIVE_PREVIEW_EMBED_MARKER,
   transactionMayAffectModelEmbeds,
 } from "./live-preview-embed-scan";
 import {
   createLivePreviewPathResolverCache,
   type LivePreviewPathResolverCache,
 } from "./live-preview-path-cache";
-import { createStagedDiv } from "../../utils/dom";
+import { createStagedEl } from "../../utils/dom";
+import { scanModelEmbeds } from "./model-embed-syntax";
 
 type LivePreviewModule = typeof import("./live-preview");
 type LivePreviewWidget = InstanceType<LivePreviewModule["ModelEmbedWidget"]>;
@@ -31,11 +31,12 @@ function loadLivePreviewModule(): Promise<LivePreviewModule> {
   return livePreviewModulePromise;
 }
 
-class LazyModelEmbedWidget extends WidgetType {
+export class LazyModelEmbedWidget extends WidgetType {
   private mountedWidget: LivePreviewWidget | null = null;
   private mountedDom: HTMLElement | null = null;
   private viewportObs: IntersectionObserver | null = null;
   private destroyed = false;
+  private mountGeneration = 0;
 
   constructor(
     private app: App,
@@ -59,6 +60,8 @@ class LazyModelEmbedWidget extends WidgetType {
     private renderScale: PluginSettings["renderScale"],
     private convertedAssetCache: ConvertedAssetCache,
     private getAnnotations?: (modelPath: string) => AnnotationPin[],
+    private getToolbarSettings?: () => PluginSettings,
+    private partsAccess?: NotePartsAccess,
   ) {
     super();
   }
@@ -87,18 +90,27 @@ class LazyModelEmbedWidget extends WidgetType {
     );
   }
 
+  override get estimatedHeight(): number { return this.height; }
+
   override toDOM(): HTMLElement {
-    const placeholder = createStagedDiv("ai3d-embed-preview ai3d-cm-widget ai3d-embed-preview-lazy");
+    // CM keeps decoration values when a line leaves the viewport, then reuses
+    // the WidgetType to build fresh DOM on return. Each mount has its own lifetime.
+    this.destroyed = false;
+    const generation = ++this.mountGeneration;
+    const placeholder = createStagedEl("span", "ai3d-image-embed ai3d-cm-widget ai3d-embed-preview-lazy");
+    placeholder.style.width = `${this.width}px`;
     placeholder.setAttribute("contenteditable", "false");
     placeholder.style.setProperty("--ai3d-embed-height", `${this.height}px`);
 
-    this.watchViewport(placeholder);
+    this.watchViewport(placeholder, generation);
     return placeholder;
   }
 
   override destroy(): void {
     this.destroyed = true;
+    this.mountGeneration++;
     this.stopViewportWatch();
+    this.stopRemovalWatch();
     this.mountedWidget?.destroy();
     this.mountedWidget = null;
     this.mountedDom?.remove();
@@ -109,17 +121,17 @@ class LazyModelEmbedWidget extends WidgetType {
     return true;
   }
 
-  private watchViewport(placeholder: HTMLElement): void {
+  private watchViewport(placeholder: HTMLElement, generation: number): void {
     if (typeof IntersectionObserver === "undefined") {
-      void this.mount(placeholder);
+      void this.mount(placeholder, generation);
       return;
     }
 
     this.viewportObs = new IntersectionObserver((entries) => {
-      if (this.destroyed || this.mountedWidget) return;
+      if (this.destroyed || generation !== this.mountGeneration || this.mountedWidget) return;
       if (!entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) return;
       this.stopViewportWatch();
-      void this.mount(placeholder);
+      void this.mount(placeholder, generation);
     }, { rootMargin: "240px" });
     this.viewportObs.observe(placeholder);
   }
@@ -129,13 +141,20 @@ class LazyModelEmbedWidget extends WidgetType {
     this.viewportObs = null;
   }
 
-  private async mount(placeholder: HTMLElement): Promise<void> {
+  private removalObserver: MutationObserver | null = null;
+
+  private stopRemovalWatch(): void {
+    this.removalObserver?.disconnect();
+    this.removalObserver = null;
+  }
+
+  private async mount(placeholder: HTMLElement, generation: number): Promise<void> {
     let module: LivePreviewModule;
     try {
       module = await loadLivePreviewModule();
     } catch (error) {
       console.warn("[AI3D] Failed to load Live Preview widget runtime:", error);
-      if (!this.destroyed && placeholder.isConnected) {
+      if (!this.destroyed && generation === this.mountGeneration && placeholder.isConnected) {
         placeholder.textContent = "Ai3d live preview failed to load.";
       }
       return;
@@ -163,23 +182,59 @@ class LazyModelEmbedWidget extends WidgetType {
       this.renderScale,
       this.convertedAssetCache,
       this.getAnnotations,
+      this.getToolbarSettings,
+      this.partsAccess,
     );
 
-    if (this.destroyed || !placeholder.isConnected) {
+    if (this.destroyed || generation !== this.mountGeneration || !placeholder.isConnected) {
       widget.destroy();
       return;
     }
 
     const mountedDom = widget.toDOM();
-    if (this.destroyed || !placeholder.isConnected) {
+    if (this.destroyed || generation !== this.mountGeneration || !placeholder.isConnected) {
       widget.destroy();
       return;
     }
 
     this.mountedWidget = widget;
     this.mountedDom = mountedDom;
-    placeholder.replaceWith(mountedDom);
+    // CodeMirror owns the returned root. Replacing it makes the new DOM look
+    // like an editor mutation and can insert toolbar text into the document.
+    placeholder.className = "ai3d-image-embed ai3d-cm-widget";
+    placeholder.style.removeProperty("--ai3d-embed-height");
+    placeholder.replaceChildren(mountedDom);
+    // Rendered table embeds can outlive Obsidian's render-child unload callback.
+    // Watch the editor-owned root, which stays in the note when the frame moves.
+    if (typeof MutationObserver !== "undefined" && placeholder.ownerDocument?.body) {
+      this.stopRemovalWatch();
+      this.removalObserver = new MutationObserver(() => {
+        if (generation === this.mountGeneration && !placeholder.isConnected) this.destroy();
+      });
+      this.removalObserver.observe(placeholder.ownerDocument.body, { childList: true, subtree: true });
+    }
   }
+}
+
+export function createImageEmbedWidget(
+  app: App,
+  settings: PluginSettings,
+  convertedAssetCache: ConvertedAssetCache,
+  modelPath: string,
+  size: { width: number; height: number },
+  getAnnotations?: (modelPath: string) => AnnotationPin[],
+  getToolbarSettings?: () => PluginSettings,
+  partsAccess?: NotePartsAccess,
+): LazyModelEmbedWidget {
+  return new LazyModelEmbedWidget(
+    app, modelPath, size.width, size.height, settings.autoRotateDefault,
+    settings.enabledConverterIds, settings.freecadCommand, settings.obj2gltfCommand,
+    settings.fbx2gltfCommand, settings.freecadcmdCommand, settings.preferObj2gltfForObj,
+    settings.preferFbx2gltfForFbx, settings.annotationPreviewMode,
+    settings.annotationDisplayMode, settings.previewRendererRollout, settings.useThreeRenderer,
+    settings.auxiliaryFileFolder, settings.renderQuality, settings.renderScale,
+    convertedAssetCache, getAnnotations, getToolbarSettings, partsAccess,
+  );
 }
 
 function findEmbeds(
@@ -203,93 +258,36 @@ function findEmbeds(
   convertedAssetCache: ConvertedAssetCache,
   resolvedPathCache: LivePreviewPathResolverCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
+  getToolbarSettings?: () => PluginSettings,
+  partsAccess?: NotePartsAccess,
 ): Range<Decoration>[] {
-  const doc: Text = "state" in viewOrState ? viewOrState.state.doc : viewOrState.doc;
+  const state = "state" in viewOrState ? viewOrState.state : viewOrState;
+  const doc: Text = state.doc;
+  const sourcePath = state.field(editorInfoField, false)?.file?.path ?? "";
   const ranges: Range<Decoration>[] = [];
+  if (state.field(editorLivePreviewField, false) === false) return ranges;
   if (!docMayContainModelEmbed(doc)) {
     return ranges;
   }
 
-  let lineFrom = 0;
-  for (const text of doc.iterLines()) {
-    const nextLineFrom = lineFrom + text.length + 1;
-
-    if (!text.includes(LIVE_PREVIEW_EMBED_MARKER)) {
-      lineFrom = nextLineFrom;
-      continue;
-    }
-
-    let pos = 0;
-    while (pos < text.length) {
-      const start = text.indexOf(LIVE_PREVIEW_EMBED_MARKER, pos);
-      if (start === -1) break;
-
-      if (start > 0 && text[start - 1] === "\\") {
-        pos = start + LIVE_PREVIEW_EMBED_MARKER.length;
-        continue;
-      }
-
-      const end = text.indexOf("]]", start + LIVE_PREVIEW_EMBED_MARKER.length);
-      if (end === -1) break;
-
-      const raw = text.slice(start + LIVE_PREVIEW_EMBED_MARKER.length, end);
-      const parts = raw.split("|");
-      const filename = parts[0].trim();
-
-      const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-      if (!isSupportedModelExtension(ext)) {
-        pos = end + 2;
-        continue;
-      }
-
-      let w = 400;
-      let h = 300;
-      if (parts.length > 1) {
-        const sizeMatch = parts[1].trim().match(/^(\d+)\s*x\s*(\d+)$/);
-        if (sizeMatch) {
-          w = parseInt(sizeMatch[1], 10);
-          h = parseInt(sizeMatch[2], 10);
-        }
-      }
-
-      const modelPath = resolvedPathCache.resolve(filename);
-      if (!modelPath) {
-        pos = end + 2;
-        continue;
-      }
-
-      ranges.push(
-        Decoration.replace({
-          widget: new LazyModelEmbedWidget(
-            app,
-            modelPath,
-            w,
-            h,
-            autoRotate,
-            enabledConverterIds,
-            freecadCommand,
-            obj2gltfCommand,
-            fbx2gltfCommand,
-            freecadcmdCommand,
-            preferObj2gltfForObj,
-            preferFbx2gltfForFbx,
-            annotationPreviewMode,
-            annotationDisplayMode,
-            previewRendererRollout,
-            useThreeRenderer,
-            auxiliaryFileFolder,
-            renderQuality,
-            renderScale,
-            convertedAssetCache,
-            getAnnotations,
-          ),
-          block: true,
-        }).range(lineFrom + start, lineFrom + end + 2),
-      );
-
-      pos = end + 2;
-    }
-    lineFrom = nextLineFrom;
+  for (const embed of scanModelEmbeds(doc.toString())) {
+    const modelPath = resolvedPathCache.resolve(embed.path, sourcePath);
+    if (!modelPath) continue;
+    const line = doc.lineAt(embed.from);
+    const standalone = !line.text.slice(0, embed.from - line.from).trim() && !line.text.slice(embed.to - line.from).trim();
+    ranges.push(Decoration.replace({
+      widget: new LazyModelEmbedWidget(
+        app, modelPath, embed.width, embed.height, autoRotate, enabledConverterIds,
+        freecadCommand, obj2gltfCommand, fbx2gltfCommand, freecadcmdCommand,
+        preferObj2gltfForObj, preferFbx2gltfForFbx, annotationPreviewMode,
+        annotationDisplayMode, previewRendererRollout, useThreeRenderer,
+        auxiliaryFileFolder, renderQuality, renderScale, convertedAssetCache,
+        getAnnotations, getToolbarSettings, partsAccess,
+      ),
+      // Obsidian also replaces a standalone file embed with a block widget.
+      // Match that layer so its generic attachment card cannot cover ours.
+      block: standalone,
+    }).range(embed.from, embed.to));
   }
 
   return ranges;
@@ -310,6 +308,7 @@ export function registerLazyLivePreviewExtension(
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
   registerCleanup?: (cleanup: () => void) => void,
+  partsAccess?: NotePartsAccess,
 ) {
   const resolvedPathCache = createLivePreviewPathResolverCache(app, resolveVaultPath);
   const clearResolvedPathCache = () => resolvedPathCache.clear();
@@ -348,12 +347,15 @@ export function registerLazyLivePreviewExtension(
         convertedAssetCache,
         resolvedPathCache,
         getAnnotations,
+        getSettings,
+        partsAccess,
       );
       return toDecoSet(ranges);
     },
     update(value, tr): DecoSet {
-      if (tr.docChanged) {
-        if (!transactionMayAffectModelEmbeds(tr)) {
+      const modeChanged = tr.startState.field(editorLivePreviewField, false) !== tr.state.field(editorLivePreviewField, false);
+      if (tr.docChanged || modeChanged) {
+        if (!modeChanged && !transactionMayAffectModelEmbeds(tr)) {
           return value.map(tr.changes);
         }
         const s = getSettings();
@@ -378,6 +380,8 @@ export function registerLazyLivePreviewExtension(
           convertedAssetCache,
           resolvedPathCache,
           getAnnotations,
+          getSettings,
+          partsAccess,
         );
         return toDecoSet(ranges);
       }

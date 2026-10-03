@@ -46,6 +46,18 @@ Use this page to choose the right document before changing code.
 - `release-notes/0.6.0-plus.md` - user-facing rolling update log for the
   `0.6.0+` release line.
 - `release-notes/0.8.1.md` - GitHub release notes for the Obsidian source-review compatibility patch.
+- `release-notes/0.9.11.md` - note UI refinement and concise bilingual guidance.
+- `release-notes/0.9.10.md` - context-aware note insertion and usage guidance.
+- `release-notes/0.9.9.md` - registered-part presentation in notes and full inspection.
+- `release-notes/0.9.8.md` - single-model registered-part catalog inspection.
+- `release-notes/0.9.7.md` - compact image controls and state-preserving inspection dialog.
+- `release-notes/0.9.6.md` - image-style embeds within paragraphs, lists, quotes, and tables.
+- `release-notes/0.9.5.md` - shared in-note controls, readonly pin semantics, and offline interactive showcase.
+- `release-notes/0.9.4.md` - mode exit, labeled extra tools, sidebar controls, and knowledge navigation recovery.
+- `release-notes/0.9.3.md` - direct-view tool labels, knowledge progress, and narrow-leaf layout.
+- `release-notes/0.9.2.md` - knowledge-generation snapshot consistency and failure boundaries.
+- `release-notes/0.9.1.md` - model data isolation and failed-load resource cleanup.
+- `release-notes/0.9.0.md` - Format-routing stability, conversion preference, and release-readiness update.
 - `release-notes/0.8.0.md` - GitHub release notes for the precision measurement and reliability release.
 - `release-notes/0.7.8.md` - GitHub release notes for the current lockfile review patch.
 - `release-notes/0.7.7.md` - GitHub release notes for the lifecycle and privacy hardening release.

@@ -1,4 +1,5 @@
 import type { PreviewRouteDecision } from "./routing";
+import { listThreeDirectFormats } from "../../io/formats/renderer-support";
 import {
   supportsAnnotationPreview,
   supportsAnimationPreview,
@@ -16,7 +17,6 @@ import {
   type PreviewCapabilityProfile,
 } from "./types";
 
-const THREE_DIRECT_FORMATS = ["glb", "gltf", "stl", "ply", "obj"] as const;
 // SPLAT/SPZ/SOG are disabled in packaged builds (see io/formats/registry.ts),
 // so they are not listed as a supported capability format.
 const BABYLON_CAPABILITY_FORMATS = ["glb", "gltf", "stl", "ply", "obj", "converted-glb"] as const;
@@ -45,13 +45,13 @@ export function createPreviewCapabilityProfile(
   if (backend === "three") {
     return {
       backend,
-      supportedFormats: THREE_DIRECT_FORMATS,
-      fallbackRole: "Primary single-model preview path",
+      supportedFormats: listThreeDirectFormats(),
+      fallbackRole: "Opt-in single-model preview and converted GLB fast path",
       capabilities: [...capabilities],
       colorPipeline: "sRGB output, no tone mapping, PBR material preservation",
       fidelityNotes: [
         "Direct GLB/GLTF/STL/PLY/OBJ are expected to preserve geometry scale and material color intent.",
-        "Workbench, grid, and SPLAT routes still keep Babylon fallback coverage.",
+        "Babylon fallback covers GLB/GLTF/STL/PLY/OBJ; Three-only formats retain their original load errors.",
       ],
     };
   }

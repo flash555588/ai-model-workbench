@@ -1,5 +1,6 @@
 import type { PreviewRendererRollout } from "../../domain/models";
 import type { PreviewAnnotationMode, PreviewFactoryOptions } from "./types";
+import { supportsThreeDirectFormat } from "../../io/formats/renderer-support";
 
 export type PreviewBackend = "three" | "babylon";
 
@@ -19,8 +20,6 @@ export interface GridRouteDecision {
 
 const DEFAULT_RENDERER_ROLLOUT: PreviewRendererRollout = "babylon-safe";
 
-/** Formats that the Three.js renderer can load directly. */
-const THREE_FORMATS = new Set(["glb", "gltf", "stl", "ply", "obj", "fbx"]);
 const THREE_WORKBENCH_FORMATS = new Set(["glb", "gltf"]);
 
 function resolveRendererRollout(value: PreviewFactoryOptions["rendererRollout"]): PreviewRendererRollout {
@@ -48,7 +47,7 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
     };
   }
 
-  if (THREE_FORMATS.has(ext) && (!requireWorkbenchFeatures || allowWorkbenchFeaturesOnThree)) {
+  if (supportsThreeDirectFormat(ext) && (!requireWorkbenchFeatures || allowWorkbenchFeaturesOnThree)) {
     if (requireWorkbenchFeatures && !THREE_WORKBENCH_FORMATS.has(ext)) {
       return {
         backend: "babylon",
@@ -112,7 +111,7 @@ export function resolvePreviewRoute(options: PreviewFactoryOptions): PreviewRout
   }
 
   const reasons: string[] = [];
-  if (!THREE_FORMATS.has(ext)) reasons.push(`ext=${ext}`);
+  if (!supportsThreeDirectFormat(ext)) reasons.push(`ext=${ext}`);
   if (annotationMode !== "none") reasons.push(`annotationMode=${annotationMode}`);
   if (annotationMode === "edit" && !allowEditModeOnThree) reasons.push("allowEditModeOnThree=false");
   if (requireWorkbenchFeatures) reasons.push("requireWorkbenchFeatures=true");

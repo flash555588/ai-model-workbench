@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS } from "../domain/constants";
 import type { PluginSettings } from "../domain/models";
 import type { PreviewSource } from "../io/preview/preview-source";
 import { resolvePreviewRoute } from "../render/preview/routing";
-import { createDirectViewPreviewOptions } from "./direct-view-routing";
+import { createDirectViewPreviewOptions, shouldPrepareThreeDirectFileView } from "./direct-view-routing";
 
 function makeSource(partial: Partial<PreviewSource>): PreviewSource {
   return {
@@ -25,6 +25,29 @@ function makeSettings(partial: Partial<PluginSettings> = {}): PluginSettings {
 }
 
 describe("createDirectViewPreviewOptions", () => {
+  it("enables source preparation only for the file-view Three rollout", () => {
+    for (const ext of ["glb", "obj", "3mf", "dae", "off", "pcd", "xyz", "fbx"]) {
+      expect(shouldPrepareThreeDirectFileView(makeSettings(), ext)).toBe(false);
+      expect(shouldPrepareThreeDirectFileView(makeSettings({ useThreeRenderer: true, previewRendererRollout: "three-readonly-glb" }), ext)).toBe(false);
+      expect(shouldPrepareThreeDirectFileView(makeSettings({ useThreeRenderer: true, previewRendererRollout: "three-direct-glb" }), ext)).toBe(true);
+    }
+    expect(shouldPrepareThreeDirectFileView(makeSettings({ useThreeRenderer: true, previewRendererRollout: "three-direct-glb" }), "step")).toBe(false);
+  });
+  it.each(["3mf", "dae", "off", "pcd", "xyz", "fbx"])("permits direct %s only in the enabled file-view rollout", (ext) => {
+    const source = makeSource({ ext, sourceExt: ext, path: `models/part.${ext}`, sourcePath: `models/part.${ext}` });
+    const route = resolvePreviewRoute(createDirectViewPreviewOptions(makeSettings({
+      useThreeRenderer: true,
+      previewRendererRollout: "three-direct-glb",
+      experimentalThreeWorkbench: true,
+    }), source));
+    expect(route.backend).toBe("three");
+    expect(route.requireWorkbenchFeatures).toBe(false);
+    expect(resolvePreviewRoute(createDirectViewPreviewOptions(makeSettings(), source)).backend).toBe("babylon");
+    expect(resolvePreviewRoute(createDirectViewPreviewOptions(makeSettings({
+      useThreeRenderer: true,
+      previewRendererRollout: "three-readonly-glb",
+    }), source)).backend).toBe("babylon");
+  });
   it("routes default direct GLB file view through Babylon", () => {
     const options = createDirectViewPreviewOptions(makeSettings(), makeSource({}));
     const route = resolvePreviewRoute(options);

@@ -1,7 +1,6 @@
 import type { FormatCapability } from "../formats/types";
 import type { ConversionManager } from "./manager";
 import { CONVERTED_ASSET_CACHE_VERSION, type ConvertedAssetCache } from "../cache/converted-asset-cache";
-import type { ConvertedAssetRecord } from "../../domain/models";
 import { createLogger } from "../../utils/log";
 import {
   F_OK,
@@ -16,15 +15,6 @@ import { MissingConverterError } from "./errors";
 
 const log = createLogger("conversion-service");
 export type ConversionManagerProvider = ConversionManager | (() => ConversionManager | Promise<ConversionManager>);
-
-function getLegacyConvertedOutputPath(sourcePath: string, targetExt: string): string {
-  const lastDot = sourcePath.lastIndexOf(".");
-  const base = lastDot > 0 ? sourcePath.slice(0, lastDot) : sourcePath;
-  const lastSep = Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\"));
-  const dir = base.slice(0, lastSep + 1);
-  const name = base.slice(lastSep + 1);
-  return `${dir}${name}.ai3d-converted.${targetExt}`;
-}
 
 function hashPath(value: string): string {
   let hash = 0x811c9dc5;
@@ -45,18 +35,22 @@ function sanitizeOutputStem(sourcePath: string): string {
   return stem || "model";
 }
 
-function getSourceStem(sourcePath: string): string {
-  return basename(sourcePath, extname(sourcePath)).toLowerCase();
-}
-
 function getConvertedOutputPath(sourcePath: string, targetExt: string, outputRoot?: string): string {
   if (!outputRoot) {
-    return getLegacyConvertedOutputPath(sourcePath, targetExt);
+    return `${sourcePath}.ai3d-converted.${targetExt}`;
   }
 
   const stem = sanitizeOutputStem(sourcePath);
   const hash = hashPath(`${sourcePath}::${targetExt}`);
   return join(outputRoot, `${stem}-${hash}.ai3d-converted.${targetExt}`);
+}
+
+function hasMismatchedSourceHash(sourcePath: string, outputPath: string, targetExt: string): boolean {
+  const outputName = basename(outputPath);
+  if (outputName === `${basename(sourcePath, extname(sourcePath))}.ai3d-converted.${targetExt}`) return false;
+  // Older relocation logic could persist another source's hashed output as a cache hit.
+  if (!/-[a-f0-9]{8}\.ai3d-converted\.[^.]+$/.test(outputName)) return false;
+  return outputName !== `${sanitizeOutputStem(sourcePath)}-${hashPath(`${sourcePath}::${targetExt}`)}.ai3d-converted.${targetExt}`;
 }
 
 export interface ConversionRouteInput {
@@ -121,39 +115,6 @@ async function resolveConversionManager(provider: ConversionManagerProvider | un
   return typeof provider === "function" ? await provider() : provider;
 }
 
-async function findReusableRelocatedConversion(
-  input: ConversionRouteInput,
-  targetExt: "glb",
-  converterId: string,
-  sourceStatsPromise: Promise<{ mtimeMs: number }>,
-): Promise<ConvertedAssetRecord | undefined> {
-  const records = input.convertedAssetCache?.entries() ?? [];
-  if (records.length === 0) return undefined;
-
-  const sourceStem = getSourceStem(input.sourcePath);
-  const outputStem = sanitizeOutputStem(input.sourcePath);
-  const candidates = records
-    .filter((record) =>
-      record.sourcePath !== input.sourcePath &&
-      record.sourceExt === input.sourceExt &&
-      record.targetExt === targetExt &&
-      record.outputExt === targetExt &&
-      record.converterId === converterId &&
-      getSourceStem(record.sourcePath) === sourceStem &&
-      basename(record.outputPath).startsWith(`${outputStem}-`) &&
-      basename(record.outputPath).endsWith(`.ai3d-converted.${targetExt}`),
-    )
-    .sort((a, b) => b.createdAt - a.createdAt);
-
-  for (const candidate of candidates) {
-    if (await isConvertedOutputReusable(input.sourcePath, candidate.outputPath, sourceStatsPromise)) {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
-
 export async function convertForPreview(input: ConversionRouteInput): Promise<ConversionRouteResult> {
   if (input.capability.strategy !== "convert") {
     throw new Error(`Expected convert strategy, got '${input.capability.strategy}'.`);
@@ -189,7 +150,7 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
         outputPath: cached.outputPath,
       });
       input.convertedAssetCache?.delete(input.sourcePath, input.sourceExt, targetExt);
-    } else if (!isCachedRecordCompatible(cached, converterId)) {
+    } else if (!isCachedRecordCompatible(cached, converterId) || hasMismatchedSourceHash(input.sourcePath, cached.outputPath, targetExt)) {
       log.warn("conversion cache identity mismatch", {
         sourcePath: input.sourcePath,
         sourceExt: input.sourceExt,
@@ -244,62 +205,6 @@ export async function convertForPreview(input: ConversionRouteInput): Promise<Co
       effectivePath: expectedOutputPath,
       effectiveExt: targetExt,
       warnings: ["Using existing conversion output."],
-    };
-  }
-
-  const legacyOutputPath = getLegacyConvertedOutputPath(input.sourcePath, targetExt);
-  if (
-    legacyOutputPath !== expectedOutputPath &&
-    await isConvertedOutputReusable(input.sourcePath, legacyOutputPath, getSourceStats())
-  ) {
-    log.info("legacy conversion output already exists", {
-      sourcePath: input.sourcePath,
-      outputPath: legacyOutputPath,
-    });
-    input.convertedAssetCache?.set({
-      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
-      converterId,
-      converterCacheKey: converterId,
-      sourcePath: input.sourcePath,
-      sourceExt: input.sourceExt,
-      targetExt,
-      outputPath: legacyOutputPath,
-      outputExt: targetExt,
-      warnings: ["Using existing conversion output."],
-      createdAt: Date.now(),
-    });
-    return {
-      effectivePath: legacyOutputPath,
-      effectiveExt: targetExt,
-      warnings: ["Using existing conversion output."],
-    };
-  }
-
-  const relocated = await findReusableRelocatedConversion(input, targetExt, converterId, getSourceStats());
-  if (relocated) {
-    log.info("relocated conversion cache hit", {
-      sourcePath: input.sourcePath,
-      sourceExt: input.sourceExt,
-      targetExt,
-      previousSourcePath: relocated.sourcePath,
-      outputPath: relocated.outputPath,
-    });
-    input.convertedAssetCache?.set({
-      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
-      converterId: relocated.converterId,
-      converterCacheKey: relocated.converterCacheKey,
-      sourcePath: input.sourcePath,
-      sourceExt: input.sourceExt,
-      targetExt,
-      outputPath: relocated.outputPath,
-      outputExt: targetExt,
-      warnings: [...relocated.warnings, "Using relocated conversion output."],
-      createdAt: Date.now(),
-    });
-    return {
-      effectivePath: relocated.outputPath,
-      effectiveExt: targetExt,
-      warnings: [...relocated.warnings, "Using relocated conversion output."],
     };
   }
 

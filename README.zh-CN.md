@@ -1,6 +1,6 @@
 # AI Model Workbench
 
-> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）默认走 Babylon.js 兼容模式，Three.js 作为显式启用的可选预览路线保留；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 与 SPLAT 仍保留在 Babylon.js 能力路径上。
+> 一个以本地优先和知识库整合为核心的 Obsidian 3D 查看插件，可在本地 WebGL 视口中查看常见 3D 资产、标注关键部位，并将模型整理为可链接的知识笔记。单模型预览（GLB、GLTF、STL、PLY、OBJ）默认走 Babylon.js 兼容模式，Three.js 作为显式启用的可选预览路线保留；文件视图 workbench 可以选择启用实验性 Three.js GLB/GLTF 路径，并保留 Babylon.js 自动回退；`3dgrid` 保留 Babylon.js 路线，当前打包版仍关闭 SPLAT/SPZ/SOG。
 
 [AI Model Workbench](https://community.obsidian.md/plugins/ai-model-workbench)
 
@@ -79,22 +79,14 @@
 
 ## 当前版本
 
-`0.8.0` 是当前的精密测量与可靠性版本。
+`0.9.11` 优化笔记操作界面与中英文提示。
 
-发布亮点：
+- 插入窗口分别显示位置、尺寸和操作提示，小窗口下自动改为单列。
+- 模型列表突出文件名，保留可搜索的完整路径和格式标签，方便区分同名文件。
+- 零件控件统一间距与选中状态；‘复制嵌入内容’明确复制后还需粘贴到笔记。
+- 简化空状态和登记提示，浅色、深色主题保持一致。
 
-- 短距离测量默认锁定当前选中对象，并吸附真实网格顶点与三角边；按住 `Alt`/`Option` 可使用自由表面取点。
-- Babylon.js 与 Three.js 共用测量会话、端点配对、标记复用、覆盖层和几何索引，绘制部分仍由各渲染器适配器负责。
-- 在内联检查器中显示切片板的移动与旋转控件。
-- Three.js 增加 3MF、DAE、OFF、PCD、XYZ 直接加载，并在 FBX2glTF 不可用时提供 FBX 直接加载回退。
-- 加强远程草稿隐私与传输校验、转换缓存持久化、转换超时去重和知识文件写入顺序。
-- 移除预览原生悬停提示，并接入 Obsidian 1.13 设置搜索。
-- 新增拉取请求 CI，并扩展可重复的发布验证。
-- Babylon.js 兼容模式仍是单模型预览默认路线，Three.js 继续作为显式启用的可选路线。
-
-完整发布日志见 [docs/release-notes/0.8.0.md](docs/release-notes/0.8.0.md)、[docs/release-notes/0.7.8.md](docs/release-notes/0.7.8.md) 和 [CHANGELOG.md](CHANGELOG.md)。
-
----
+完整日志见 [0.9.11 发布说明](docs/release-notes/0.9.11.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 平台支持矩阵
 
@@ -243,6 +235,13 @@ AI Model Workbench 的插件包中不包含赞助提示、付款流程或加密�
 | OBJ | `.obj` | MTL 材质、库内相对路径纹理解析、同目录大小写兜底 |
 | PLY | `.ply` | ASCII/二进制、顶点颜色、点云支持 |
 
+启用 **Three.js 渲染器**，并将 **预览兼容模式** 设为 **阅读 + 文件视图** 后，
+3MF、DAE、OFF、PCD、XYZ 也可在桌面端和移动端直接预览；“仅阅读界面”只启用嵌入预览。
+FBX 在桌面端优先使用已注册的本地转换器，未注册转换器或在移动端时使用 Three.js 直读。
+转换器执行失败会保留错误；显式配置的 OBJ 转换优先设置仍然生效。
+3MF/DAE/FBX 直读只允许嵌入纹理，带外部纹理的模型请先转换为嵌入纹理的 GLB。
+兼容模式保留原有转换路线；PCD/XYZ 必须启用 Three.js。打包版仍关闭 SPLAT/SPZ/SOG。
+
 当前打包版本临时关闭 SPLAT 预览，直到其加载器替换为纯本地实现。
 
 ### SPLAT 说明与规划
@@ -329,7 +328,7 @@ model.glb
 | 自动旋转 | 关 | 启动时启用旋转动画 |
 | 自动旋转速度 | 0.5 | 旋转速度（0.1-2.0） |
 | 渲染质量 | 高 | 质量预设（低/中/高） |
-| 渲染缩放 | 1.0 | 分辨率倍数（0.25-2.0） |
+| 渲染缩放 | 1.5 | 分辨率倍数（0.25-2.0） |
 | 快照文件夹 | Media/3D Previews | 导出文件夹 |
 | 快照命名 | model-name | 导出 PNG 快照时的文件命名方式 |
 | 报告文件夹 | Analysis/3D Reports | 知识笔记文件夹 |
@@ -538,10 +537,10 @@ Babylon.js 兼容模式是 STL 和 PLY 单模型预览的默认路径；Three.js
 
 ### 转换缓存
 
-- **位置**：与源文件相同目录
-- **格式**：`{filename}.ai3d-converted.glb`
-- **验证**：检查转换器身份、缓存键、文件存在性
-- **失效**：转换器设置更改时自动失效
+- **位置**：预览流程使用 vault 配置目录；未指定输出目录的调用写入源文件旁。
+- **格式**：缓存目录使用 `{stem}-{source-path-hash}.ai3d-converted.glb`；源文件旁使用 `{含扩展名的文件名}.ai3d-converted.glb`。
+- **验证**：源路径和转换器 ID 一致、输出非空，且输出修改时间不早于源文件。
+- **迁移**：已有记录明确对应当前源文件时，仍可复用旧输出文件名。没有记录的旧文件和移动后的模型重新转换，同名不作为身份依据。
 - **手动清除**：命令面板 > "Clear Conversion Cache"
 
 ---
@@ -620,7 +619,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.8.0`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.8.0`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.9.7`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.9.11`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

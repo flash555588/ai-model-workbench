@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
+import { createThreeEmbeddedResourceManager, guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
 
 describe("Three network guard", () => {
+  it("keeps embedded textures local and rejects unresolved external resources", () => {
+    const manager = createThreeEmbeddedResourceManager();
+    expect(manager.resolveURL("blob:app://obsidian.md/local")).toBe("blob:app://obsidian.md/local");
+    expect(manager.resolveURL("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+    for (const url of ["https://example.com/texture.png", "//example.com/texture.png", "texture.png", "models/https://example.com/texture.png", "file:///private/texture.png"]) {
+      expect(() => manager.resolveURL(url)).toThrow();
+    }
+  });
   it("treats explicit remote schemes as remote", () => {
     expect(isThreeRemoteUrl("https://example.com/a.bin")).toBe(true);
     expect(isThreeRemoteUrl("http://example.com/a.bin")).toBe(true);

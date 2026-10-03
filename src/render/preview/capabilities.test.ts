@@ -144,6 +144,9 @@ describe("preview capability profile", () => {
     const profile = describePreviewRouteCapabilities(route);
     expect(profile.backend).toBe("three");
     expect(profile.supportedFormats).toContain("gltf");
+    for (const ext of ["3mf", "dae", "off", "pcd", "xyz", "fbx"]) {
+      expect(profile.supportedFormats).toContain(ext);
+    }
     expect(profile.colorPipeline).toContain("sRGB");
   });
 

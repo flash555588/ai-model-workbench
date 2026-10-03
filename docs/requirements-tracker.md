@@ -43,8 +43,43 @@ future agent notes can refer to the same requirement over time.
 | REQ-014 | Large coordinator classes are split without changing route behavior | P2 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run build`, `npm run verify:release` |
 | REQ-015 | Three.js direct-format visual fidelity and smoothness are measurable for format support, color pipeline, precision, small parts, and frame budget | P1 | Verified | `npm run typecheck`, `npm test`, `npm run verify:preview`, `npm run verify:preview:success`, `npm run verify:diagnostics`, `npm run build`, `npm run verify:release`, `npm run verify:obsidian -- --clean` |
 | REQ-016 | Cross-model registered-part matches support persistent human confirmation and rejection | P1 | Verified | `npm run typecheck`, `npm test`, `npm run lint`, `npm run build`, `npm run verify:knowledge-index`, `node scripts/verify-preview.mjs --mode workbench --allow-workbench-three`, `npm run verify:preview:success`, `npm run verify:obsidian -- --clean` |
+| REQ-017 | Enabled direct loaders are reachable across reading and file surfaces, respect conversion preferences, and keep textures local | P1 | Verified | `npm test -- --run src/io/model-pipeline.test.ts src/io/formats/renderer-support.test.ts src/view/direct-view-routing.test.ts src/render/three/network-guard.test.ts src/render/three/loaders.test.ts`, `npm run verify:preview:success` |
+| REQ-018 | Knowledge and conversion outputs retain source identity; failed GLTF loads release all temporary resources | P1 | Verified | `npm test -- src/io/conversion/conversion-service.test.ts src/view/workbench/knowledge-note.test.ts src/render/three/loaders.test.ts`, `npm run verify:knowledge-index`, `npm run verify:obsidian -- --clean` |
+| REQ-019 | Knowledge generation preserves its starting evidence and committed result across read, screenshot, and view failures | P1 | Verified | `npm test -- src/view/workbench/knowledge-note.test.ts`, `npm run verify:knowledge-index`, `npm run verify:obsidian -- --clean` |
 
 ## Active Requirement Details
+
+### REQ-019: Consistent Knowledge Generation Lifecycle
+
+- Status: Verified
+- Priority: P1
+- User value: Switching models or failing to open a report must not corrupt the evidence or saved generation outcome.
+- Acceptance criteria:
+  - Capture live model evidence and screenshot data before asynchronous ownership reads.
+  - Record pending before those reads; record failures and allow retries after read errors.
+  - Continue knowledge generation when optional screenshot capture throws, retaining the warning.
+  - Commit success after artifact writes; opening the saved report cannot turn success into failure.
+  - A delayed view failure from an older run must not replace a newer generation record.
+- Verification:
+  - `npm test -- src/view/workbench/knowledge-note.test.ts`
+  - `npm run verify:knowledge-index`
+  - `npm run verify:obsidian -- --clean`
+
+### REQ-018: Model Identity And Failed Resource Cleanup
+
+- Status: Verified
+- Priority: P1
+- User value: Same-named models must not overwrite each other's knowledge or display another source's converted geometry.
+- Acceptance criteria:
+  - Reports, sidecars, indexes, and part drafts check existing ownership and preserve unrelated user files.
+  - Generated part drafts require matching source model and part ID; index user notes and part edits survive regeneration.
+  - Conversion reuse never infers source relocation from a basename; old mismatched source hashes are rejected.
+  - Exact-source legacy cache records remain reusable and new adjacent outputs include the source extension.
+  - GLTF loading stops queued reads after failure and drains in-flight reads before releasing every Blob URL.
+- Verification:
+  - `npm test -- src/io/conversion/conversion-service.test.ts src/view/workbench/knowledge-note.test.ts src/render/three/loaders.test.ts`
+  - `npm run verify:knowledge-index`
+  - `npm run verify:obsidian -- --clean`
 
 ### REQ-004: Auto Part Registration
 

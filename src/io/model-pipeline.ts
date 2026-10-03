@@ -3,7 +3,8 @@ import type { LoadStrategy } from "./formats/types";
 import type { ConvertedAssetCache } from "./cache/converted-asset-cache";
 import { prepareDirectLoad } from "./direct/direct-load-service";
 import type { ConversionManagerProvider } from "./conversion/conversion-service";
-import { MobileConversionUnavailableError } from "./conversion/errors";
+import { MobileConversionUnavailableError, ThreeRendererRequiredError } from "./conversion/errors";
+import { supportsBabylonDirectFormat, supportsThreeDirectFormat } from "./formats/renderer-support";
 import { createLogger } from "../utils/log";
 import { isMobile } from "../utils/device";
 
@@ -17,9 +18,8 @@ export interface PrepareModelInput {
   convertedAssetCache?: ConvertedAssetCache;
   conversionOutputRoot?: string;
   /**
-   * When true and the format exposes a Three.js-only `directLoader`, skip
-   * conversion and hand the raw file to the Three.js renderer. Callers set
-   * this only when the resolved preview route actually uses the Three backend.
+   * Enable bundled Three loaders only when the resolved preview uses Three.
+   * Explicit conversion preferences and enabled FBX conversion retain priority.
    */
   allowThreeDirect?: boolean;
 }
@@ -53,8 +53,18 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
 
   const preferConversion = shouldPreferConversion(input, sourceExt);
   const useConversion = cap.strategy === "convert" || (preferConversion && !!cap.converterId);
+  const mobile = isMobile();
+  const allowThreeDirect = !!input.allowThreeDirect && supportsThreeDirectFormat(sourceExt);
+  let conversionManager = input.conversionManager;
+  let preferFbxConversion = false;
 
-  if (input.allowThreeDirect && cap.directLoader) {
+  if (allowThreeDirect && sourceExt === "fbx" && !mobile) {
+    const manager = typeof conversionManager === "function" ? await conversionManager() : conversionManager;
+    conversionManager = manager;
+    preferFbxConversion = !!manager?.canConvert(sourceExt);
+  }
+
+  if (allowThreeDirect && !preferFbxConversion && (!preferConversion || sourceExt === "fbx")) {
     log.info("three direct route", { sourceExt, loaderKind: cap.directLoader });
     return {
       sourcePath: input.path,
@@ -67,35 +77,7 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
   }
 
   if (useConversion) {
-    // Three.js direct degradation: when the conversion route is unusable
-    // (converter disabled/not installed, or mobile without converters) and the
-    // format exposes a Three.js-only loader, hand the raw file to Three.js
-    // instead of failing. FBX/3MF/DAE/OFF keep the converter as the preferred
-    // path when it is available.
-    if (input.allowThreeDirect && cap.directLoader) {
-      const manager = input.conversionManager
-        ? typeof input.conversionManager === "function"
-          ? await input.conversionManager()
-          : input.conversionManager
-        : null;
-      const converterUnavailable = !manager || !manager.canConvert(sourceExt);
-      if (converterUnavailable) {
-        log.info("converter unavailable; falling back to Three direct", {
-          sourceExt,
-          loaderKind: cap.directLoader,
-        });
-        return {
-          sourcePath: input.path,
-          sourceExt,
-          strategy: "direct",
-          effectivePath: input.path,
-          effectiveExt: sourceExt,
-          warnings: [`Loaded directly by the Three.js renderer (${cap.directLoader}); converter unavailable.`],
-        };
-      }
-    }
-
-    if (isMobile()) {
+    if (mobile) {
       log.warn("conversion unavailable on mobile", { sourceExt, path: input.path });
       throw new MobileConversionUnavailableError(sourceExt);
     }
@@ -125,7 +107,7 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
       sourcePath: input.absolutePath,
       sourceExt,
       capability: conversionCapability,
-      conversionManager: input.conversionManager,
+      conversionManager,
       convertedAssetCache: input.convertedAssetCache,
       outputRoot: input.conversionOutputRoot,
     });
@@ -147,6 +129,9 @@ export async function prepareModelInput(input: PrepareModelInput): Promise<Prepa
     };
   }
 
+  if (supportsThreeDirectFormat(sourceExt) && !supportsBabylonDirectFormat(sourceExt)) {
+    throw new ThreeRendererRequiredError(sourceExt);
+  }
   const direct = prepareDirectLoad({ path: input.path, sourceExt });
   log.debug("direct route", { sourceExt, path: input.path, warningCount: direct.warnings.length });
 
