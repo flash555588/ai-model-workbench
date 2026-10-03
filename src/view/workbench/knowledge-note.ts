@@ -35,6 +35,7 @@ import {
 const log = createLogger("knowledge-note");
 import { buildLocalAnalysisResult, LOCAL_ANALYSIS_VERSION } from "./analysis-result";
 import { createRemoteDraftDecision, requestRemoteDraft } from "./remote-draft";
+import { beginKnowledgeGenerationProgress } from "./knowledge-generation-progress";
 
 const MAX_GENERATED_PART_NOTES = 8;
 const DEFAULT_PROFILE_REGISTERED_PART_LIMIT = 256;
@@ -54,6 +55,9 @@ export interface KnowledgeNoteBuildOptions {
 
 export interface GenerateKnowledgeNoteOptions {
   preview?: Pick<ModelPreview, "captureSnapshot" | "getModelEvidence"> | null;
+  /** Bind file-view actions to the clicked model even if another leaf becomes current. */
+  modelPath?: string;
+  modelPreview?: ModelPreviewSummary | null;
 }
 
 function createKnowledgeGenerationRecord(options: {
@@ -103,6 +107,73 @@ function sanitizeVaultSegment(value: string, fallback: string): string {
     .trim()
     .slice(0, 80);
   return sanitized || fallback;
+}
+
+function knowledgePathHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index++) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function readGeneratedFrontmatter(content: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1];
+  if (!frontmatter) return fields;
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const match = /^(source_model|part_id|generated_by|analysis_version):\s*(.*)$/.exec(line);
+    if (!match) continue;
+    try {
+      const value: unknown = JSON.parse(match[2]);
+      if (typeof value === "string") fields[match[1]] = value;
+    } catch {
+      fields[match[1]] = match[2];
+    }
+  }
+  return fields;
+}
+
+async function isKnowledgePathAvailable(app: App, path: string, sourcePath: string, partId?: string): Promise<boolean> {
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (!existing) return true;
+  if (!(existing instanceof TFile)) return false;
+  const content = await app.vault.read(existing);
+  if (path.endsWith(".json")) {
+    try {
+      const analysis = JSON.parse(content) as Partial<AnalysisResult> | null;
+      return analysis?.asset?.sourcePath === sourcePath && analysis.asset.assetId === sourcePath &&
+        analysis.asset.analysisVersion === LOCAL_ANALYSIS_VERSION;
+    } catch {
+      return false;
+    }
+  }
+  const fields = readGeneratedFrontmatter(content);
+  return fields.source_model === sourcePath &&
+    (fields.generated_by === "ai-model-workbench" || fields.analysis_version === LOCAL_ANALYSIS_VERSION) &&
+    (partId === undefined || fields.part_id === partId);
+}
+
+async function resolveKnowledgeOutputStem(app: App, folder: string, baseName: string, sourcePath: string): Promise<string> {
+  const stem = sanitizeVaultSegment(baseName, "model").slice(0, 60);
+  const prefix = folder ? `${folder}/` : "";
+  const hash = knowledgePathHash(sourcePath);
+  for (let attempt = 0; ; attempt++) {
+    const candidate = attempt === 0 ? stem : `${stem}-${hash}${attempt > 1 ? `-${attempt}` : ""}`;
+    const available = await Promise.all([" Report.md", " Analysis.json", " Index.md"].map(
+      (suffix) => isKnowledgePathAvailable(app, `${prefix}${candidate}${suffix}`, sourcePath),
+    ));
+    if (available.every(Boolean)) return candidate;
+  }
+}
+
+async function resolvePartNotePath(app: App, path: string, sourcePath: string, partId: string): Promise<string> {
+  const stem = path.slice(0, -3);
+  const hash = knowledgePathHash(`${sourcePath}::${partId}`);
+  for (let attempt = 0; ; attempt++) {
+    const candidate = attempt === 0 ? path : `${stem}-${hash}${attempt > 1 ? `-${attempt}` : ""}.md`;
+    if (await isKnowledgePathAvailable(app, candidate, sourcePath, partId)) return candidate;
+  }
 }
 
 function formatVectorTuple(values: readonly number[] | undefined): string {
@@ -839,15 +910,29 @@ async function upsertTextFile(app: App, path: string, content: string): Promise<
   return null;
 }
 
-async function captureEvidenceSnapshot(
+interface CapturedEvidenceSnapshot {
+  dataUrl: string | null;
+  warning?: string;
+}
+
+function captureEvidenceSnapshot(preview: GenerateKnowledgeNoteOptions["preview"]): CapturedEvidenceSnapshot {
+  try {
+    return { dataUrl: preview?.captureSnapshot?.() ?? null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { dataUrl: null, warning: `Evidence snapshot failed: ${message}` };
+  }
+}
+
+async function saveEvidenceSnapshot(
   app: App,
-  preview: GenerateKnowledgeNoteOptions["preview"],
+  captured: CapturedEvidenceSnapshot,
   folder: string,
   baseName: string,
 ): Promise<{ paths: string[]; warning?: string }> {
-  const dataUrl = preview?.captureSnapshot?.();
+  const dataUrl = captured.dataUrl;
   if (!dataUrl?.startsWith("data:image/png;base64,")) {
-    return { paths: [] };
+    return { paths: [], warning: captured.warning };
   }
 
   try {
@@ -1088,6 +1173,7 @@ async function createPartNoteDrafts(options: {
   app: App;
   partFolder: string;
   baseName: string;
+  outputStem: string;
   notePath: string;
   sourcePath: string;
   analysis: AnalysisResult;
@@ -1101,14 +1187,19 @@ async function createPartNoteDrafts(options: {
   const notePaths: string[] = [];
   const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   const folder = normalizeVaultFolder(options.partFolder) || "Parts/3D Components";
-  const modelFolder = `${folder}/${sanitizeVaultSegment(options.baseName, "model")}`;
+  const modelFolder = `${folder}/${options.outputStem}`;
   await ensureFolder(options.app, modelFolder);
 
   for (const [index, part] of options.analysis.parts.entries()) {
     if (!candidateIds.has(part.partId)) {
       continue;
     }
-    const partNotePath = createPartNotePath(options.partFolder, options.baseName, part, index);
+    const partNotePath = await resolvePartNotePath(
+      options.app,
+      createPartNotePath(options.partFolder, options.outputStem, part, index),
+      options.sourcePath,
+      part.partId,
+    );
     const draftPart = { ...part, notePath: partNotePath };
     const content = buildPartNoteContent({
       baseName: options.baseName,
@@ -1307,19 +1398,18 @@ export async function generateKnowledgeNote(
   let pendingGeneration: KnowledgeGenerationRecord | null = null;
   let analysis: AnalysisResult | null = null;
   let previewImageCount = 0;
+  let generationProgress: ReturnType<typeof beginKnowledgeGenerationProgress> | null = null;
 
   try {
     const state = ps.store.getState();
-    const path = state.currentModelPath;
+    const path = options.modelPath ?? state.currentModelPath;
     if (!path) return;
 
     const profile = state.modelAssetProfiles[path];
-    const preview = state.modelPreview;
+    const preview = options.modelPreview === undefined ? state.modelPreview : options.modelPreview;
+    generationProgress = beginKnowledgeGenerationProgress(ps, path);
     const baseName = getPortableStem(path) || "model";
-    const reportFolder = state.settings.reportFolder;
-    const notePath = `${reportFolder}/${baseName} Report.md`;
-    const analysisSidecarPath = `${reportFolder}/${baseName} Analysis.json`;
-    const knowledgeIndexPath = `${reportFolder}/${baseName} Index.md`;
+    const reportFolder = normalizeVaultFolder(state.settings.reportFolder);
     const stalePendingWarning = state.lastKnowledgeGeneration?.status === "pending"
       ? `Previous knowledge generation for ${state.lastKnowledgeGeneration.modelPath} did not complete. This run can replace the pending marker if it finishes.`
       : null;
@@ -1328,17 +1418,23 @@ export async function generateKnowledgeNote(
     }
     pendingGeneration = createKnowledgeGenerationRecord({
       modelPath: path,
-      reportNotePath: notePath,
-      analysisSidecarPath,
-      knowledgeIndexPath,
       status: "pending",
     });
     ps.setLastKnowledgeGeneration(pendingGeneration);
 
     const evidence = options.preview?.getModelEvidence?.() ?? null;
-    const snapshot = await captureEvidenceSnapshot(app, options.preview, state.settings.previewFolder, baseName);
+    const capturedSnapshot = captureEvidenceSnapshot(options.preview);
+    generationProgress.setPhase("paths");
+    const outputStem = await resolveKnowledgeOutputStem(app, reportFolder, baseName, path);
+    const outputPrefix = reportFolder ? `${reportFolder}/` : "";
+    const notePath = `${outputPrefix}${outputStem} Report.md`;
+    const analysisSidecarPath = `${outputPrefix}${outputStem} Analysis.json`;
+    const knowledgeIndexPath = `${outputPrefix}${outputStem} Index.md`;
+    pendingGeneration = { ...pendingGeneration, reportNotePath: notePath, analysisSidecarPath, knowledgeIndexPath };
+    const snapshot = await saveEvidenceSnapshot(app, capturedSnapshot, state.settings.previewFolder, outputStem);
     previewImageCount = snapshot.paths.length;
     const registeredParts = await collectRegisteredPartsFromProfiles(app, state.modelAssetProfiles, path);
+    generationProgress.setPhase("analysis");
     analysis = buildLocalAnalysisResult({
       modelPath: path,
       profile,
@@ -1371,10 +1467,12 @@ export async function generateKnowledgeNote(
       analysis: currentAnalysis,
     });
     currentAnalysis.pipeline.push({ stage: "draft", durationMs: 0, status: "success" });
+    generationProgress.setPhase("parts");
     await createPartNoteDrafts({
       app,
       partFolder: state.settings.partFolder,
       baseName,
+      outputStem,
       notePath,
       sourcePath: path,
       analysis: currentAnalysis,
@@ -1391,6 +1489,7 @@ export async function generateKnowledgeNote(
     }
     const remoteDecision = createRemoteDraftDecision(state.settings, currentAnalysis.draftingInput, LOCAL_ANALYSIS_VERSION);
     if (remoteDecision.enabled) {
+      generationProgress.setPhase("remote");
       try {
         const remoteDraft = await requestRemoteDraft(remoteDecision);
         if (remoteDraft) {
@@ -1407,6 +1506,7 @@ export async function generateKnowledgeNote(
     } else {
       currentAnalysis.pipeline.push({ stage: "remoteDraft", durationMs: 0, status: "skipped" });
     }
+    generationProgress.setPhase("write");
     await ensureFolder(app, reportFolder);
     currentAnalysis.knowledgeIndexPath = knowledgeIndexPath;
     const content = buildKnowledgeNoteContent({
@@ -1430,6 +1530,7 @@ export async function generateKnowledgeNote(
       throw new Error(`Unable to write knowledge report: ${notePath}`);
     }
 
+    generationProgress.setPhase("index");
     const indexFile = await createKnowledgeIndex({
       app,
       baseName,
@@ -1471,8 +1572,17 @@ export async function generateKnowledgeNote(
       status: "success",
       warningCount: currentAnalysis.warnings.length,
     }));
+    pendingGeneration = null;
+    generationProgress.finish();
     releaseGenerationLock();
-    await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
+    try {
+      await app.workspace.getLeaf(true).openFile(outputFile, { active: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn("Saved knowledge report could not be opened", { path: outputFile.path, error: message });
+      new Notice(`Knowledge note saved: ${outputFile.path}. Unable to open report: ${message}`);
+      return;
+    }
     new Notice(`Knowledge note updated: ${outputFile.path}`);
   } catch (error) {
     if (pendingGeneration) {
@@ -1486,6 +1596,7 @@ export async function generateKnowledgeNote(
     }
     throw error;
   } finally {
+    generationProgress?.finish();
     releaseGenerationLock();
   }
 }

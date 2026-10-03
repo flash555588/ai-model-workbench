@@ -1,4 +1,4 @@
-import type { App, MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownRenderChild, type App, type MarkdownPostProcessorContext } from "obsidian";
 import { isDisabledSplatExtension, isSupportedModelExtension, listSupportedModelExtensions } from "../../io/formats/registry";
 import type { PluginSettings, AnnotationPin } from "../../domain/models";
 import type { AnnotationManager } from "../../render/preview/annotations";
@@ -30,6 +30,9 @@ import {
 } from "./preview-canvas-accessibility";
 import { scheduleInlinePreviewLoad } from "./preview-load-scheduler";
 import { getPreviewPathRenderBudget } from "../model-render-budget";
+import { createNotePreviewHeader } from "./note-preview-header";
+import { parseNotePartPresentation, type NotePartsAccess } from "./note-parts-config";
+import { createNoteRegisteredPartsControls } from "./note-registered-parts";
 
 const log = createLogger("inline-code-block");
 
@@ -148,6 +151,7 @@ export function registerCodeBlockProcessor(
   getSettings: () => PluginSettings,
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
+  partsAccess?: NotePartsAccess,
 ) {
   return {
     id: "3d",
@@ -197,7 +201,7 @@ export function registerCodeBlockProcessor(
         console.warn(`[AI3D] \`\`\`3d only supports one model; ${config.models.length - 1} additional models ignored. Use \`\`\`3dgrid for multi-model.`);
       }
       const modelCfg = config.models[0];
-      const modelPath = resolveVaultPath(app,modelCfg.path);
+      const modelPath = resolveVaultPath(app, modelCfg.path, _ctx.sourcePath);
       if (!modelPath) {
         el.createDiv({
           cls: "ai3d-inline-empty",
@@ -220,21 +224,19 @@ export function registerCodeBlockProcessor(
 
       // Create preview host with custom dimensions
       const settings = getSettings();
-      const host = el.createDiv({ cls: "ai3d-preview-host" });
+      const frame = el.createDiv({ cls: "ai3d-note-preview" });
+      createNotePreviewHeader(frame, modelPath);
+      const host = frame.createDiv({ cls: "ai3d-preview-host" });
       if (config.height) {
         host.style.setProperty("--min-height", typeof config.height === "number" ? `${config.height}px` : config.height);
       }
       if (config.width) {
-        host.style.setProperty("--max-width", typeof config.width === "number" ? `${config.width}px` : config.width);
+        frame.style.maxWidth = typeof config.width === "number" ? `${config.width}px` : config.width;
       }
 
       const canvas = host.createEl("canvas", { cls: "ai3d-canvas-full" });
       configureModelPreviewCanvas(canvas, "inline", modelPath);
       host.appendChild(canvas);
-
-      const caption = host.createDiv({ cls: "ai3d-inline-caption" });
-      caption.createSpan({ cls: "ai3d-inline-caption-name", text: getPortableBasename(modelPath) ?? modelPath });
-      caption.createSpan({ cls: "ai3d-inline-caption-badge", text: ext.toUpperCase() });
 
       // Add helper buttons
       let preview: ModelPreview | null = null;
@@ -242,18 +244,22 @@ export function registerCodeBlockProcessor(
       let annotationVisible = true;
       let destroyed = false;
       let loaded = false;
-      attachModelPreviewCanvasShortcuts(canvas, () => destroyed ? null : preview);
+      let modelReady = false;
+      const getReadyPreview = () => destroyed || !modelReady ? null : preview;
+      attachModelPreviewCanvasShortcuts(canvas, getReadyPreview);
 
-      const toolbar: HelperToolbar = createHelperButtons(el, host, app, () => preview, () => modelPath, () => {
+      const toolbar: HelperToolbar = createHelperButtons(frame, host, app, getReadyPreview, () => modelPath, () => {
         if (destroyed) return;
         destroyed = true;
         observer.disconnect();
         io.disconnect();
+        partsControls?.destroy();
         annotationMgr?.destroy();
         annotationMgr = null;
+        toolbar.destroy();
         preview?.destroy();
         preview = null;
-        host.remove();
+        frame.remove();
       }, getSettings, () => {
         annotationVisible = !annotationVisible;
         if (annotationMgr) {
@@ -262,26 +268,38 @@ export function registerCodeBlockProcessor(
         }
         return annotationVisible;
       }, undefined, {
+        kind: "visibility",
         labelKey: "helper.toggleAnnotationsVisibilityLabel",
         activeTooltipKey: "helper.annotationsVisible",
         inactiveTooltipKey: "helper.annotationsHidden",
       });
-      appendMobileInlineHint(el);
+      const partsControls = createNoteRegisteredPartsControls(app, frame, host, getReadyPreview, modelPath,
+        partsAccess, () => toolbar.exitInteractionMode(), () => toolbar.syncCapabilities(), config);
+      appendMobileInlineHint(frame);
 
       // Auto-destroy when the DOM element is removed
       const observer = new MutationObserver(() => {
         if (destroyed) return;
-        if (!el.contains(host)) {
+        if (!el.contains(frame) || (!frame.contains(host) && !partsControls?.isInspecting())) {
           destroyed = true;
           observer.disconnect();
           io.disconnect();
+          partsControls?.destroy();
           annotationMgr?.destroy();
           annotationMgr = null;
+          toolbar.destroy();
           preview?.destroy();
           preview = null;
         }
       });
       observer.observe(el, { childList: true });
+      observer.observe(frame, { childList: true });
+      const child = new MarkdownRenderChild(frame);
+      child.register(() => {
+        if (destroyed) return;
+        destroyed = true; observer.disconnect(); io.disconnect(); partsControls?.destroy();
+        annotationMgr?.destroy(); annotationMgr = null; toolbar.destroy(); preview?.destroy(); preview = null;
+      });
 
       async function loadPreview() {
         if (loaded || destroyed || !modelPath) return;
@@ -325,6 +343,7 @@ export function registerCodeBlockProcessor(
             );
             toolbar.showAnnotateButton();
             toolbar.updateAnnotationBadge(pinsForAnnotations.length);
+            host.querySelector(".ai3d-annotation-overlay")?.classList.toggle("is-hidden", !annotationVisible);
           } catch (error) {
             console.warn("[AI3D] Inline annotation runtime failed to load:", error);
           }
@@ -365,13 +384,14 @@ export function registerCodeBlockProcessor(
               rendererRollout: settings.previewRendererRollout,
               useThreeRenderer: settings.useThreeRenderer,
             } as const;
-            const { preview: nextPreview } = await createLoggedModelPreview(
+            const { preview: nextPreview, route } = await createLoggedModelPreview(
               log,
               { surface: "code-block", modelPath },
               canvas,
               previewOptions,
             );
             preview = nextPreview;
+            host.dataset.ai3dBackend = route.backend;
             const initialRenderBudget = await initialRenderBudgetPromise;
             preview.setRenderQuality?.(initialRenderBudget.renderQuality, initialRenderBudget.renderScale);
             toolbar.syncCapabilities();
@@ -389,7 +409,9 @@ export function registerCodeBlockProcessor(
               config.scene = { ...config.scene, autoRotate: true, autoRotateSpeed: settings.autoRotateSpeed };
             }
             preview.applyConfig(config);
+            modelReady = true;
             toolbar.syncCapabilities();
+            partsControls?.sync();
 
             if (ext === "stl" && modelCfg.color) {
               preview.setSTLColor?.(modelCfg.color);
@@ -411,8 +433,10 @@ export function registerCodeBlockProcessor(
           observer.disconnect();
           io.disconnect();
           loading.hide();
+          partsControls?.destroy();
           preview?.destroy();
           preview = null;
+          toolbar.destroy();
           host.replaceChildren();
           const failure = describeModelLoadFailure(err);
           if (isMissingConverterError(err)) {
@@ -434,6 +458,7 @@ export function registerCodeBlockProcessor(
         }
       }, { rootMargin: "200px" });
       io.observe(host);
+      _ctx.addChild(child);
     },
   };
 }
@@ -464,6 +489,7 @@ function normalizeConfig(raw: unknown): ThreeDBlockConfig {
       stl: obj.stl as ThreeDBlockConfig["stl"],
       width: obj.width as number | string | undefined,
       height: obj.height as number | string | undefined,
+      parts: parseNotePartPresentation(obj.parts),
     };
   }
 
@@ -489,6 +515,7 @@ function normalizeConfig(raw: unknown): ThreeDBlockConfig {
     stl: obj.stl as ThreeDBlockConfig["stl"],
     width: obj.width as number | string | undefined,
     height: obj.height as number | string | undefined,
+    parts: parseNotePartPresentation(obj.parts),
   };
 }
 

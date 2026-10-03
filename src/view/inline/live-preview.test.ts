@@ -59,4 +59,9 @@ describe("transactionMayAffectModelEmbeds", () => {
 
     expect(transactionMayAffectModelEmbeds(tr)).toBe(true);
   });
+
+  it("rescans when adding or removing a code fence changes embed eligibility", () => {
+    expect(transactionMayAffectModelEmbeds(changeDoc("Intro\n![[cube.glb]]", 0, 0, "```md\n"))).toBe(true);
+    expect(transactionMayAffectModelEmbeds(changeDoc("```md\n![[cube.glb]]\n```", 0, 5, ""))).toBe(true);
+  });
 });

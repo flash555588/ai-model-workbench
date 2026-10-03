@@ -1,3 +1,4 @@
+import { writePreviewBrowserShim } from "./preview-browser-shim.mjs";
 import esbuild from "esbuild";
 import { chromium } from "playwright-core";
 import { createServer } from "node:http";
@@ -97,6 +98,8 @@ const verifyRollout = parseRollout();
 const verifyAllowWorkbenchThree = parseAllowWorkbenchThree();
 const verifyExpectedBackend = parseExpectBackend();
 const verifyRouteOnly = parseRouteOnly();
+const verifyMobileToolbarOnly = process.argv.includes("--mobile-toolbar-only");
+const verifyNoteUi = process.argv.includes("--note-ui");
 const verifyExpectedWarning = parseExpectWarning();
 const verifyExpectNoWarnings = parseExpectNoWarnings();
 const verifyExpectGroupParts = parseExpectGroupParts();
@@ -173,54 +176,7 @@ function candidateBrowsers() {
 async function buildHarness() {
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
-  await writeFile(
-    shimPath,
-    [
-      "export const Platform = { isMobile: false };",
-      "export class TFile {}",
-      "export class TFolder { constructor() { this.children = []; } }",
-      "export class Notice {}",
-      "export class Plugin {}",
-      "const pathShim = {",
-      "  delimiter: ';',",
-      "  join(...segments) { return segments.filter(Boolean).join('/').replace(/\\/+/g, '/'); },",
-      "  normalize(value) { return String(value).replace(/\\\\/g, '/').replace(/\\/+/g, '/'); },",
-      "  isAbsolute(value) { return /^([A-Za-z]:[\\\\/]|\\/)/.test(String(value)); },",
-      "  dirname(value) { const normalized = pathShim.normalize(value).replace(/\\/+$/, ''); const index = normalized.lastIndexOf('/'); return index > 0 ? normalized.slice(0, index) : ''; },",
-      "  basename(value, ext = '') { const name = pathShim.normalize(value).split('/').pop() || ''; return ext && name.endsWith(ext) ? name.slice(0, -ext.length) : name; },",
-      "  extname(value) { const name = pathShim.basename(value); const index = name.lastIndexOf('.'); return index > 0 ? name.slice(index) : ''; },",
-      "};",
-      "if (typeof window !== 'undefined' && !window.require) {",
-      "  window.require = (id) => {",
-      "    if (id === 'node:path') return pathShim;",
-      "    if (id === 'node:process') return { platform: 'browser', env: {} };",
-      "    throw new Error(`Harness module not available: ${id}`);",
-      "  };",
-      "}",
-      "export class Component {",
-      "  constructor() { this.children = []; }",
-      "  load() {}",
-      "  unload() { this.children.length = 0; }",
-      "  addChild(child) { this.children.push(child); return child; }",
-      "  removeChild(child) { this.children = this.children.filter((entry) => entry !== child); }",
-      "}",
-      "export const MarkdownRenderer = {",
-      "  async render(_app, content, el) { el.textContent = content; }",
-      "};",
-      "if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.setCssProps) {",
-      "  HTMLElement.prototype.setCssProps = function(props) {",
-      "    for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value);",
-      "  };",
-      "}",
-      "if (typeof SVGElement !== 'undefined' && !SVGElement.prototype.setCssProps) {",
-      "  SVGElement.prototype.setCssProps = function(props) {",
-      "    for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value);",
-      "  };",
-      "}",
-      "",
-    ].join("\n"),
-    "utf8",
-  );
+  await writePreviewBrowserShim(shimPath, verifyMobileToolbarOnly);
 
   await esbuild.build({
     entryPoints: [entryPath],
@@ -265,6 +221,7 @@ function createStaticServer() {
     html, body { margin: 0; background: #101217; color: #f6f0dd; font-family: sans-serif; }
     .scroll-sentinel { height: 900px; display: grid; place-items: center; }
     .preview-card { width: 960px; max-width: calc(100vw - 40px); margin: 0 auto; padding: 20px; background: #171b23; border-radius: 20px; }
+    .preview-card.ai3d-note-preview { --min-height: 640px; }
     .ai3d-preview-host { min-height: 640px; }
     #preview-canvas { display: block; width: 100%; height: 640px; background: #20242e; border-radius: 14px; }
     #preview-canvas.ai3d-verify-portrait-viewport { width: 320px; height: 640px; }
@@ -738,7 +695,7 @@ async function findMeasurementClickPair(page, box, firstPick, selectedBounds = n
       accepted.push({ ...candidate, point });
     }
   }
-  assert(accepted.length > 0, "Could not find a first pick point for measurement verification");
+  assert(accepted.length > 0, `Could not find a first pick point for measurement verification: ${JSON.stringify({ box, selectedBounds })}`);
 
   let best = null;
   for (let i = 0; i < accepted.length; i++) {
@@ -753,8 +710,83 @@ async function findMeasurementClickPair(page, box, firstPick, selectedBounds = n
   return { first: best.first, second: best.second };
 }
 
+async function verifyToolbarComfort(page) {
+  const toolbar = page.locator(".ai3d-helper-toolbar").first();
+  const more = toolbar.locator(".ai3d-mobile-more-toggle");
+  const collapsedLabel = await more.getAttribute("aria-label");
+  assert((await more.textContent()).includes("More"), "More actions entry has no visible label");
+  await more.click();
+  assert(await more.getAttribute("aria-expanded") === "true", "More actions did not announce expansion");
+  assert(await toolbar.locator(".ai3d-labeled-secondary:visible").count() > 0, "Extra actions still have no visible names");
+  const widths = await toolbar.evaluate(async el => {
+    const originalWidth = el.style.width;
+    const rows = [];
+    try {
+      for (const width of [360, 480]) {
+        el.style.width = `${width}px`;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        rows.push({ width, client: el.clientWidth, scroll: el.scrollWidth });
+      }
+    } finally { el.style.width = originalWidth; }
+    return rows;
+  });
+  for (const row of widths) assert(row.scroll <= row.client + 1, `Expanded English toolbar overflows: ${JSON.stringify(row)}`);
+  await more.press("Escape");
+  assert(await more.getAttribute("aria-expanded") === "false", "Escape did not collapse extra actions");
+  assert(await more.getAttribute("aria-label") === collapsedLabel, "Escape did not restore the collapsed More label");
+  const focus = toolbar.locator('[data-ai3d-action="toggle-focus"]');
+  if (await focus.isVisible()) {
+    await focus.click();
+    await page.locator("#preview-canvas").focus();
+    await page.keyboard.press("Escape");
+    assert(await toolbar.getAttribute("data-ai3d-interaction-mode") === "idle", "Escape did not exit focus mode");
+  }
+}
+
+async function verifyNoteToolbar(page) {
+  const toolbar = page.locator(".ai3d-note-toolbar").first();
+  const more = toolbar.locator(".ai3d-mobile-more-toggle");
+  const slice = toolbar.locator('[data-ai3d-action="toggle-slice"]');
+  assert(!await slice.isVisible(), "Advanced note tools are visible before More expands");
+  const pins = toolbar.locator('[data-ai3d-action="toggle-annotation"]');
+  if (await pins.isVisible()) {
+    assert(await pins.getAttribute("aria-pressed") === "true", "Visible readonly pins have an inactive button");
+    await toolbar.locator('[data-ai3d-action="toggle-focus"]').click();
+    await pins.click();
+    assert(await toolbar.getAttribute("data-ai3d-interaction-mode") === "focus", "Pin visibility changed the primary inspection mode");
+    assert(await page.locator(".ai3d-annotation-overlay").evaluate(el => el.classList.contains("is-hidden")), "Pin visibility did not hide the overlay");
+    await pins.click();
+    assert(await toolbar.getAttribute("data-ai3d-interaction-mode") === "focus", "Showing pins deactivated focus");
+    await toolbar.locator('[data-ai3d-action="exit-interaction"]').click();
+    assert(await pins.getAttribute("aria-pressed") === "true", "Exiting inspection hid readonly pins");
+  }
+  await more.click();
+  assert(await toolbar.locator('.ai3d-inline-btn.is-hidden:visible').count() === 0, "More revealed unavailable note actions");
+  await slice.click();
+  await more.click();
+  assert(await slice.isVisible(), "Collapsing More hid the active advanced note tool");
+  await toolbar.locator('[data-ai3d-action="exit-interaction"]').click();
+  assert(!await slice.isVisible(), "Exiting an advanced tool did not restore the compact note toolbar");
+  await more.click();
+  const widths = await toolbar.locator("..").evaluate(async frame => {
+    const previous = frame.style.width;
+    const rows = [];
+    for (const width of [320, 360, 480, 720]) {
+      frame.style.width = `${width}px`;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      rows.push({ width, client: frame.clientWidth, scroll: frame.scrollWidth });
+    }
+    frame.style.width = previous;
+    return rows;
+  });
+  for (const row of widths) assert(row.scroll <= row.client + 1, `Note frame overflows: ${JSON.stringify(row)}`);
+  await more.click();
+  console.log("Note toolbar verification passed: independent readonly pins, active advanced tool, narrow frames");
+}
+
 async function verifyHelperToolbar(page) {
   await page.waitForSelector(".ai3d-helper-toolbar", { timeout: 5000 });
+  await verifyToolbarComfort(page);
   await page.waitForSelector(".ai3d-zoom-control:not(.is-hidden) .ai3d-zoom-range", { timeout: 5000 });
 
   const beforeZoom = await page.evaluate(() => window.__ai3dPreview?.getCameraZoomState?.()?.value ?? null);
@@ -1290,6 +1322,7 @@ async function verifyMeasurementTool(page, box, firstPick) {
     phase: strip.getAttribute("data-ai3d-measurement-phase"),
   }));
   const firstSnapState = await page.evaluate(() => window.__ai3dPreview?.getMeasurementState?.() ?? null);
+  assert((await page.locator(".ai3d-interaction-status").first().textContent()).includes("Choose the end point"), "Measurement guidance did not advance to the end point");
   assert(
     pickEndState.phase === "picking-end" &&
       (pickEndState.value.includes("Pick end") || pickEndState.value.includes("Snap:")) &&
@@ -1307,6 +1340,7 @@ async function verifyMeasurementTool(page, box, firstPick) {
     `Expected one measurement record: ${JSON.stringify({ records, clickPair, firstSnapState, completedSnapState })}`,
   );
   assert(records[0].reading.distance > 0, `Measurement distance was not positive: ${JSON.stringify(records[0])}`);
+  assert((await page.locator(".ai3d-interaction-status").first().textContent()).includes("Choose a new start point"), "Measurement guidance did not retain completed-record context");
   assert(
     records[0].reading.absDelta.x > 0 || records[0].reading.absDelta.y > 0 || records[0].reading.absDelta.z > 0,
     `Measurement axis deltas were empty: ${JSON.stringify(records[0])}`,
@@ -1446,7 +1480,7 @@ async function verifyMeasurementTool(page, box, firstPick) {
   assert(calibrated.markdown.includes("Delta X"), "Measurement Markdown export missing delta columns");
   assert(calibrated.markdown.includes("cm"), `Measurement Markdown export missing calibrated unit: ${calibrated.markdown}`);
 
-  await measureBtn.click();
+  await page.locator('[data-ai3d-action="exit-interaction"]').first().click();
   await page.waitForTimeout(100);
   const toggledOff = await page.evaluate(() => ({
     active: window.__ai3dPreview?.isMeasurementActive?.() ?? true,
@@ -1477,12 +1511,20 @@ async function verifyMeasurementTool(page, box, firstPick) {
   const visibleMeasurementStripCount = await page.locator(".ai3d-helper-group-inspect .ai3d-measurement-strip:not(.is-hidden)").count();
   assert(visibleMeasurementStripCount === 0, `Measurement strip stayed visible after clearing records: ${visibleMeasurementStripCount}`);
 
+  await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
+  await page.waitForTimeout(100);
+  const escBox = await page.locator("#preview-canvas").boundingBox();
+  assert(escBox, "Measurement canvas disappeared before Escape verification");
+  const escFirstPick = {
+    ...firstPick,
+    clientX: escBox.x + (firstPick.clientX - box.x) / box.width * escBox.width,
+    clientY: escBox.y + (firstPick.clientY - box.y) / box.height * escBox.height,
+  };
   const escTargetMarkdown = await page.evaluate(() => window.__ai3dPreview?.exportSelectedPartInfo?.() ?? "");
   const escTargetBounds = parseSelectedPartBounds(escTargetMarkdown) ?? selectedBounds;
   const escClickPair = (isBoxLikeMeasurementFixture(escTargetMarkdown)
     ? await projectSelectedBoundsMeasurementPair(page, escTargetBounds)
-    : null) ?? await findMeasurementClickPair(page, box, { ...firstPick, markdown: escTargetMarkdown }, escTargetBounds);
-
+    : null) ?? await findMeasurementClickPair(page, escBox, { ...escFirstPick, markdown: escTargetMarkdown }, escTargetBounds);
   await measureBtn.click();
   await page.waitForTimeout(100);
   await dispatchCanvasClick(page, escClickPair.first.clientX, escClickPair.first.clientY, { altKey: true });
@@ -2498,6 +2540,45 @@ async function saveFailureArtifacts(page, browserMessages, error) {
   return { screenshotPath: screenshotCaptured ? screenshotPath : null, logPath };
 }
 
+async function verifyMobileToolbar(page) {
+  const toolbar = page.locator(".ai3d-helper-toolbar.is-mobile").first();
+  const interact = toolbar.locator(".ai3d-mobile-mode-btn");
+  await interact.click();
+  const canvas = page.locator("#preview-canvas");
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  assert(box, "Mobile canvas was unavailable");
+  const firstPick = await pickSelectedPartInfo(page, box);
+  const bounds = parseSelectedPartBounds(firstPick.markdown);
+  assert(bounds, "Mobile measurement target was unavailable");
+  const pair = await projectSelectedBoundsMeasurementPair(page, bounds)
+    ?? await findMeasurementClickPair(page, box, firstPick, bounds);
+  const measure = toolbar.locator('[data-ai3d-action="toggle-measurement"]');
+  await measure.click();
+  await canvas.scrollIntoViewIfNeeded();
+  const activeBox = await canvas.boundingBox();
+  assert(activeBox, "Mobile measurement canvas disappeared");
+  for (const point of [pair.first, pair.second]) {
+    await dispatchCanvasClick(page,
+      activeBox.x + (point.clientX - box.x) / box.width * activeBox.width,
+      activeBox.y + (point.clientY - box.y) / box.height * activeBox.height);
+    await page.waitForTimeout(100);
+  }
+  const before = await page.evaluate(() => window.__ai3dPreview.getMeasurementRecords());
+  assert(before.length === 1, "Mobile scroll-mode check did not establish a completed ruler");
+  await interact.click();
+  assert(await toolbar.getAttribute("data-ai3d-interaction-mode") === "idle", "Scroll mode left inspection active");
+  assert(await interact.getAttribute("aria-pressed") === "false", "Scroll mode did not update touch state");
+  const after = await page.evaluate(() => window.__ai3dPreview.getMeasurementRecords());
+  assert(JSON.stringify(after) === JSON.stringify(before), "Scroll mode changed completed ruler records");
+  const sizes = await toolbar.locator("button.ai3d-inline-btn:visible").evaluateAll(buttons => buttons.map(button => {
+    const rect = button.getBoundingClientRect();
+    return { label: button.getAttribute("aria-label"), width: rect.width, height: rect.height };
+  }));
+  for (const size of sizes) assert(size.width >= 40 && size.height >= 40, `Small touch target: ${JSON.stringify(size)}`);
+  console.log("Mobile toolbar verification passed: touch targets, scroll-mode exit, completed ruler retention");
+}
+
 async function verify() {
   assert(existsSync(modelPath), `Missing sample model: ${modelPath}`);
   await buildHarness();
@@ -2517,7 +2598,9 @@ async function verify() {
   const browserMessages = [];
 
   try {
-    page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    page = await browser.newPage(verifyMobileToolbarOnly
+      ? { viewport: { width: 375, height: 812 }, hasTouch: true }
+      : { viewport: { width: 1280, height: 900 } });
     page.on("console", (message) => browserMessages.push(`${message.type()}: ${message.text()}`));
     page.on("pageerror", (error) => browserMessages.push(`pageerror: ${error.stack ?? error.message}`));
     const params = new URLSearchParams();
@@ -2525,6 +2608,7 @@ async function verify() {
       params.set("mode", verifyMode);
     }
     params.set("rollout", verifyRollout);
+    if (verifyNoteUi) params.set("noteUi", "1");
     if (verifyAllowWorkbenchThree) {
       params.set("allowWorkbenchThree", "1");
     }
@@ -2555,7 +2639,9 @@ async function verify() {
       return;
     }
     assert(state.summary.meshCount > 0, "Model summary reports zero meshes");
-    assert(state.summary.triangleCount > 0, "Model summary reports zero triangles");
+    const isPointCloud = [".pcd", ".xyz"].includes(extname(modelPath).toLowerCase());
+    assert(isPointCloud ? state.summary.triangleCount === 0 : state.summary.triangleCount > 0,
+      isPointCloud ? "Point-cloud summary reports unexpected triangles" : "Model summary reports zero triangles");
     assert(state.summary.vertexCount > 0, "Model summary reports zero vertices");
     assert(state.route?.backend === expectedBackend(verifyMode, verifyRollout), `Unexpected route: ${JSON.stringify(state.route)}`);
     const warnings = Array.isArray(state.summary.resourceWarnings) ? state.summary.resourceWarnings : [];
@@ -2573,9 +2659,17 @@ async function verify() {
 
     await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
     await verifyCanvasAccessibility(page);
-    await page.waitForTimeout(500);
-    const stats = await canvasPixelStats(page);
-    assert(stats.nonBackgroundRatio > 0.01, `Canvas looks blank: ${JSON.stringify(stats)}`);
+    // Sparse point clouds cover fewer pixels than solid surfaces.
+    const minimumPixels = isPointCloud ? 0.001 : 0.01;
+    // Visibility observers and the GPU can publish the first frame after the
+    // scroll promise resolves. Wait for pixels instead of a fixed paint delay.
+    const frameDeadline = Date.now() + 5_000;
+    let stats = await canvasPixelStats(page);
+    while ((stats.nonBackgroundRatio <= minimumPixels || stats.contrast <= 12) && Date.now() < frameDeadline) {
+      await page.waitForTimeout(100);
+      stats = await canvasPixelStats(page);
+    }
+    assert(stats.nonBackgroundRatio > minimumPixels, `Canvas looks blank: ${JSON.stringify(stats)}`);
     assert(stats.contrast > 12, `Canvas has too little contrast: ${JSON.stringify(stats)}`);
     verifyColorFidelity(stats);
     const performanceSnapshot = await page.evaluate(() => window.__ai3dPreview?.getPerformanceSnapshot?.() ?? null);
@@ -2602,6 +2696,14 @@ async function verify() {
       return;
     }
 
+    if (verifyNoteUi) await verifyNoteToolbar(page);
+    await page.locator("#preview-canvas").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+
+    if (verifyMobileToolbarOnly) {
+      await verifyMobileToolbar(page);
+      return;
+    }
     const beforeScroll = await page.evaluate(() => window.scrollY);
     const box = await page.locator("#preview-canvas").boundingBox();
     assert(box, "Canvas bounding box is unavailable");

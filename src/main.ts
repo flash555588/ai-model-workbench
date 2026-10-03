@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Notice, Plugin, TFile, type Editor, type MarkdownFileInfo } from "obsidian";
 import type { AnnotationPin, ModelAssetProfile, PluginSettings } from "./domain/models";
 import { createConvertedAssetCache, type ConvertedAssetCache } from "./io/cache/converted-asset-cache";
 import { listSupportedModelExtensions, isSupportedModelExtension } from "./io/formats/registry";
@@ -9,6 +9,7 @@ import { LazyAI3DSettingTab } from "./lazy-setting-tab";
 import { createLogger, setLogLevel } from "./utils/log";
 import { formatT, setLocale, t, type Locale } from "./i18n";
 import { containsHeadingLinkedAnnotations } from "./view/heading-pin-map";
+import type { NotePartsAccess } from "./view/inline/note-parts-config";
 
 const log = createLogger("main");
 const POST_LAYOUT_STARTUP_DELAY_MS = 700;
@@ -117,6 +118,16 @@ export default class AI3DModelWorkbench extends Plugin {
     });
 
     this.addCommand({
+      id: "insert-model-in-note",
+      name: t("noteInsert.command"),
+      editorCallback: (editor, view) => this.insertModelInNote(editor, view),
+    });
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, view) => {
+      menu.addItem(item => item.setTitle(t("noteInsert.command")).setIcon("box")
+        .onClick(() => this.insertModelInNote(editor, view)));
+    }));
+
+    this.addCommand({
       id: "generate-note",
       name: t("main.commandGenerateNote"),
       callback: withErrorNotice(() => this.generateNote(), "generate note"),
@@ -155,14 +166,20 @@ export default class AI3DModelWorkbench extends Plugin {
 
     const getAnnotations = (modelPath: string) =>
       this.ps.store.getState().modelAssetProfiles[modelPath]?.annotations ?? [];
+    const partsAccess: NotePartsAccess = {
+      getParts: modelPath => this.ps.store.getState().modelAssetProfiles[modelPath]?.registeredParts ?? [],
+      subscribe: listener => this.ps.store.subscribe(listener),
+    };
     const { registerLazyCodeBlockProcessor, registerLazyGridCodeBlockProcessor } =
       await import("./view/inline/lazy-code-block");
 
     // Register ```3d and ```3dgrid code block processors
-    const cb = registerLazyCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations);
+    const cb = registerLazyCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations, partsAccess);
     this.registerMarkdownCodeBlockProcessor(cb.id, cb.handler);
     const gridCb = registerLazyGridCodeBlockProcessor(this.app, () => this.getSettings(), this.convertedAssetCache);
     this.registerMarkdownCodeBlockProcessor(gridCb.id, gridCb.handler);
+    const { createReadingImageEmbedProcessor } = await import("./view/inline/reading-image-embed");
+    this.registerMarkdownPostProcessor(createReadingImageEmbedProcessor(this.app, () => this.getSettings(), this.convertedAssetCache, getAnnotations, partsAccess));
 
     // Watch note headings for hover → highlight pin
     this.register(this.ps.store.subscribe(() => {
@@ -177,7 +194,7 @@ export default class AI3DModelWorkbench extends Plugin {
         return;
       }
       this.register(schedulePostLayoutStartupTask(() => {
-        void this.registerLivePreviewExtension(getAnnotations);
+        void this.registerLivePreviewExtension(getAnnotations, partsAccess);
         if (this.hasHeadingLinkedAnnotations()) {
           void this.startHeadingPinObserver();
         }
@@ -225,7 +242,7 @@ export default class AI3DModelWorkbench extends Plugin {
     return this.headingLinkedProfilesResult;
   }
 
-  private async registerLivePreviewExtension(getAnnotations: (modelPath: string) => AnnotationPin[]): Promise<void> {
+  private async registerLivePreviewExtension(getAnnotations: (modelPath: string) => AnnotationPin[], partsAccess: NotePartsAccess): Promise<void> {
     if (this.unloaded) {
       return;
     }
@@ -240,6 +257,7 @@ export default class AI3DModelWorkbench extends Plugin {
         this.convertedAssetCache,
         getAnnotations,
         (cleanup) => this.register(cleanup),
+        partsAccess,
       );
       for (const e of exts) {
         this.registerEditorExtension(e);
@@ -247,6 +265,20 @@ export default class AI3DModelWorkbench extends Plugin {
     } catch (error) {
       console.warn("[AI3D] Failed to register Live Preview model embeds:", error);
     }
+  }
+
+  private insertModelInNote(editor: Editor, view: MarkdownFileInfo): void {
+    const notePath = view.file?.path;
+    void import("./view/note-model-insert-modal").then(({ openNoteModelInsertion }) => {
+      if (this.unloaded) return;
+      if (!notePath || view.file?.path !== notePath || view.editor !== editor || this.app.workspace.getActiveFile()?.path !== notePath) {
+        new Notice(t("noteInsert.noteChanged")); return;
+      }
+      openNoteModelInsertion(this.app, editor, view);
+    }).catch((error: unknown) => {
+      log.error("Could not open note model insertion", { error: String(error) });
+      new Notice(t("noteInsert.failed"));
+    });
   }
 
   private importModel(): void {

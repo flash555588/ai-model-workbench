@@ -474,6 +474,15 @@ export interface STLConfig {
   wireframe?: boolean;
 }
 
+export interface NotePartPresentation {
+  display: "registered";
+  /** Registered part ID or a unique registered name; omitted means all parts. */
+  part?: string;
+  /** Percentage from 0 (assembly) to 100 (catalog). */
+  separation?: number;
+  showUnregistered?: boolean;
+}
+
 export interface ThreeDBlockConfig {
   models: ModelConfig[];
   camera?: CameraConfig;
@@ -482,6 +491,7 @@ export interface ThreeDBlockConfig {
   stl?: STLConfig;
   width?: number | string;
   height?: number | string;
+  parts?: NotePartPresentation;
 }
 
 export interface GridBlockConfig {

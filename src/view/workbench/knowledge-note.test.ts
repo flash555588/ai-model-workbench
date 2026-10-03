@@ -6,6 +6,7 @@ import type { AnalysisResult, KnowledgeGenerationRecord, ModelAssetProfile, Mode
 import type { PluginStore } from "../../store/plugin-store";
 import { createDefaultProfile } from "../../store/plugin-store";
 import { buildKnowledgeNoteContent, collectRegisteredPartsFromProfiles, generateKnowledgeNote, stripTransientRegisteredPartData } from "./knowledge-note";
+import { getKnowledgeGenerationProgress, subscribeKnowledgeGenerationProgress } from "./knowledge-generation-progress";
 
 const noticeMessages = vi.hoisted((): string[] => []);
 
@@ -51,6 +52,7 @@ function createTFile(path: string): TestFile {
 
 function createVaultHarness(options: VaultHarnessOptions = {}) {
   const files = new Map<string, string>();
+  const binaries = new Map<string, ArrayBuffer>();
   const folders = new Set<string>();
   const operations: string[] = [];
 
@@ -85,10 +87,11 @@ function createVaultHarness(options: VaultHarnessOptions = {}) {
     },
     async createBinary(path: string, content: ArrayBuffer) {
       operations.push(`binary:${path}:${content.byteLength}`);
+      binaries.set(path, content);
     },
   };
 
-  const openFile = vi.fn(async () => undefined);
+  const openFile = vi.fn(async (): Promise<void> => undefined);
   const app = {
     vault,
     workspace: {
@@ -96,7 +99,7 @@ function createVaultHarness(options: VaultHarnessOptions = {}) {
     },
   } as unknown as App;
 
-  return { app, files, operations, openFile };
+  return { app, files, binaries, operations, openFile };
 }
 
 function createState(overrides: Partial<PluginState> = {}): PluginState {
@@ -162,6 +165,216 @@ function createPluginStoreHarness(initialState: PluginState, operations: string[
 }
 
 describe("generateKnowledgeNote generation marker", () => {
+  it("binds a file-view action to its model instead of the globally current leaf", async () => {
+    const { app, files } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState({ currentModelPath: "models/other.glb", modelPreview: null }));
+    await generateKnowledgeNote(app, ps, { modelPath: "models/gear.glb", modelPreview: createState().modelPreview });
+    const record = generationRecords.at(-1)!;
+    expect(record).toMatchObject({ modelPath: "models/gear.glb", status: "success" });
+    const analysis = JSON.parse(files.get(record.analysisSidecarPath!)!) as AnalysisResult;
+    expect(analysis.asset.sourcePath).toBe("models/gear.glb");
+    expect(files.get(record.reportNotePath!)).toContain("120");
+    expect(ps.store.getState().currentModelPath).toBe("models/other.glb");
+  });
+
+  it("reports local write stages and clears live progress before opening a saved report", async () => {
+    const { app, openFile } = createVaultHarness();
+    const { ps } = createPluginStoreHarness(createState());
+    const phases: Array<string | null> = [];
+    const unsubscribe = subscribeKnowledgeGenerationProgress(ps, () => phases.push(getKnowledgeGenerationProgress(ps)?.phase ?? null));
+    openFile.mockImplementation(async () => {
+      expect(getKnowledgeGenerationProgress(ps)).toBeNull();
+      expect(ps.store.getState().lastKnowledgeGeneration?.status).toBe("success");
+    });
+    try {
+      await generateKnowledgeNote(app, ps);
+      expect(phases).toEqual(["capture", "paths", "analysis", "parts", "write", "index", null]);
+    } finally { unsubscribe(); }
+  });
+
+  it("clears live progress after a failed write so generation can be retried", async () => {
+    const { app } = createVaultHarness({ failCreatePath: "Analysis/3D Reports/gear Analysis.json" });
+    const { ps } = createPluginStoreHarness(createState());
+    await expect(generateKnowledgeNote(app, ps)).rejects.toThrow("Unable to write analysis sidecar");
+    expect(getKnowledgeGenerationProgress(ps)).toBeNull();
+    const next = createVaultHarness();
+    await generateKnowledgeNote(next.app, ps);
+    expect(ps.store.getState().lastKnowledgeGeneration?.status).toBe("success");
+  });
+
+  function partEvidence(componentId = "gear-a"): ModelEvidence {
+    return {
+      summary: createState().modelPreview!,
+      parts: [{ name: "Gear", source: "component", componentId, meshNames: [componentId],
+        triangleCount: 120, vertexCount: 80, materialName: "Steel", boundingSize: { x: 1, y: 1, z: 1 }, center: { x: 0, y: 0, z: 0 } }],
+      materialNames: [], resourceWarnings: [], capturedAt: "2026-10-01T00:00:00.000Z",
+    };
+  }
+
+  it("captures the starting model evidence and screenshot before asynchronous ownership reads", async () => {
+    const { app, files, binaries } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    let evidence = partEvidence("original-component");
+    let image = "data:image/png;base64,AQ==";
+    const options = { preview: { captureSnapshot: () => image, getModelEvidence: () => evidence } };
+    await generateKnowledgeNote(app, ps, options);
+    let releaseRead!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const read = app.vault.read.bind(app.vault);
+    const readSpy = vi.spyOn(app.vault, "read").mockImplementation(async (file) => {
+      await gate;
+      return read(file);
+    });
+    const generating = generateKnowledgeNote(app, ps, options);
+    try {
+      await vi.waitFor(() => expect(readSpy).toHaveBeenCalled());
+      ps.store.setState({ currentModelPath: "models/other.glb", modelPreview: { ...evidence.summary, rootName: "other" } });
+      evidence = partEvidence("other-component");
+      image = "data:image/png;base64,Ag==";
+      releaseRead();
+      await generating;
+      const result = generationRecords.at(-1)!;
+      const analysis = JSON.parse(files.get(result.analysisSidecarPath!)!) as AnalysisResult;
+      expect(analysis.asset.sourcePath).toBe("models/gear.glb");
+      expect(analysis.parts[0].componentId).toBe("original-component");
+      expect(new Uint8Array(binaries.get(analysis.previewImages[0])!)[0]).toBe(1);
+    } finally {
+      releaseRead();
+      await generating.catch(() => undefined);
+      readSpy.mockRestore();
+    }
+  });
+
+  it("records ownership read failures and releases the generation lock for a retry", async () => {
+    const { app, files } = createVaultHarness();
+    files.set("Analysis/3D Reports/gear Report.md", "Existing user note");
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    const readSpy = vi.spyOn(app.vault, "read").mockRejectedValue(new Error("vault read failed"));
+    await expect(generateKnowledgeNote(app, ps)).rejects.toThrow("vault read failed");
+    expect(generationRecords.map((record) => record.status)).toEqual(["pending", "failed"]);
+    expect(generationRecords.at(-1)!.modelPath).toBe("models/gear.glb");
+    expect(files.get("Analysis/3D Reports/gear Report.md")).toBe("Existing user note");
+    readSpy.mockRestore();
+    await generateKnowledgeNote(app, ps);
+    expect(generationRecords.at(-1)!.status).toBe("success");
+  });
+
+  it("continues generation with a warning when screenshot capture throws", async () => {
+    const { app, files } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    await generateKnowledgeNote(app, ps, { preview: {
+      captureSnapshot: () => { throw new Error("canvas unavailable"); },
+      getModelEvidence: () => partEvidence(),
+    } });
+    const result = generationRecords.at(-1)!;
+    const analysis = JSON.parse(files.get(result.analysisSidecarPath!)!) as AnalysisResult;
+    expect(result.status).toBe("success");
+    expect(result.warningCount).toBe(1);
+    expect(analysis.previewImages).toEqual([]);
+    expect(analysis.warnings).toContain("Evidence snapshot failed: canvas unavailable");
+    expect(analysis.parts[0].componentId).toBe("gear-a");
+  });
+
+  it("keeps generation successful when opening a saved report fails", async () => {
+    const { app, files, openFile } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    openFile.mockRejectedValueOnce(new Error("workspace unavailable"));
+    await expect(generateKnowledgeNote(app, ps)).resolves.toBeUndefined();
+    expect(generationRecords.map((record) => record.status)).toEqual(["pending", "success"]);
+    expect(files.has(generationRecords.at(-1)!.reportNotePath!)).toBe(true);
+    expect(noticeMessages.some((message) => message.includes("saved") && message.includes("workspace unavailable"))).toBe(true);
+  });
+
+  it("does not overwrite a later success when an earlier report open rejects late", async () => {
+    const { app, openFile } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    let rejectOpen!: (error: Error) => void;
+    openFile.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectOpen = reject; }));
+    const earlier = generateKnowledgeNote(app, ps);
+    const observed = earlier.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(openFile).toHaveBeenCalledTimes(1));
+      ps.store.setState({ currentModelPath: "models/later.glb" });
+      await generateKnowledgeNote(app, ps);
+      expect(generationRecords.at(-1)!.modelPath).toBe("models/later.glb");
+      rejectOpen(new Error("earlier report open failed"));
+      await observed;
+      expect(ps.store.getState().lastKnowledgeGeneration).toMatchObject({ status: "success", modelPath: "models/later.glb" });
+    } finally {
+      rejectOpen?.(new Error("test cleanup"));
+      await observed;
+    }
+  });
+
+  it("isolates same-named models and preserves index and part edits on regeneration", async () => {
+    const { app, files } = createVaultHarness();
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    const options = { preview: { captureSnapshot: () => null, getModelEvidence: () => partEvidence() } };
+    await generateKnowledgeNote(app, ps, options);
+    const first = generationRecords.at(-1)!;
+    const firstAnalysis = JSON.parse(files.get(first.analysisSidecarPath!)!) as AnalysisResult;
+    const firstPartPath = firstAnalysis.parts[0].notePath!;
+    files.set(first.knowledgeIndexPath!, files.get(first.knowledgeIndexPath!)! + "\nMy index notes\n");
+    files.set(firstPartPath, files.get(firstPartPath)! + "\nMy part notes\n");
+    const originalFiles = new Map(files);
+    ps.store.setState({ currentModelPath: "other/gear.glb" });
+    await generateKnowledgeNote(app, ps, options);
+    const second = generationRecords.at(-1)!;
+    expect(second.reportNotePath).not.toBe(first.reportNotePath);
+    expect(second.analysisSidecarPath).not.toBe(first.analysisSidecarPath);
+    expect(second.knowledgeIndexPath).not.toBe(first.knowledgeIndexPath);
+    const secondAnalysis = JSON.parse(files.get(second.analysisSidecarPath!)!) as AnalysisResult;
+    expect(secondAnalysis.parts[0].notePath).not.toBe(firstPartPath);
+    for (const [path, content] of originalFiles) expect(files.get(path)).toBe(content);
+    await generateKnowledgeNote(app, ps, options);
+    expect(generationRecords.at(-1)!.reportNotePath).toBe(second.reportNotePath);
+    ps.store.setState({ currentModelPath: "models/gear.glb" });
+    await generateKnowledgeNote(app, ps, options);
+    expect(generationRecords.at(-1)!.reportNotePath).toBe(first.reportNotePath);
+    expect(files.get(first.knowledgeIndexPath!)).toContain("My index notes");
+    expect(files.get(firstPartPath)).toContain("My part notes");
+  });
+
+  it.each([" Report.md", " Analysis.json", " Index.md"])("preserves an unrelated user artifact at the default path: %s", async (suffix) => {
+    const { app, files } = createVaultHarness();
+    const existingPath = "Analysis/3D Reports/gear" + suffix;
+    const original = suffix.endsWith(".json") ? JSON.stringify({ asset: { sourcePath: "models/gear.glb" } }) : "My unrelated notes";
+    files.set(existingPath, original);
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    await generateKnowledgeNote(app, ps);
+    expect(files.get(existingPath)).toBe(original);
+    expect(generationRecords.at(-1)!.reportNotePath).toMatch(/gear-[a-f0-9]{8} Report\.md$/);
+  });
+
+  it("preserves an unrelated part note and avoids reusing it for a different component", async () => {
+    const { app, files } = createVaultHarness();
+    const originalPath = "Parts/3D Components/gear/01 Gear.md";
+    files.set(originalPath, "Manual part notes");
+    const { ps, generationRecords } = createPluginStoreHarness(createState());
+    let component = "gear-a";
+    const options = { preview: { captureSnapshot: () => null, getModelEvidence: () => partEvidence(component) } };
+    await generateKnowledgeNote(app, ps, options);
+    const first = JSON.parse(files.get(generationRecords.at(-1)!.analysisSidecarPath!)!) as AnalysisResult;
+    const firstPath = first.parts[0].notePath!;
+    expect(firstPath).not.toBe(originalPath);
+    const edited = files.get(firstPath)! + "\nUser component notes\n";
+    files.set(firstPath, edited);
+    component = "gear-b";
+    await generateKnowledgeNote(app, ps, options);
+    const second = JSON.parse(files.get(generationRecords.at(-1)!.analysisSidecarPath!)!) as AnalysisResult;
+    expect(second.parts[0].notePath).not.toBe(firstPath);
+    expect(files.get(firstPath)).toBe(edited);
+    expect(files.get(originalPath)).toBe("Manual part notes");
+  });
+
+  it("writes root report paths without leading separators", async () => {
+    const { app, files } = createVaultHarness();
+    const { ps } = createPluginStoreHarness(createState({ settings: { ...DEFAULT_SETTINGS, reportFolder: "" } }));
+    await generateKnowledgeNote(app, ps);
+    expect(files.has("gear Report.md")).toBe(true);
+    expect([...files.keys()].some((path) => path.startsWith("/"))).toBe(false);
+  });
+
   beforeEach(() => {
     noticeMessages.length = 0;
   });

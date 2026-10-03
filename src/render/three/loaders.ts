@@ -19,6 +19,8 @@ import {
   MeshStandardMaterial,
   PointsMaterial,
   Points,
+  ShapeUtils,
+  Vector2,
 } from "three";
 import { getPortableBasename, getPortableDirname, getPortableStem, joinPortablePath } from "../../utils/resolve-path";
 import { arrayBufferToBase64 } from "../../utils/base64";
@@ -26,10 +28,11 @@ import {
   getAdaptivePointSize,
   prepareThreeMaterialForColorAccuracy,
 } from "./material-quality";
-import { createThreeRemoteUrlError, guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
+import { createThreeEmbeddedResourceManager, createThreeRemoteUrlError, guardThreeUrl, isThreeRemoteUrl } from "./network-guard";
 import { throwIfPreviewLoadInterrupted, type PreviewLoadOptions } from "../preview/load-control";
 import { detectDracoCompression } from "../../io/formats/draco-detect";
 import { t } from "../../i18n";
+import { supportsThreeDirectFormat } from "../../io/formats/renderer-support";
 
 const IMAGE_MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
@@ -136,15 +139,24 @@ async function runLimited<T>(
   options?: PreviewLoadOptions,
 ): Promise<void> {
   let nextIndex = 0;
+  let failed = false;
+  let firstError: unknown;
   const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
   await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextIndex < tasks.length) {
-      throwIfPreviewLoadInterrupted(options);
-      const task = tasks[nextIndex++];
-      await worker(task);
-      throwIfPreviewLoadInterrupted(options);
+    try {
+      while (!failed && nextIndex < tasks.length) {
+        throwIfPreviewLoadInterrupted(options);
+        const task = tasks[nextIndex++];
+        await worker(task);
+        throwIfPreviewLoadInterrupted(options);
+      }
+    } catch (error) {
+      if (!failed) firstError = error;
+      failed = true;
     }
   }));
+  // Resource cleanup must wait for every in-flight read to finish allocating URLs.
+  if (failed) throw firstError;
 }
 
 async function createGltfBlobResourceResolver(
@@ -465,7 +477,7 @@ export async function loadThreeOBJ(
  * 3MF is an XML+zlib container; the Three loader parses it in pure JS.
  */
 export async function loadThree3MF(data: ArrayBuffer): Promise<Object3D> {
-  const loader = new ThreeMFLoader();
+  const loader = new ThreeMFLoader(createThreeEmbeddedResourceManager());
   return loader.parse(data);
 }
 
@@ -475,7 +487,7 @@ export async function loadThree3MF(data: ArrayBuffer): Promise<Object3D> {
  * remains the fallback when textures matter.
  */
 export async function loadThreeDAE(data: ArrayBuffer, modelPath?: string): Promise<{ object: Object3D; animations: AnimationClip[] }> {
-  const loader = new ColladaLoader();
+  const loader = new ColladaLoader(createThreeEmbeddedResourceManager());
   const text = new TextDecoder().decode(new Uint8Array(data));
   const result = loader.parse(text, modelPath ? getPortableDirname(modelPath) : "");
   if (!result) {
@@ -519,7 +531,7 @@ export async function loadThreeXYZ(text: string): Promise<Object3D> {
  * because it produces higher-fidelity GLB output.
  */
 export async function loadThreeFBX(data: ArrayBuffer, modelPath?: string): Promise<{ object: Object3D; animations: AnimationClip[] }> {
-  const loader = new FBXLoader();
+  const loader = new FBXLoader(createThreeEmbeddedResourceManager());
   const root = loader.parse(data, modelPath ? getPortableDirname(modelPath) : "");
   return { object: root, animations: root.animations ?? [] };
 }
@@ -547,8 +559,14 @@ function parseOffGeometry(text: string): { positions: number[]; indices: number[
     vertexCount = Number(parts[1]) || 0;
     faceCount = Number(parts[2]) || 0;
   }
-  if (vertexCount <= 0) {
+  if (!Number.isSafeInteger(vertexCount) || vertexCount <= 0) {
     throw new Error("Invalid OFF vertex count");
+  }
+  if (!Number.isSafeInteger(faceCount) || faceCount <= 0) {
+    throw new Error("Invalid OFF face count");
+  }
+  if (vertexCount + faceCount > lines.length - cursor) {
+    throw new Error("Truncated OFF geometry");
   }
 
   const positions: number[] = [];
@@ -563,10 +581,18 @@ function parseOffGeometry(text: string): { positions: number[]; indices: number[
   const indices: number[] = [];
   for (let f = 0; f < faceCount; f++) {
     const parts = (lines[cursor++] ?? "").split(/\s+/).map(Number);
-    const vertsPerFace = parts[0] || 0;
-    if (vertsPerFace < 3) continue;
-    for (let k = 1; k <= vertsPerFace; k++) {
-      if (Number.isFinite(parts[k])) indices.push(parts[k]);
+    const vertsPerFace = parts[0];
+    if (!Number.isSafeInteger(vertsPerFace) || vertsPerFace < 3 || vertsPerFace > parts.length - 1) {
+      throw new Error("Invalid OFF face size");
+    }
+    const face = parts.slice(1, vertsPerFace + 1);
+    if (!face.every((index) => Number.isSafeInteger(index) && index >= 0 && index < vertexCount)) {
+      throw new Error("Invalid OFF face vertex index");
+    }
+    if (face.length === 3) {
+      indices.push(...face);
+    } else {
+      indices.push(...triangulateOffFace(face, positions));
     }
   }
   if (indices.length === 0) {
@@ -575,9 +601,33 @@ function parseOffGeometry(text: string): { positions: number[]; indices: number[
   return { positions, indices };
 }
 
+function triangulateOffFace(face: readonly number[], positions: readonly number[]): number[] {
+  const points = face.map((index) => positions.slice(index * 3, index * 3 + 3));
+  const normal = [0, 0, 0];
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i];
+    const next = points[(i + 1) % points.length];
+    normal[0] += (current[1] - next[1]) * (current[2] + next[2]);
+    normal[1] += (current[2] - next[2]) * (current[0] + next[0]);
+    normal[2] += (current[0] - next[0]) * (current[1] + next[1]);
+  }
+  const dominantAxis = normal.map(Math.abs).indexOf(Math.max(...normal.map(Math.abs)));
+  const axes = [0, 1, 2].filter((axis) => axis !== dominantAxis);
+  const contour = points.map((point) => new Vector2(point[axes[0]], point[axes[1]]));
+  const area = ShapeUtils.area(contour);
+  if (!Number.isFinite(area) || area === 0) throw new Error("Invalid OFF polygon");
+  const triangles = ShapeUtils.triangulateShape([...contour], []);
+  if (triangles.length === 0) throw new Error("Invalid OFF polygon");
+  return triangles.flatMap(([a, b, c]) => {
+    const left = contour[a];
+    const middle = contour[b];
+    const right = contour[c];
+    const triangleArea = (middle.x - left.x) * (right.y - left.y) - (middle.y - left.y) * (right.x - left.x);
+    return triangleArea * area < 0 ? [face[a], face[c], face[b]] : [face[a], face[b], face[c]];
+  });
+}
+
 /** Check if a format extension is supported by the Three.js path. */
 export function isThreeSupportedFormat(ext: string): boolean {
-  const normalized = ext.trim().toLowerCase();
-  return normalized === "glb" || normalized === "gltf" || normalized === "stl"
-    || normalized === "ply" || normalized === "obj";
+  return supportsThreeDirectFormat(ext);
 }

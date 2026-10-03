@@ -15,9 +15,19 @@ vi.mock("./node-shim", () => ({
   readFile: fsMocks.readFile,
 }));
 
-import { joinPortablePath, joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath } from "./resolve-path";
+import { joinPortablePath, joinVaultConfigPath, readBinaryPath, resolveVaultAbsolutePath, resolveVaultPath } from "./resolve-path";
 
 describe("portable path helpers", () => {
+  it("resolves ambiguous embeds relative to their note before vault-root fallback", () => {
+    const getFirstLinkpathDest = vi.fn((_raw: string, source: string) => source === "Parts/Note.md" ? { path: "Parts/part.glb" } : null);
+    const app = {
+      metadataCache: { getFirstLinkpathDest },
+      vault: { getAbstractFileByPath: () => ({ path: "part.glb" }) },
+    } as unknown as App;
+    expect(resolveVaultPath(app, "part.glb", "Parts/Note.md")).toBe("Parts/part.glb");
+    expect(resolveVaultPath(app, "part.glb")).toBe("part.glb");
+    expect(getFirstLinkpathDest).toHaveBeenCalledWith("part.glb", "Parts/Note.md");
+  });
   it("resolves encoded parent-directory resource URIs from the model folder", () => {
     expect(joinPortablePath("models/nested", "../textures/panel%20diffuse.png?cache=1"))
       .toBe("models/textures/panel diffuse.png");

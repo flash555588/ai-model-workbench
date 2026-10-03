@@ -18,16 +18,24 @@ The table below assumes the default rollout setting: `Compatibility mode` (`baby
 |---------|--------------------|----------|--------------|
 | Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Babylon.js | default `rendererRollout=babylon-safe` |
 | Inline `3d` | `GLB/GLTF/STL/PLY/OBJ` with readonly annotations | Babylon.js | default `rendererRollout=babylon-safe` |
-| Inline `3d` | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` route to Babylon |
+| Inline `3d` | `SPLAT/SPZ/SOG` | unavailable | disabled in packaged builds |
 | Live Preview embed | `GLB/GLTF/STL/PLY/OBJ` with no annotations | Babylon.js | default `rendererRollout=babylon-safe` |
 | Live Preview embed | readonly annotations present | Babylon.js | default `rendererRollout=babylon-safe` |
 | Direct file view | `GLB/GLTF/STL/PLY/OBJ` single-model edit view | Babylon.js | default `rendererRollout=babylon-safe` |
-| Direct file view | `SPLAT` or other unsupported formats | Babylon.js | formats not in `THREE_FORMATS` direct view still routes to Babylon |
+| Direct file view | `SPLAT/SPZ/SOG` | unavailable | disabled in packaged builds |
 | Direct file view | conversion-backed single-model output (`STEP`, `FBX`, `3MF`, `DAE`, etc. converted to `GLB`) | Three.js, Babylon fallback | generated GLB outputs take the Direct View fast path when `Converted GLB Three fast path` is enabled; load failure falls back to Babylon |
 | Workbench | any current model | Babylon.js | `requireWorkbenchFeatures=true`; retained on Babylon after phase-3 evaluation |
 | `3dgrid` | compare / gallery / compose / preset layouts | Babylon.js | retained on Babylon after phase-4 decision |
 
-`THREE_FORMATS` = `{glb, gltf, stl, ply, obj}` — defined in `src/render/preview/routing.ts`.
+Three direct support is derived from enabled format registrations and implemented
+loader kinds in `src/io/formats/renderer-support.ts`: GLB, GLTF, STL, OBJ, PLY,
+FBX, 3MF, DAE, OFF, PCD, and XYZ. Reading-only rollout enables these formats for
+embeds; reading + file-view rollout also enables direct file views. Compatibility
+mode converts FBX/3MF/DAE/OFF as before and gives actionable feedback for PCD/XYZ.
+FBX prefers registered conversion on desktop and goes direct only without a
+registered converter or on mobile. Explicit OBJ conversion is preserved. New
+Three-only source formats never fall back to an unsupported Babylon direct loader.
+The experimental workbench remains limited to direct GLB/GLTF.
 
 ---
 
@@ -41,7 +49,7 @@ The runtime route decision is intentionally conservative:
 - Babylon.js remains the intentional capability path for:
   - full workbench features outside the direct file edit-preview path
   - grid layouts
-  - SPLAT format
+  - future local-only SPLAT restoration (currently disabled)
   - conversion-backed formats when the effective output is not a Three-supported single-model asset or when the fast path fails
 
 The shared route helper lives in `src/render/preview/routing.ts`.
@@ -69,7 +77,10 @@ Direct View GLB outputs may override compatibility mode for the Three.js fast
 path. Turn it off to make STEP/FBX/3MF/DAE/etc. converted outputs follow the
 normal renderer settings, which means Babylon.js in default compatibility mode.
 
-Workbench and `3dgrid` remain on Babylon.js regardless of these settings. The verification harness also has a hidden Three.js workbench capability probe, but production routing still keeps workbench on Babylon.
+Conservative workbench and `3dgrid` remain on Babylon.js. Direct GLB/GLTF file
+views can opt into the Experimental Three workbench setting, with Babylon fallback.
+Direct 3MF/DAE/FBX textures must be embedded; unresolved external references are
+blocked and require conversion to an embedded GLB.
 
 ---
 
@@ -90,6 +101,7 @@ This automation covers:
 - compatibility-mode rollback for all single-model paths
 - workbench Babylon fallback and hidden Three.js capability probe
 - direct `STL`, `PLY`, and `OBJ` routes
+- synthetic 3MF/DAE/OFF/PCD/XYZ direct and direct-edit routes
 
 Manual checks remain required for:
 

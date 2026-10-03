@@ -8,7 +8,7 @@ README, implementation, verification scripts, and release/security docs.
 
 AI Model Workbench is an Obsidian plugin that renders 3D model files inside a vault,
 adds 3D annotations/bookmarks, and generates linked knowledge notes from model evidence.
-The current package version is `0.8.1`.
+The current package version is `0.9.11`.
 
 Important runtime files:
 
@@ -18,6 +18,153 @@ Important runtime files:
 - `src/domain/models.ts` is the shared type contract. Keep runtime code out of it.
 - `src/store/plugin-store.ts` normalizes persisted `data.json` state and must preserve
   backward compatibility.
+
+## 0.9.1 Data Isolation Contract
+
+Knowledge generation checks existing artifact ownership before selecting output paths.
+Free paths and artifacts generated for the same source retain their names; conflicting
+models or user files get deterministic suffixes, including a numeric collision fallback.
+Part drafts must match both source path and part ID before reuse.
+
+Conversion reuse requires the exact source path. Do not restore the same-basename
+relocation heuristic or reuse untracked legacy adjacent outputs. Persisted exact-source
+records retain compatibility; source moves may require another converter run.
+
+GLTF resource workers stop scheduling after the first failure and drain in-flight reads
+before revoking Blob URLs. Preserve bounded concurrency and the original failure.
+
+## 0.9.2 Knowledge Generation Lifecycle
+
+Record pending before reading existing artifact ownership. Pending records initially
+identify the model; final success/failure records include output paths once resolved.
+Capture live model evidence and the screenshot synchronously before the first vault
+await so later model switches cannot mix evidence into the original report.
+
+Screenshot failures are optional evidence warnings. Successful report/sidecar/index
+writes commit generation success before opening the report. Failure to open a saved
+report must not change persisted success or overwrite a newer generation record.
+
+## 0.9.3 Direct-view Knowledge Workflow
+
+Knowledge actions precede summary metrics. Runtime progress is held in
+`knowledge-generation-progress.ts`, never persisted: a pending marker from an
+interrupted prior session remains retryable. Progress observers cannot abort writes,
+and stale phase/finish notifications cannot clear a newer run.
+
+File-view generation explicitly binds the model path, summary, evidence, and
+screenshot before its lazy import, so another leaf becoming current cannot mix
+models. Success releases live progress before opening the report. Renderer
+diagnostics remain available in a collapsed disclosure; route data attributes
+and the existing renderer selection contract are preserved. The workspace uses
+a named container query for leaves at or below 640 CSS px.
+
+## 0.9.4 Interaction Comfort
+
+Mode exit and Escape are scoped to their preview/toolbar. Escape cancels an
+unfinished ruler first; explicit Exit mode deactivates the mode and retains
+completed measurements. Annotation editors can consume Escape before the mode
+handler. Keyboard measurement leaves annotation before activating the renderer.
+
+The knowledge sidebar can collapse without unloading the model. Divider resizing
+uses pointer capture, keyboard controls, width bounds, and a disposer released on
+model switches/close. Open-note errors are separate from generation errors; vault
+create/delete/rename events refresh artifact availability without changing the
+persisted generation record.
+
+## 0.9.5 In-note Controls
+
+Reading code blocks and Live Preview widgets share the note frame and helper
+toolbar. Readonly pin visibility is an independent view feature, not annotation
+editing: its initial pressed state follows the initially visible overlay, and
+inspection or Escape must not toggle it. Keep active advanced tools visible when
+More collapses. Inspectors share the note task context; completed ruler records
+remain available when switching modes.
+
+Toolbar destruction releases measurement/slice/zoom observers and keyboard
+listeners. Live Preview forwards the current snapshot settings through the lazy
+widget wrapper. Keep embed canvas height explicit to avoid intrinsic drawing-buffer
+height affecting editor layout. Keep the lazy widget's returned root owned by
+CodeMirror and mount the runtime inside it; replacing that root can turn toolbar
+DOM into Markdown edits. More must never reveal capability-hidden buttons.
+The showcase reuses the real controls and embeds
+its GLB; vault-save/remove actions are disabled outside Obsidian.
+
+## 0.9.6 Image-style Embeds
+
+Normal wikilinks keep their paragraph/list/quote/table position. Reading postprocessing
+uses Obsidian render-child ownership; Live Preview uses inline decorations except
+standalone lines, which must match Obsidian's block attachment layer. Keep the CM
+root stable. Source mode disables the custom decorations. Both surfaces share the
+size parser and lazy widget; widths are bounded by their container, and controls
+float without changing the embed footprint. Resolve links using the source note
+and isolate cached resolutions by source path. Code examples and frontmatter must
+remain text; fence/property delimiter changes invalidate the scan.
+
+## 0.9.7 Compact Image Controls
+
+Compact wikilinks now expose Reset/Expand/Parts; full helpers belong in the responsive
+inspection dialog. Move the existing frame with a same-height placeholder instead
+of creating another renderer. Restore it before disposal, exit active modes on
+return, and retain completed records. Gate helper/shortcut access on model readiness.
+Advanced canvas shortcuts open their inspection context first. Obsidian modal key
+scopes handle Escape before DOM listeners, so route it through helper dismissal
+before closing. Widget destruction must close the dialog.
+CodeMirror may reuse a disposed decoration's WidgetType after viewport removal.
+Reset its DOM lifetime on toDOM and reject pending mounts from earlier generations;
+otherwise returning lines can remain blank.
+
+## 0.9.11 Note UI and Language
+
+Insertion guidance separates location and live dimension output from primary and
+secondary instructions. Keep mode/size controls native and retain action data
+attributes. Model picker rows show names, full vault paths and format labels;
+getItemText remains the full path, and renderMatches preserves fuzzy highlights.
+Copy embed writes to the clipboard only; pasting remains an explicit user action.
+Part spacing and other geometry labels describe user operations without changing
+stored keys or matching rules. Isolate buttons show their next action when pressed.
+Styles use host theme variables, narrow option grids and visible focus outlines.
+Native --note-insert-only verifies light/dark/narrow layouts, duplicate names,
+path search, keyboard selection and live size summary alongside insertion safety.
+
+## 0.9.10 Note Insertion Rules
+
+The note-only insertion command and editor context menu reuse the model picker
+and Editor.replaceSelection.
+Resolve placement through the shared embed scanner; reject code, properties and
+table divider rows. Default inline/table/standalone dimensions are 240x180,
+160x120 and 400x300. Escape table size pipes. Saved part blocks require an empty
+position after quote/list prefixes, with every generated line retaining nesting.
+Validate the captured editor, file, document and selection before inserting;
+never redirect a delayed choice into another note or rebuild the document.
+Presets do not add persisted settings. Empty registration stays in the note with
+the existing registration action; store updates activate mounted part previews.
+Native --note-insert-only covers placement, undo, cancellation and stale choices.
+
+## 0.9.9 Note Part Presentation
+
+Notes consume current-profile registration through NotePartsAccess. Both code
+blocks and image embeds expose an inline catalog and the same full inspection
+window as direct views. Parts configuration stays in the fenced block; controls
+only copy config and never mutate editor text. Exact IDs precede unique names.
+Suspending inline display before opening inspection restores the assembly; on
+return, recreate the inline selection/separation. Close inspection before image
+dialogs and GPU disposal. MarkdownRenderChild owns code-block unload cleanup.
+Normalize only the generated __root__/ import wrapper for node path matching.
+Hide original assembly measurements/bounding boxes while parts are separated.
+Use --note-parts-only in native verification to cover both renderers and surfaces.
+
+## 0.9.8 Registered-Part Inspection
+
+The direct-file sidebar opens a single-model registered-part catalog. Resolve only
+current-profile records through exact node paths/occurrence IDs/component IDs and
+unique mesh references; reject conflicting ownership and report partial coverage.
+Do not use cross-model similarity matches as geometry identity. Reuse the loaded
+canvas in a modal, stop active tools/animations, keep part meshes rigid, and restore
+positions, visibility, layers, animation state and camera on close/model change.
+Both Babylon and opt-in Three implement the renderer-neutral display contract.
+World-space translation must compensate for scaled/rotated parents and renderable
+ancestors. Three hides individual draws through layers to retain visible children.
+This does not change routing or alter the asset/registration records.
 
 ## Current Strategic Decisions
 
@@ -122,6 +269,15 @@ Core files:
 The plugin keeps heavy CAD and uncommon mesh conversion out of the browser runtime.
 Conversion-capable formats route to local desktop converters and produce GLB assets.
 Mobile keeps direct lightweight formats.
+
+In 0.9.0, renderer support is derived from the registry's enabled loader kinds
+through `src/io/formats/renderer-support.ts`. The opted-in Three path also loads
+3MF/DAE/OFF/PCD/XYZ. File-view source preparation uses the same rollout policy as
+rendering. Registered desktop FBX conversion and explicit OBJ conversion preferences
+retain priority. Mobile FBX never initializes desktop tools. PCD/XYZ fail early
+with renderer-setting feedback in compatibility mode. Babylon fallback applies
+only to formats its direct loaders implement. 3MF/DAE/FBX texture managers accept
+only embedded blob/data resources; pre-convert external textures to GLB.
 
 Core files:
 

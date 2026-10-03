@@ -30,6 +30,7 @@ import type {
   ModelPreviewSummary,
   ModelEvidence,
   ModelPartSummary,
+  PartRecord,
   CameraConfig,
   LightConfig,
   SceneConfig,
@@ -40,6 +41,9 @@ import { ensureLoadersRegistered } from "./loaders/register";
 import { loadSTLBuffer } from "./loaders/stl-loader";
 import { loadPLYBuffer } from "./loaders/ply-loader";
 import { setExplode, resetExplode } from "./explode";
+import { collectBabylonRegisteredPartGeometry } from "./registered-parts";
+import { createRegisteredPartDisplay, type RegisteredPartDisplay } from "../preview/registered-parts";
+import { createPreviewPerspectiveCameraFit } from "../preview/camera-fit";
 import { setupPicking, type PickingCleanup } from "./picking";
 import { arrayBufferToBase64 } from "../../utils/base64";
 import { isMobile } from "../../utils/device";
@@ -384,6 +388,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   private scene: Scene;
   private camera: ArcRotateCamera;
   private rootMesh: Mesh | null = null;
+  private registeredPartDisplay: RegisteredPartDisplay | null = null;
   private loadedMeshes: AbstractMesh[] = [];
   private loadedTransformNodes: TransformNode[] = [];
   private cachedRenderableMeshes: AbstractMesh[] | null = null;
@@ -689,6 +694,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
     throwIfPreviewLoadInterrupted(options);
     await ensureLoadersRegistered();
     throwIfPreviewLoadInterrupted(options);
+    this.registeredPartDisplay?.dispose();
 
     if (this.rootMesh) {
       this.engine.getRenderingCanvas()?.classList.remove("ai3d-slice-active", "ai3d-slice-dragging", "ai3d-slice-rotate");
@@ -1939,6 +1945,44 @@ export class BabylonModelPreview implements WorkbenchPreview {
     });
   }
 
+  createRegisteredPartDisplay(parts: readonly PartRecord[]): RegisteredPartDisplay | null {
+    if (!this.rootMesh) return null;
+    this.registeredPartDisplay?.dispose();
+    const camera = this.camera;
+    if (this.focusWorldPointFrame) { window.cancelAnimationFrame(this.focusWorldPointFrame); this.focusWorldPointFrame = 0; }
+    const saved = { alpha: camera.alpha, beta: camera.beta, radius: camera.radius, target: camera.target.clone(),
+      mode: camera.mode, minZ: camera.minZ, maxZ: camera.maxZ, lowerRadiusLimit: camera.lowerRadiusLimit, upperRadiusLimit: camera.upperRadiusLimit };
+    const playing = this.scene.animationGroups.filter(group => group.isPlaying);
+    for (const group of playing) group.pause();
+    const rotationSpeed = this.autoRotateBehavior?.idleRotationSpeed;
+    if (this.autoRotateBehavior) this.autoRotateBehavior.idleRotationSpeed = 0;
+    this.resetView();
+    const { geometries, candidates } = collectBabylonRegisteredPartGeometry(this.getRenderableMeshes(this.rootMesh), this.loadedTransformNodes, this.gltfComponentMetadata);
+    camera.alpha = Math.PI / 2; camera.beta = Math.PI / 2;
+    const overlays = [...this.measurementOverlay.getMarkers(), ...this.measurementOverlay.getSegments().flatMap(segment => [segment.line, segment.label]), ...(this.bboxMesh ? [this.bboxMesh] : [])];
+    const overlayVisibility = overlays.map(mesh => mesh.isVisible);
+    for (const mesh of overlays) mesh.isVisible = false;
+    this.registeredPartDisplay = createRegisteredPartDisplay(parts, geometries, candidates, () => this.startRenderLoop(), bounds => {
+      const canvas = this.getCanvas();
+      const fit = createPreviewPerspectiveCameraFit(bounds, { aspect: (canvas?.clientWidth || 1) / (canvas?.clientHeight || 1), fovDegrees: camera.fov * 180 / Math.PI });
+      camera.target = new Vector3(fit.target.x, fit.target.y, fit.target.z);
+      camera.radius = Vector3.Distance(camera.target, new Vector3(fit.position.x, fit.position.y, fit.position.z));
+      camera.lowerRadiusLimit = Math.max(camera.radius / 100, 0.0001);
+      camera.upperRadiusLimit = camera.radius * 10;
+      camera.minZ = fit.near;
+      camera.maxZ = fit.far;
+      this.notifyCameraZoomChanged();
+    }, () => {
+      overlays.forEach((mesh, index) => { if (!mesh.isDisposed()) mesh.isVisible = overlayVisibility[index]; });
+      Object.assign(camera, saved);
+      if (this.autoRotateBehavior && rotationSpeed !== undefined) this.autoRotateBehavior.idleRotationSpeed = rotationSpeed;
+      for (const group of playing) group.play();
+      this.registeredPartDisplay = null;
+      this.notifyCameraZoomChanged();
+    });
+    return this.registeredPartDisplay;
+  }
+
   getModelEvidence(): ModelEvidence | null {
     if (!this.rootMesh) return null;
     const renderableMeshes = this.getRenderableMeshes(this.rootMesh);
@@ -2145,6 +2189,7 @@ export class BabylonModelPreview implements WorkbenchPreview {
   }
 
   destroy() {
+    this.registeredPartDisplay?.dispose();
     // Guard scene/engine disposal in finally so a throw from any controller's
     // dispose() (gizmo, disassembly, overlays) cannot strand the WebGL context.
     try {

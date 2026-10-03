@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { resolveGridRoute, resolvePreviewRoute } from "./routing";
 
 describe("preview routing", () => {
+  it.each(["3mf", "dae", "off", "pcd", "xyz", "fbx"])("routes the bundled %s loader through Three when enabled", (ext) => {
+    expect(resolvePreviewRoute({ ext, rendererRollout: "three-direct-glb", useThreeRenderer: true }).backend).toBe("three");
+    expect(resolvePreviewRoute({ ext, rendererRollout: "babylon-safe" }).backend).toBe("babylon");
+    expect(resolvePreviewRoute({ ext, rendererRollout: "three-direct-glb", useThreeRenderer: false }).backend).toBe("babylon");
+    expect(resolvePreviewRoute({
+      ext,
+      rendererRollout: "three-direct-glb",
+      requireWorkbenchFeatures: true,
+      allowWorkbenchFeaturesOnThree: true,
+    }).backend).toBe("babylon");
+  });
   it("keeps common single-model direct formats on Babylon by default", () => {
     const route = resolvePreviewRoute({
       ext: "glb",

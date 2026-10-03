@@ -3,6 +3,59 @@
 This guide explains the everyday workflows for AI Model Workbench. For copy-paste
 Markdown snippets, see [Common Usage Syntax](common-usage-syntax.md).
 
+## Insert Without Writing Syntax
+
+Place the cursor in a note, open the command palette and run **Insert a 3D model
+in note**, or use the same action in the editor's right-click menu. Choose a file
+and press Enter. Default dimensions follow the location:
+
+| Location | Default | Usage rule |
+|----------|---------|------------|
+| Inside text, lists or quotes | 240 × 180 | Insert an image-style preview without moving surrounding text. |
+| Table cell | 160 × 120 | Escape the size separator automatically to retain the columns. |
+| Blank line or empty list/quote item | 400 × 300 | Insert a preview, or choose Registered parts for a saved part display. |
+
+The picker shows the location and actual dimensions at the top. Search by file name or full vault path; rows retain names, paths and format labels to distinguish duplicate files. Options stack in narrow windows.
+
+The picker offers small, medium and large presets. For saved part display, place
+the cursor after any quote/list prefix on an empty line. Inside text and table
+cells, use the preview's Parts button instead. Generated blocks preserve quote
+and list nesting. When registration is missing, the preview offers Open model to
+register parts and refreshes after registration. No extra empty-state dialog is
+opened for a full note block.
+
+Cancel leaves the note unchanged. Undo once restores the previous text. If the
+note, content or selection changes while the picker is open, reopen the command
+at the intended position. Code examples, note properties and table divider rows
+are excluded. Existing hand-written embeds and advanced JSON remain supported.
+
+## Registered Parts In Notes
+
+Open the model first to register parts. In image-style embeds, use **Parts** to
+toggle the inline catalog, **Expand** for presentation controls, and **Inspect parts**
+for full inspection. The preview keeps its size and note placement.
+
+Use a `3d` block to retain the presentation after reopening the note:
+
+````markdown
+```3d
+{
+  "models": [{ "path": "Assets/3D/model.glb" }],
+  "height": 300,
+  "parts": { "display": "registered", "separation": 100 }
+}
+```
+````
+
+`"parts": true` is a catalog shorthand. Set `parts.part` to a registered part ID
+or a unique exact name for one part; **Copy embed** copies a block with
+the stable ID. Part spacing ranges from 0 (assembled) to 100 (catalog). Set
+`parts.showUnregistered` to true to include geometry outside registered parts.
+Missing or ambiguous part selection reports a warning and hides geometry rather
+than silently selecting a different part. Controls do not edit the note; paste
+the copied block to persist changes. Full inspection has its own temporary state;
+returning restores the inline selection and separation.
+
 ## Choose A Preview Surface
 
 | Surface | Best for | Renderer contract |
@@ -16,6 +69,52 @@ Use direct formats when possible: `GLB`, `GLTF`, `STL`, `PLY`, and `OBJ`.
 Desktop conversion can prepare `STEP`, `STP`, `IGES`, `IGS`, `BREP`,
 `SLDPRT`, `3MF`, `DAE`, and `FBX` as local GLB preview assets when the matching
 external tools are installed.
+
+Three.js opt-in also enables direct 3MF/DAE/OFF/PCD/XYZ previews. Enable
+**Use Three renderer** and select **Reading + file view** to include file views,
+or **Reading surfaces only** for embeds. PCD/XYZ require Three.js. FBX keeps
+registered desktop conversion first and uses Three directly on mobile or when
+no converter is registered. Explicit OBJ conversion preferences remain in effect.
+Direct 3MF/DAE/FBX external textures must be converted to an embedded GLB first.
+
+## Inspect Registered Parts
+
+Open a model file and choose **Show registered parts** in the right sidebar. The
+window resolves this model's existing registered nodes and mesh references,
+arranges parts in a catalog grid, and keeps each part's geometry together. Search
+names, hide/show parts, view one alone, adjust separation, or open linked notes.
+**Restore assembly** restores positions; Return to model or Escape also restores
+the camera captured before inspection.
+
+Partial, missing and conflicting registrations remain explicit. Similarity scores
+never determine geometry ownership. Unregistered geometry has a separate checkbox.
+Generate a knowledge note if no parts are registered; direct-file view also
+registers models suitable for automatic evidence capture. This feature cannot
+infer physical seams to cut a single monolithic mesh into parts.
+
+## Controls Inside Notes
+
+Normal `![[model.glb|240x180]]` embeds behave like images in paragraphs, lists,
+quotes, and tables while retaining surrounding text. Width alone (`|240`) uses
+a default 4:3 viewport. Escape the separator in tables (`\|240x180`). Controls
+appear on hover or keyboard focus as Reset/Expand/Parts. Expand moves the same preview
+into a responsive inspection dialog, retaining camera and completed rulers while
+reserving its original note footprint. Return to note exits active tools and restores
+keyboard focus. Enter opens the viewer; advanced canvas shortcuts open their
+inspection context first. Escape leaves a tool before closing the dialog.
+Switch to source mode to edit dimensions. Both reading and Live Preview support
+these placements; image-style embeds hide the model header.
+
+Reading `3d` blocks retain their model header and compact
+toolbar. Common view controls, Focus, Measure, and Pins are available directly;
+More reveals named View, Inspect, and Export groups. An active advanced tool
+remains visible when More collapses. The toolbar wraps in narrow note panes.
+
+Pins only shows or hides saved annotations; it does not enter annotation editing
+or interrupt inspection. Exit mode or Escape returns to browsing and preserves
+completed measurements. Opening measurement details leaves competing inspection
+modes. Live Preview controls leave the Markdown intact and omit Remove preview;
+edit the embed syntax in source mode to remove it. Snapshots use current settings.
 
 ## Direct File View Workflow
 
@@ -96,6 +195,29 @@ Snapshots are saved to `Media/3D Previews` by default.
 
 ## Knowledge Notes
 
+Direct file view places knowledge actions first in the sidebar. Choose Generate
+knowledge note initially; live status describes output checks, analysis, and file
+writes. A failed run shows its reason and Retry generation in place, while saved
+notes remain available. After success, Open index becomes the primary action;
+Update knowledge note regenerates the artifacts. A stale pending record after
+restart does not block retry.
+
+Focus, disassembly, measurement, and annotation have visible labels and persistent
+mode guidance. Backend and route details are under collapsed Renderer diagnostics.
+Leaves at or below 640 CSS px use a stacked workspace layout.
+
+Hide knowledge at the top left expands the viewport; Show knowledge restores the
+sidebar. Drag its divider or focus it and use arrow keys to resize, Shift for
+larger steps, and Home or double-click for the default width. More reveals named
+extra actions.
+
+Exit mode returns to browsing and retains completed rulers. Escape cancels a
+pending endpoint first, then exits measurement; other modes exit from the canvas
+or toolbar. Measurement hints follow start/end picking and the next ruler. Mobile
+Scroll exits active inspection tools. Note-opening errors stay in the knowledge
+area without changing generation success. Open actions disable for missing or
+renamed outputs and recover when files return to the saved path.
+
 The `Generate note` action writes an evidence-backed model knowledge set:
 
 - Model report in `Analysis/3D Reports`.
@@ -111,6 +233,16 @@ Knowledge generation is local-only by default. Optional remote drafting sends
 only sanitized drafting input to the configured HTTPS `POST /draft-note`
 endpoint (HTTP is allowed only for loopback development). Vault paths, user
 notes, tags, and note references are always removed. Raw model upload is blocked.
+
+Generated output names retain the model basename when available. Same-named models or
+unrelated existing files receive a stable suffix across the report, analysis sidecar,
+index, and part folder. Existing part drafts are reused only for the same source model
+and part ID; their edits and the index user notes remain intact.
+
+Generation captures the model evidence and screenshot before asynchronous vault
+reads, preserving the starting model if you switch views. A screenshot failure is
+recorded as a warning. Once the required files are saved, failure to open the report
+does not change generation success; you can open the saved report from its path.
 
 ## Part Evidence And Small Details
 

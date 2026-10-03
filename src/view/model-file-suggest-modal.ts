@@ -1,4 +1,4 @@
-import { FuzzySuggestModal, type App, type TFile } from "obsidian";
+import { FuzzySuggestModal, renderMatches, type App, type FuzzyMatch, type TFile } from "obsidian";
 import { isSupportedModelExtension } from "../io/formats/registry";
 import { t } from "../i18n";
 
@@ -20,6 +20,15 @@ export class ModelFileSuggestModal extends FuzzySuggestModal<TFile> {
 
   getItemText(file: TFile): string {
     return file.path;
+  }
+
+  renderSuggestion(value: FuzzyMatch<TFile>, el: HTMLElement): void {
+    el.classList.add("ai3d-model-suggestion");
+    const content = el.createDiv({ cls: "ai3d-model-suggestion-content" });
+    content.createDiv({ cls: "ai3d-model-suggestion-name", text: value.item.name });
+    const path = content.createDiv({ cls: "ai3d-model-suggestion-path" });
+    renderMatches(path, value.item.path, value.match?.matches ?? null);
+    el.createSpan({ cls: "ai3d-model-suggestion-format", text: value.item.extension.toUpperCase() });
   }
 
   onChooseItem(file: TFile): void {

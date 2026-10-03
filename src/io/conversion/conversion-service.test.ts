@@ -55,12 +55,23 @@ function createManager() {
   return { manager, canConvert, getConverterCacheIdentity, convert };
 }
 
-function mockReusableConvertedOutput(_sourcePath: string, outputPath: string): void {
+function createConvertingManager() {
+  const convert = vi.fn(async (request: { outputPath: string }) => ({ outputPath: request.outputPath, outputExt: "glb", fromCache: false, warnings: [] }));
+  const manager = {
+    canConvert: vi.fn(() => true),
+    getConverterCacheIdentity: vi.fn(async () => ({ converterId: "freecad", cacheKey: "freecad:v2" })),
+    convert,
+  } as unknown as ConversionManager;
+  return { manager, convert };
+}
+
+function mockReusableConvertedOutput(sourcePath: string, outputPath: string): void {
   fsMocks.access.mockResolvedValue(undefined);
-  fsMocks.stat.mockImplementation(async (path: string) => ({
-    size: path === outputPath ? 1024 : 2048,
-    mtimeMs: path === outputPath ? 200 : 100,
-  }));
+  fsMocks.stat.mockImplementation(async (path: string) => {
+    if (path === outputPath) return { size: 1024, mtimeMs: 200 };
+    if (path === sourcePath) return { size: 2048, mtimeMs: 100 };
+    throw new Error("missing");
+  });
 }
 
 describe("convertForPreview", () => {
@@ -73,7 +84,7 @@ describe("convertForPreview", () => {
 
   it("reuses an existing converted output without probing converter identity", async () => {
     const sourcePath = "/vault/models/board.step";
-    const outputPath = "/vault/models/board.ai3d-converted.glb";
+    const outputPath = "/vault/models/board.step.ai3d-converted.glb";
     const { manager, getConverterCacheIdentity, convert } = createManager();
     const cache = {
       get: vi.fn(() => undefined),
@@ -107,7 +118,7 @@ describe("convertForPreview", () => {
 
   it("reuses an existing converted output without creating a lazy conversion manager", async () => {
     const sourcePath = "/vault/models/case.step";
-    const outputPath = "/vault/models/case.ai3d-converted.glb";
+    const outputPath = "/vault/models/case.step.ai3d-converted.glb";
     const createManager = vi.fn(() => {
       throw new Error("conversion manager should not be created for reusable outputs");
     });
@@ -128,9 +139,9 @@ describe("convertForPreview", () => {
     expect(createManager).not.toHaveBeenCalled();
   });
 
-  it("reuses a cached conversion record without probing converter identity", async () => {
-    const sourcePath = "/vault/models/plate.step";
-    const outputPath = "/vault/models/plate.ai3d-converted.glb";
+  it.each(["plate", "plate-abcd1234"])("reuses a legacy cached conversion record without probing converter identity: %s", async (stem) => {
+    const sourcePath = `/vault/models/${stem}.step`;
+    const outputPath = `/vault/models/${stem}.ai3d-converted.glb`;
     const { manager, getConverterCacheIdentity, convert } = createManager();
     const record: ConvertedAssetRecord = {
       cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
@@ -244,102 +255,87 @@ describe("convertForPreview", () => {
     expect(convert).toHaveBeenCalled();
   });
 
-  it("reuses source file stats while checking expected and legacy outputs", async () => {
+
+  it("does not infer ownership of an untracked legacy output from its basename", async () => {
     const sourcePath = "/vault/models/bracket.step";
-    const outputRoot = "/vault/.custom-obsidian/ai-model-workbench/converted-assets";
-    const legacyOutputPath = "/vault/models/bracket.ai3d-converted.glb";
-    const { manager, getConverterCacheIdentity, convert } = createManager();
-    const cache = {
-      get: vi.fn(() => undefined),
-      set: vi.fn(),
-      delete: vi.fn(),
-      entries: vi.fn(() => []),
-    } as unknown as ConvertedAssetCache;
-    fsMocks.stat.mockImplementation(async (path: string) => {
-      if (path === sourcePath) {
-        return { size: 2048, mtimeMs: 100 };
-      }
-      if (path === legacyOutputPath) {
-        return { size: 1024, mtimeMs: 200 };
-      }
-      throw new Error("missing");
-    });
-
-    const result = await convertForPreview({
-      sourcePath,
-      sourceExt: "step",
-      capability,
-      conversionManager: manager,
-      convertedAssetCache: cache,
-      outputRoot,
-    });
-
-    expect(result).toEqual({
-      effectivePath: legacyOutputPath,
-      effectiveExt: "glb",
-      warnings: ["Using existing conversion output."],
-    });
+    const legacyPath = "/vault/models/bracket.ai3d-converted.glb";
+    mockReusableConvertedOutput(sourcePath, legacyPath);
+    const { manager, convert } = createConvertingManager();
+    const result = await convertForPreview({ sourcePath, sourceExt: "step", capability, conversionManager: manager });
+    expect(convert).toHaveBeenCalledWith(expect.objectContaining({ outputPath: sourcePath + ".ai3d-converted.glb" }));
+    expect(result.effectivePath).not.toBe(legacyPath);
     expect(fsMocks.stat.mock.calls.filter(([path]) => path === sourcePath)).toHaveLength(1);
-    expect(getConverterCacheIdentity).not.toHaveBeenCalled();
-    expect(convert).not.toHaveBeenCalled();
   });
 
-  it("reuses relocated conversion cache records for moved source files", async () => {
-    const sourcePath = "/vault/AI3D/models/board.step";
-    const previousSourcePath = "/vault/AI3D Local Test/models/board.step";
-    const outputPath = "/vault/.config/ai-model-workbench/converted-assets/board-abcd1234.ai3d-converted.glb";
-    const { manager, getConverterCacheIdentity, convert } = createManager();
+  it.each([true, false])("does not reuse another same-named source even when its old source exists: %s", async (oldSourceExists) => {
+    const sourcePath = "/vault/new/board.step";
+    const previousSourcePath = "/vault/old/board.step";
+    const outputPath = "/vault/cache/board-abcd1234.ai3d-converted.glb";
     const record: ConvertedAssetRecord = {
       cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
-      converterId: "freecad",
-      converterCacheKey: "freecad:v1",
-      sourcePath: previousSourcePath,
-      sourceExt: "step",
-      targetExt: "glb",
-      outputPath,
-      outputExt: "glb",
-      warnings: ["Converted by local Python/CadQuery(OCCT) bridge."],
-      createdAt: Date.now() - 1_000,
+      converterId: "freecad", converterCacheKey: "freecad:v1",
+      sourcePath: previousSourcePath, sourceExt: "step", targetExt: "glb",
+      outputPath, outputExt: "glb", warnings: [], createdAt: Date.now(),
     };
-    const cache = {
-      get: vi.fn(() => undefined),
-      set: vi.fn(),
-      delete: vi.fn(),
-      entries: vi.fn(() => [record]),
-    } as unknown as ConvertedAssetCache;
+    const cache = { get: vi.fn(() => undefined), set: vi.fn(), delete: vi.fn(), entries: vi.fn(() => [record]) } as unknown as ConvertedAssetCache;
     fsMocks.stat.mockImplementation(async (path: string) => {
-      if (path === sourcePath) {
-        return { size: 4096, mtimeMs: 100 };
-      }
-      if (path === outputPath) {
-        return { size: 1024, mtimeMs: 200 };
-      }
+      if (path === sourcePath || (path === previousSourcePath && oldSourceExists)) return { size: 4096, mtimeMs: 100 };
+      if (path === outputPath) return { size: 1024, mtimeMs: 200 };
       throw new Error("missing");
     });
+    const { manager, convert } = createConvertingManager();
+    const result = await convertForPreview({ sourcePath, sourceExt: "step", capability, conversionManager: manager, convertedAssetCache: cache, outputRoot: "/vault/cache" });
+    expect(convert).toHaveBeenCalledTimes(1);
+    expect(result.effectivePath).not.toBe(outputPath);
+    expect(cache.set).toHaveBeenCalledWith(expect.objectContaining({ sourcePath, outputPath: result.effectivePath }));
+  });
 
-    const result = await convertForPreview({
-      sourcePath,
-      sourceExt: "step",
-      capability,
-      conversionManager: manager,
-      convertedAssetCache: cache,
-      outputRoot: "/vault/.config/ai-model-workbench/converted-assets",
-    });
+  it("keeps same-stem sources with different extensions in separate adjacent outputs", async () => {
+    fsMocks.stat.mockRejectedValue(new Error("missing"));
+    const { manager } = createConvertingManager();
+    const paths: string[] = [];
+    for (const ext of ["step", "iges"]) {
+      const result = await convertForPreview({ sourcePath: "/vault/board." + ext, sourceExt: ext, capability: { ...capability, ext }, conversionManager: manager });
+      paths.push(result.effectivePath);
+    }
+    expect(paths).toEqual(["/vault/board.step.ai3d-converted.glb", "/vault/board.iges.ai3d-converted.glb"]);
+  });
 
-    expect(result).toEqual({
-      effectivePath: outputPath,
-      effectiveExt: "glb",
-      warnings: [
-        "Converted by local Python/CadQuery(OCCT) bridge.",
-        "Using relocated conversion output.",
-      ],
-    });
-    expect(cache.set).toHaveBeenCalledWith(expect.objectContaining({
-      sourcePath,
-      outputPath,
-      converterCacheKey: "freecad:v1",
-    }));
-    expect(getConverterCacheIdentity).not.toHaveBeenCalled();
-    expect(convert).not.toHaveBeenCalled();
+  it("invalidates a previously relocated record carrying another source path hash", async () => {
+    const sourcePath = "/vault/new/board.step";
+    const outputPath = "/vault/cache/board-abcd1234.ai3d-converted.glb";
+    mockReusableConvertedOutput(sourcePath, outputPath);
+    const record: ConvertedAssetRecord = {
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId: "freecad", converterCacheKey: "freecad:v1",
+      sourcePath, sourceExt: "step", targetExt: "glb",
+      outputPath, outputExt: "glb", warnings: ["Using relocated conversion output."], createdAt: Date.now(),
+    };
+    const cache = { get: vi.fn(() => record), set: vi.fn(), delete: vi.fn(), entries: vi.fn(() => [record]) } as unknown as ConvertedAssetCache;
+    const { manager, convert } = createConvertingManager();
+    const result = await convertForPreview({ sourcePath, sourceExt: "step", capability, conversionManager: manager, convertedAssetCache: cache, outputRoot: "/vault/cache" });
+    expect(cache.delete).toHaveBeenCalledWith(sourcePath, "step", "glb");
+    expect(convert).toHaveBeenCalledTimes(1);
+    expect(result.effectivePath).not.toBe(outputPath);
+  });
+
+  it("reuses a correctly hashed persisted output without creating a converter", async () => {
+    const sourcePath = "/vault/new/board.step";
+    fsMocks.stat.mockRejectedValue(new Error("missing"));
+    const { manager } = createConvertingManager();
+    const result = await convertForPreview({ sourcePath, sourceExt: "step", capability, conversionManager: manager, outputRoot: "/vault/cache" });
+    mockReusableConvertedOutput(sourcePath, result.effectivePath);
+    const record: ConvertedAssetRecord = {
+      cacheVersion: CONVERTED_ASSET_CACHE_VERSION,
+      converterId: "freecad", converterCacheKey: "freecad:v2",
+      sourcePath, sourceExt: "step", targetExt: "glb",
+      outputPath: result.effectivePath, outputExt: "glb", warnings: [], createdAt: Date.now(),
+    };
+    const cache = { get: vi.fn(() => record), set: vi.fn(), delete: vi.fn(), entries: vi.fn(() => [record]) } as unknown as ConvertedAssetCache;
+    const createManager = vi.fn(() => { throw new Error("unexpected converter creation"); });
+    const reused = await convertForPreview({ sourcePath, sourceExt: "step", capability, conversionManager: createManager, convertedAssetCache: cache, outputRoot: "/vault/cache" });
+    expect(reused.effectivePath).toBe(result.effectivePath);
+    expect(createManager).not.toHaveBeenCalled();
+    expect(cache.delete).not.toHaveBeenCalled();
   });
 });

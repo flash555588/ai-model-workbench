@@ -6,6 +6,8 @@ import { resolvePreviewRoute } from "../src/render/preview/routing";
 import { createLoggedGridRenderer } from "../src/render/preview/selection";
 import type { AnnotationPreview } from "../src/render/preview/types";
 import { createHelperButtons } from "../src/view/inline/helper-buttons";
+import { createNotePreviewHeader } from "../src/view/inline/note-preview-header";
+import { setLocale } from "../src/i18n";
 import {
   attachGridPreviewCanvasShortcuts,
   configureGridPreviewCanvas,
@@ -38,6 +40,7 @@ declare global {
   }
 
   interface Window {
+    __ai3dShowcase?: { modelBase64: string; search: string };
     __ai3dPreview?: ModelPreview;
     __ai3dPreviewVerify?: {
       status: "loading" | "ready" | "error";
@@ -68,6 +71,10 @@ declare global {
 }
 
 type VerifyMode = "basic" | "direct-edit" | "readonly-pin" | "workbench" | "grid";
+
+function previewParams(): URLSearchParams {
+  return new URLSearchParams(window.__ai3dShowcase?.search ?? window.location.search);
+}
 
 function applyDomCreateOptions<T extends HTMLElement>(el: T, options?: DomCreateInput): T {
   if (!options) return el;
@@ -187,6 +194,12 @@ function createPreviewShell(): { host: HTMLDivElement; canvas: HTMLCanvasElement
     throw new Error("Preview shell was not created");
   }
   configureModelPreviewCanvas(canvas, "inline", getModelPathForPreview());
+  if (previewParams().has("noteUi")) {
+    const card = host.parentElement!;
+    card.classList.add("ai3d-note-preview");
+    createNotePreviewHeader(card, getModelPathForPreview());
+    card.insertBefore(card.lastElementChild!, host);
+  }
   return { host, canvas };
 }
 
@@ -312,6 +325,9 @@ function renderRegisteredPartMatchHarness(): Array<{
 }
 
 async function loadSampleModel(): Promise<ArrayBuffer> {
+  if (window.__ai3dShowcase) {
+    return Uint8Array.from(atob(window.__ai3dShowcase.modelBase64), ch => ch.charCodeAt(0)).buffer;
+  }
   const modelFile = getModelFilename();
   const response = await fetch(toModelUrl(`models/${modelFile}`));
   if (!response.ok) {
@@ -337,7 +353,7 @@ function getModelPathForPreview(): string {
 }
 
 function getModelFilename(): string {
-  const value = new URLSearchParams(window.location.search).get("model");
+  const value = previewParams().get("model");
   return value ?? "rubiks-cube-3x3.glb";
 }
 
@@ -358,11 +374,12 @@ function createPreviewAppStub() {
   };
 }
 
-function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview) {
+function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview, readonlyPins = false) {
   const parentEl = host.parentElement;
   if (!(parentEl instanceof HTMLElement)) {
     throw new Error("Preview host parent is unavailable");
   }
+  let pinsVisible = true;
   const toolbar = createHelperButtons(
     parentEl,
     host,
@@ -370,7 +387,21 @@ function attachHelperToolbar(host: HTMLDivElement, preview: ModelPreview) {
     () => preview,
     () => "models/rubiks-cube-3x3.glb",
     () => {},
+    undefined,
+    readonlyPins ? () => {
+      pinsVisible = !pinsVisible;
+      host.querySelector(".ai3d-annotation-overlay")?.classList.toggle("is-hidden", !pinsVisible);
+      return pinsVisible;
+    } : undefined,
+    undefined,
+    readonlyPins ? {
+      kind: "visibility",
+      labelKey: "helper.toggleAnnotationsVisibilityLabel",
+      activeTooltipKey: "helper.annotationsVisible",
+      inactiveTooltipKey: "helper.annotationsHidden",
+    } : undefined,
   );
+  if (readonlyPins) { toolbar.showAnnotateButton(); toolbar.updateAnnotationBadge(1); }
   toolbar.syncCapabilities();
   return toolbar;
 }
@@ -477,7 +508,7 @@ async function pickVisiblePinPosition(
 }
 
 function getRendererRollout(): "babylon-safe" | "three-readonly-glb" | "three-direct-glb" {
-  const value = new URLSearchParams(window.location.search).get("rollout");
+  const value = previewParams().get("rollout");
   if (value === "babylon-safe" || value === "three-readonly-glb" || value === "three-direct-glb") {
     return value;
   }
@@ -485,7 +516,7 @@ function getRendererRollout(): "babylon-safe" | "three-readonly-glb" | "three-di
 }
 
 function allowsWorkbenchFeaturesOnThree(): boolean {
-  return new URLSearchParams(window.location.search).get("allowWorkbenchThree") === "1";
+  return previewParams().get("allowWorkbenchThree") === "1";
 }
 
 async function runBasicPreview(
@@ -578,7 +609,7 @@ async function runReadonlyPinPreview(
   const route = resolvePreviewRoute(previewOptions);
   const preview = await createModelPreview(canvas, previewOptions);
   const summary = await preview.loadModel(await loadSampleModel(), ext, readHarnessModelResource, getModelPathForPreview());
-  attachHelperToolbar(host, preview);
+  attachHelperToolbar(host, preview, true);
 
   const annotationPreview = preview as AnnotationPreview;
   const visiblePinPosition = await pickVisiblePinPosition(annotationPreview, canvas)
@@ -587,7 +618,7 @@ async function runReadonlyPinPreview(
     {
       id: "verify-readonly-pin",
       position: visiblePinPosition,
-      label: "Center Pin",
+      label: window.__ai3dShowcase ? "检查点" : "Center Pin",
       color: "#4a9eff",
       createdAt: new Date().toISOString(),
     },
@@ -768,9 +799,10 @@ async function runGridPreview(): Promise<void> {
 
 async function main() {
   installObsidianDomShims();
+  if (previewParams().get("lang") === "zh-CN") setLocale("zh-CN");
   window.__ai3dPreviewVerify = { status: "loading" };
 
-  const mode = (new URLSearchParams(window.location.search).get("mode") ?? "basic") as VerifyMode;
+  const mode = (previewParams().get("mode") ?? "basic") as VerifyMode;
   const rendererRollout = getRendererRollout();
   if (mode === "grid") {
     await runGridPreview();
@@ -785,6 +817,12 @@ async function main() {
 
   if (mode === "readonly-pin") {
     await runReadonlyPinPreview(host, canvas, rendererRollout);
+    if (window.__ai3dShowcase) {
+      for (const action of ["save-snapshot", "remove-preview"]) {
+        const button = document.querySelector<HTMLButtonElement>(`[data-ai3d-action="${action}"]`);
+        if (button) { button.disabled = true; button.title = "请在 Obsidian 中使用此操作"; }
+      }
+    }
     return;
   }
 

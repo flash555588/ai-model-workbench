@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ModelPreviewSummary } from "../domain/models";
+import { setLocale } from "../i18n";
 import {
   formatDirectWorkbenchBackendName,
   formatDirectWorkbenchBounds,
   formatDirectWorkbenchCount,
+  formatDirectWorkbenchPerformance,
 } from "./direct-workbench-panel";
 
 function createSummary(partial: Partial<ModelPreviewSummary> = {}): ModelPreviewSummary {
@@ -19,6 +21,15 @@ function createSummary(partial: Partial<ModelPreviewSummary> = {}): ModelPreview
 }
 
 describe("direct workbench panel helpers", () => {
+  it("localizes performance tiers instead of exposing internal values", () => {
+    try {
+      setLocale("zh-CN");
+      expect(formatDirectWorkbenchPerformance("light")).toBe("轻量");
+      expect(formatDirectWorkbenchPerformance("heavy")).toBe("较重");
+      setLocale("en");
+      expect(formatDirectWorkbenchPerformance("extreme")).toBe("Very heavy");
+    } finally { setLocale("en"); }
+  });
   it("formats backend labels for renderer status", () => {
     expect(formatDirectWorkbenchBackendName("three")).toBe("Three.js");
     expect(formatDirectWorkbenchBackendName("babylon")).toBe("Babylon.js");

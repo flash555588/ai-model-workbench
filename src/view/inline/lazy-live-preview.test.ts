@@ -45,4 +45,11 @@ describe("createLivePreviewPathResolverCache", () => {
     expect(cache.resolve("one.glb")).toBe("models/one.glb");
     expect(calls).toBe(4);
   });
+
+  it("isolates relative links belonging to different notes", () => {
+    const cache = createLivePreviewPathResolverCache(app, (_app, rawPath, sourcePath) => `${sourcePath}/${rawPath}`);
+    expect(cache.resolve("part.glb", "A/Note.md")).toBe("A/Note.md/part.glb");
+    expect(cache.resolve("part.glb", "B/Note.md")).toBe("B/Note.md/part.glb");
+    expect(cache.resolve("part.glb", "A/Note.md")).toBe("A/Note.md/part.glb");
+  });
 });

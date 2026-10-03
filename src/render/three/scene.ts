@@ -61,6 +61,7 @@ import type {
   LightConfig,
   ModelEvidence,
   ModelPartSummary,
+  PartRecord,
   ModelPreviewSummary,
   SceneConfig,
   STLConfig,
@@ -184,6 +185,8 @@ import {
   disposeThreeWireframeOverrides,
 } from "./wireframe-materials";
 import { setThreeExplode, resetThreeExplode } from "./explode";
+import { collectThreeRegisteredPartGeometry } from "./registered-parts";
+import { createRegisteredPartDisplay, type RegisteredPartDisplay } from "../preview/registered-parts";
 import { getPortableBasename } from "../../utils/resolve-path";
 import {
   getThreeTextureAnisotropyBudget,
@@ -372,6 +375,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   private environmentTarget: WebGLRenderTarget | null = null;
   private environmentInstallHandle = 0;
   private rootObject: Object3D | null = null;
+  private registeredPartDisplay: RegisteredPartDisplay | null = null;
   private loadedExt = "";
   private resourceWarnings: string[] = [];
   private textureAudit = createEmptyTextureAudit();
@@ -803,6 +807,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   destroy(): void {
+    this.registeredPartDisplay?.dispose();
     cancelAnimationFrame(this.renderHandle);
     cancelAnimationFrame(this.cameraAnimHandle);
     this._onPickCallbacks = [];
@@ -894,6 +899,56 @@ export class ThreeModelPreview implements WorkbenchPreview {
       summary,
       meshBreakdown: renderableObjects.map(createThreeRenderableInfoBreakdown),
     });
+  }
+
+  createRegisteredPartDisplay(parts: readonly PartRecord[]): RegisteredPartDisplay | null {
+    if (!this.rootObject) return null;
+    this.registeredPartDisplay?.dispose();
+    const savedCamera = this.camera.clone();
+    const savedTarget = this.controls.target.clone();
+    const savedDistance = { min: this.controls.minDistance, max: this.controls.maxDistance };
+    cancelAnimationFrame(this.cameraAnimHandle);
+    const timeScale = this.mixer?.timeScale;
+    if (this.mixer) this.mixer.timeScale = 0;
+    const autoRotate = this.controls.autoRotate;
+    this.controls.autoRotate = false;
+    this.resetView();
+    const { geometries, candidates } = collectThreeRegisteredPartGeometry(this.rootObject, this.getRenderableObjects(this.rootObject));
+    this.camera.position.copy(this.controls.target).add(new Vector3(0, 0, 1));
+    this.camera.lookAt(this.controls.target); this.controls.update();
+    const overlays = [...this.measurementOverlay.getMarkers(), ...this.measurementOverlay.getSegments().flatMap(segment => [segment.line, segment.label]), ...(this.bboxHelper ? [this.bboxHelper] : [])];
+    const overlayVisibility = overlays.map(object => object.visible);
+    for (const object of overlays) object.visible = false;
+    this.registeredPartDisplay = createRegisteredPartDisplay(parts, geometries, candidates, () => {
+      this.invalidateRootBoundsCache(); this.markShadowDirty(); this.markDirty();
+    }, bounds => {
+      const canvas = this.getCanvas();
+      const fit = createPreviewPerspectiveCameraFit(bounds, { aspect: (canvas?.clientWidth || 1) / (canvas?.clientHeight || 1), fovDegrees: this.initialFov });
+      const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+      const fittedPosition = new Vector3(fit.position.x, fit.position.y, fit.position.z);
+      const fittedTarget = new Vector3(fit.target.x, fit.target.y, fit.target.z);
+      const fittedDistance = fittedPosition.distanceTo(fittedTarget);
+      if (!direction.lengthSq()) direction.copy(fittedPosition).sub(fittedTarget).normalize();
+      this.switchCameraMode("perspective");
+      this.controls.target.copy(fittedTarget);
+      this.camera.position.copy(fittedTarget).addScaledVector(direction, fittedDistance);
+      this.camera.near = fit.near; this.camera.far = fit.far; this.camera.zoom = 1;
+      const distance = this.camera.position.distanceTo(this.controls.target);
+      this.controls.minDistance = Math.max(distance / 100, 0.00001); this.controls.maxDistance = distance * 10;
+      this.camera.updateProjectionMatrix(); this.controls.update(); this.markDirty(); this.notifyCameraZoomChanged();
+    }, () => {
+      overlays.forEach((object, index) => { object.visible = overlayVisibility[index]; });
+      this.switchCameraMode(savedCamera instanceof OrthographicCamera ? "orthographic" : "perspective");
+      if (this.camera instanceof PerspectiveCamera && savedCamera instanceof PerspectiveCamera) this.camera.copy(savedCamera);
+      else if (this.camera instanceof OrthographicCamera && savedCamera instanceof OrthographicCamera) this.camera.copy(savedCamera);
+      this.controls.target.copy(savedTarget);
+      this.controls.minDistance = savedDistance.min; this.controls.maxDistance = savedDistance.max;
+      if (this.mixer && timeScale !== undefined) this.mixer.timeScale = timeScale;
+      this.controls.autoRotate = autoRotate;
+      this.controls.update(); this.markDirty(); this.notifyCameraZoomChanged();
+      this.registeredPartDisplay = null;
+    });
+    return this.registeredPartDisplay;
   }
 
   getModelEvidence(): ModelEvidence | null {
@@ -1927,6 +1982,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
    * orbited or zoomed.
    */
   private refitCameraForAspect(aspect: number, force = false): void {
+    if (this.registeredPartDisplay) return;
     const bounds = this.fittedBounds;
     if (!bounds) return;
     // An explicit `camera:` block config is an author's decision, not a fit result.
@@ -2664,6 +2720,7 @@ export class ThreeModelPreview implements WorkbenchPreview {
   }
 
   private clearLoadedModel(reason: DisposalReason = "model-switch"): void {
+    this.registeredPartDisplay?.dispose();
     this.cancelGlobalEnvironmentInstall();
     this.disassembly?.dispose();
     this.disassembly = null;

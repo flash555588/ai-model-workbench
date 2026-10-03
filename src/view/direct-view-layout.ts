@@ -25,6 +25,8 @@ export interface DirectViewLayout {
   workbenchPanel: HTMLElement;
 }
 
+let sidebarSequence = 0;
+
 export function createDirectViewLayout(options: DirectViewLayoutOptions): DirectViewLayout {
   const { contentEl, filePath, mobile, getPreview } = options;
   const workspace = contentEl.createDiv({ cls: "ai3d-workspace" });
@@ -32,6 +34,7 @@ export function createDirectViewLayout(options: DirectViewLayoutOptions): Direct
   const mainArea = topTrack.createDiv({ cls: "ai3d-workspace-main" });
   const hHandle = topTrack.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-h" });
   const sidebar = topTrack.createDiv({ cls: "ai3d-workspace-sidebar" });
+  sidebar.id = `ai3d-knowledge-sidebar-${++sidebarSequence}`;
 
   const staging = createDiv();
   const host = staging.createDiv({ cls: "ai3d-preview-host" });
@@ -45,10 +48,23 @@ export function createDirectViewLayout(options: DirectViewLayoutOptions): Direct
   modeOverlay.className = "ai3d-annot-mode-overlay is-hidden";
   host.appendChild(modeOverlay);
   mainArea.appendChild(host);
+  const sidebarToggle = host.createEl("button", {
+    cls: "ai3d-sidebar-toggle",
+    text: t("directWorkbench.collapseKnowledge"),
+    attr: { type: "button", "aria-expanded": "true", "aria-controls": sidebar.id,
+      "data-ai3d-action": "toggle-knowledge-sidebar" },
+  });
+  sidebarToggle.addEventListener("pointerdown", event => event.stopPropagation());
+  sidebarToggle.addEventListener("click", event => {
+    event.stopPropagation();
+    const collapsed = workspace.classList.toggle("is-sidebar-collapsed");
+    sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+    sidebarToggle.setText(t(collapsed ? "directWorkbench.expandKnowledge" : "directWorkbench.collapseKnowledge"));
+  });
 
   const sidebarContent = sidebar.createDiv({ cls: "ai3d-sidebar-content" });
-  const workbenchPanel = sidebarContent.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
   const sidebarBody = sidebarContent.createDiv({ cls: "ai3d-sidebar-body" });
+  const workbenchPanel = sidebarContent.createDiv({ cls: "ai3d-direct-workbench-panel is-hidden" });
   const vHandle = workspace.createDiv({ cls: "ai3d-resize-handle ai3d-resize-handle-v" });
 
   if (mobile) {

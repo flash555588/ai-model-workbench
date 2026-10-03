@@ -1,9 +1,9 @@
 import type { App } from "obsidian";
 
-export type VaultPathResolver = (app: App, rawPath: string) => string | null;
+export type VaultPathResolver = (app: App, rawPath: string, sourcePath?: string) => string | null;
 
 export type LivePreviewPathResolverCache = {
-  resolve: (rawPath: string) => string | null;
+  resolve: (rawPath: string, sourcePath?: string) => string | null;
   clear: () => void;
 };
 
@@ -17,13 +17,14 @@ export function createLivePreviewPathResolverCache(
   const cache = new Map<string, string | null>();
 
   return {
-    resolve(rawPath: string): string | null {
-      if (cache.has(rawPath)) {
-        return cache.get(rawPath) ?? null;
+    resolve(rawPath: string, sourcePath = ""): string | null {
+      const key = JSON.stringify([sourcePath, rawPath]);
+      if (cache.has(key)) {
+        return cache.get(key) ?? null;
       }
 
-      const resolved = resolvePath(app, rawPath);
-      cache.set(rawPath, resolved);
+      const resolved = resolvePath(app, rawPath, sourcePath);
+      cache.set(key, resolved);
       if (cache.size > maxEntries) {
         const oldest = cache.keys().next();
         if (!oldest.done) {

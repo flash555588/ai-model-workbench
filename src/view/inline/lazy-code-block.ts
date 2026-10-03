@@ -2,6 +2,7 @@ import type { App, MarkdownPostProcessorContext } from "obsidian";
 import type { AnnotationPin, PluginSettings } from "../../domain/models";
 import type { ConvertedAssetCache } from "../../io/cache/converted-asset-cache";
 import { createStagedDiv } from "../../utils/dom";
+import type { NotePartsAccess } from "./note-parts-config";
 
 type CodeBlockModule = typeof import("./code-block");
 type CodeBlockHandler = (source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) => Promise<unknown> | void;
@@ -65,11 +66,12 @@ export function registerLazyCodeBlockProcessor(
   getSettings: () => PluginSettings,
   convertedAssetCache: ConvertedAssetCache,
   getAnnotations?: (modelPath: string) => AnnotationPin[],
+  partsAccess?: NotePartsAccess,
 ) {
   let handlerPromise: Promise<CodeBlockHandler> | null = null;
   const getHandler = async () => {
     handlerPromise ??= loadCodeBlockModule().then((module) => (
-      module.registerCodeBlockProcessor(app, getSettings, convertedAssetCache, getAnnotations).handler
+      module.registerCodeBlockProcessor(app, getSettings, convertedAssetCache, getAnnotations, partsAccess).handler
     ));
     return handlerPromise;
   };

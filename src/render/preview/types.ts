@@ -1,11 +1,13 @@
 import type {
   ModelPartSummary,
+  PartRecord,
   ModelEvidence,
   ModelPreviewSummary,
   PreviewRendererRollout,
   ThreeDBlockConfig,
 } from "../../domain/models";
 import type { PreviewLoadOptions } from "./load-control";
+import type { RegisteredPartDisplay } from "./registered-parts";
 
 export interface PreviewWorldPoint {
   x: number;
@@ -63,6 +65,7 @@ export interface ModelPreview {
   getCanvas(): HTMLCanvasElement | null;
   captureSnapshot(): string | null;
   getModelEvidence?(): ModelEvidence | null;
+  createRegisteredPartDisplay?(parts: readonly PartRecord[]): RegisteredPartDisplay | null;
   exportModelInfo(modelPath?: string): string;
   getSelectedPartInfo(): ModelPartSummary | null;
   exportSelectedPartInfo(): string;

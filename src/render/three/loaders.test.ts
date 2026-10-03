@@ -119,6 +119,50 @@ function withExternalBuffers(fixture: { gltf: ArrayBuffer; bin: ArrayBuffer }, b
 }
 
 describe("Three loaders", () => {
+  it("drains in-flight GLTF reads before cleaning URLs after a resource failure", async () => {
+    const base = createExternalBufferGltf();
+    const fixture = withExternalBuffers(base, ["ok.bin", "missing.bin", "slow-a.bin", "slow-b.bin", "queued.bin"]
+      .map((uri) => ({ uri, byteLength: base.bin.byteLength })));
+    let releaseFailure!: () => void;
+    let releaseSlow!: () => void;
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const slowGate = new Promise<void>((resolve) => { releaseSlow = resolve; });
+    const createSpy = vi.spyOn(URL, "createObjectURL");
+    const revokeSpy = vi.spyOn(URL, "revokeObjectURL");
+    const readFile = vi.fn(async (path: string) => {
+      if (path.includes("missing.bin")) {
+        await failureGate;
+        throw new Error("missing external buffer");
+      }
+      await slowGate;
+      return base.bin;
+    });
+    let settled = false;
+    const loading = loadThreeGLTF(fixture.gltf, "gltf", readFile, "fixtures/model.gltf");
+    const observed = loading.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(4));
+      releaseFailure();
+      // Let the rejection propagate while the other reads remain deliberately blocked.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(settled).toBe(false);
+      expect(revokeSpy).not.toHaveBeenCalled();
+      releaseSlow();
+      await expect(loading).rejects.toThrow("missing external buffer");
+      await observed;
+      expect(readFile.mock.calls.some(([path]) => path.includes("queued.bin"))).toBe(false);
+      expect(createSpy).toHaveBeenCalledTimes(3);
+      expect(revokeSpy.mock.calls.map(([url]) => url).sort())
+        .toEqual(createSpy.mock.results.map((result) => result.value as string).sort());
+    } finally {
+      releaseFailure();
+      releaseSlow();
+      await observed;
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
+  });
+
   it("loads GLTF external buffers through Blob URLs without rewriting the JSON", async () => {
     const fixture = createExternalBufferGltf();
     const createObjectURL = URL.createObjectURL.bind(URL);
@@ -365,5 +409,37 @@ describe("Three loaders", () => {
 
   it("rejects malformed OFF headers", async () => {
     await expect(loadThreeOFF("NOT-OFF\n1 0 0\n")).rejects.toThrow(/Invalid OFF header/);
+  });
+
+  it.each([
+    "OFF\nInfinity 1 0\n",
+    "OFF\n3 -1 0\n",
+    "OFF\n3 1 0\n0 0 0\n",
+    "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\nInfinity 0 1 2\n",
+    "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 3\n",
+    "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 -1 2\n",
+    "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 1.5\n",
+  ])("rejects invalid or truncated OFF geometry", async (off) => {
+    await expect(loadThreeOFF(off)).rejects.toThrow(/Invalid OFF|Truncated OFF/);
+  });
+
+  it.each([false, true])("triangulates concave OFF polygons and preserves winding (reverse=%s)", async (reverse) => {
+    const face = reverse ? "6 5 4 3 2 1 0" : "6 0 1 2 3 4 5";
+    const object = await loadThreeOFF([
+      "OFF", "6 1 0", "0 0 0", "2 0 0", "2 1 0", "1 1 0", "1 2 0", "0 2 0", face,
+    ].join("\n"));
+    const geometry = (object as Mesh).geometry;
+    const index = geometry.getIndex();
+    const position = geometry.getAttribute("position");
+    expect(index?.count).toBe(12);
+    let area = 0;
+    for (let offset = 0; offset < (index?.count ?? 0); offset += 3) {
+      const a = index!.getX(offset);
+      const b = index!.getX(offset + 1);
+      const c = index!.getX(offset + 2);
+      area += ((position.getX(b) - position.getX(a)) * (position.getY(c) - position.getY(a))
+        - (position.getY(b) - position.getY(a)) * (position.getX(c) - position.getX(a))) / 2;
+    }
+    expect(area).toBeCloseTo(reverse ? -3 : 3);
   });
 });
