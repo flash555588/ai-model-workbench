@@ -8,7 +8,7 @@ GLB/GLTF/STL/PLY/OBJ 单模型预览默认使用 Babylon.js 兼容模式。Three
 
 [English](README.md) | **简体中文**
 
-[下载 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11) | [使用指南](docs/usage-guide.zh-CN.md) | [更新日志](CHANGELOG.md)
+[下载 0.9.12](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12) | [使用指南](docs/usage-guide.zh-CN.md) | [更新日志](CHANGELOG.md)
 
 ![preview](https://raw.githubusercontent.com/flash555588/ai-model-workbench/main/docs/assets/preview.gif)
 
@@ -133,7 +133,7 @@ GLB/GLTF/STL/PLY/OBJ 单模型预览默认使用 Babylon.js 兼容模式。Three
 
 ## 当前版本
 
-`0.9.11` 包含近期的笔记工作流与稳定性升级。
+`0.9.12` 在近期笔记工作流与稳定性升级的基础上，补充真实功能截图并修复 Obsidian 审查警告。
 
 | 版本 | 主要更新 |
 |------|----------|
@@ -143,8 +143,9 @@ GLB/GLTF/STL/PLY/OBJ 单模型预览默认使用 Babylon.js 兼容模式。Three
 | 0.9.8–0.9.9 | 按已登记零件在模型视图和笔记中检查，保留零件选择与间距，登记变化后自动刷新。 |
 | 0.9.10 | 一键插入，按位置设置尺寸，保留引用和列表层级，处理表格分隔符，并防止旧窗口写入变化后的笔记。 |
 | 0.9.11 | 可搜索名称和路径的模型列表，更清晰的中英文提示，统一零件控件，适配深浅主题和窄窗口。 |
+| 0.9.12 | 补全真实功能截图和中英文文档，使用 Obsidian 元素创建助手，移除 important 声明并保持侧栏与控件样式稳定。 |
 
-[下载 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11)。详细内容见 [发布说明](docs/release-notes/0.9.11.md) 和 [CHANGELOG.md](CHANGELOG.md)。
+[下载 0.9.12](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12)。详细内容见 [发布说明](docs/release-notes/0.9.12.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 平台支持矩阵
 
@@ -162,7 +163,7 @@ GLB/GLTF/STL/PLY/OBJ 单模型预览默认使用 Babylon.js 兼容模式。Three
 
 ## 快速入门
 
-1. 通过 Obsidian、[发行版下载](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11)或本地构建安装插件。
+1. 通过 Obsidian、[发行版下载](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12)或本地构建安装插件。
 2. 把受支持的模型文件放进笔记库，例如 `model.glb`。
 3. 将光标放到笔记中，从命令面板或编辑器右键菜单运行 **在笔记中插入 3D 模型**。
 4. 选中文件后按 Enter。窗口自动设置所在位置的尺寸；空白行可选择“零件展示”以保留拆解方式。
@@ -682,7 +683,7 @@ ai-model-workbench/
 
 ### 发布流程
 
-发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.9.7`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.9.11`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
+发布由 GitHub Actions 的 `Release` workflow 完成。推送一个与 `manifest.json` 版本匹配的 tag，例如 `0.9.12`，或手动运行该 workflow。它只上传 `main.js`、`manifest.json` 和 `styles.css`，会删除不受支持的 release asset，校验资产体积与 SHA-256 hash，在存在版本发布日志时自动写入 release notes，并为发布文件生成 GitHub artifact attestation。发布完成后可运行 `npm run verify:obsidian -- --release-tag 0.9.12`，从 GitHub release 下载资产并安装到临时 Obsidian vault 做实机验证。
 
 ### 发布 Token 安全
 

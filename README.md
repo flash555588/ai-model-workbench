@@ -8,7 +8,7 @@ Single-model GLB/GLTF/STL/PLY/OBJ previews use Babylon.js compatibility mode by 
 
 **English** | [简体中文](README.zh-CN.md)
 
-[Download 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11) | [Usage guide](docs/usage-guide.md) | [Changelog](CHANGELOG.md)
+[Download 0.9.12](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12) | [Usage guide](docs/usage-guide.md) | [Changelog](CHANGELOG.md)
 
 ![preview](https://raw.githubusercontent.com/flash555588/ai-model-workbench/main/docs/assets/preview.gif)
 
@@ -145,7 +145,7 @@ The knowledge sidebar can collapse or resize; narrow leaves stack the layout.
 
 ## Current Release
 
-`0.9.11` brings together the recent note workflows and stability upgrades.
+`0.9.12` adds real feature screenshots and Obsidian review fixes to the recent note workflows and stability upgrades.
 
 | Versions | Main improvements |
 |----------|-------------------|
@@ -155,8 +155,9 @@ The knowledge sidebar can collapse or resize; narrow leaves stack the layout.
 | 0.9.8–0.9.9 | Exact registered-part inspection in the model view and notes, persistent part selection/spacing and automatic registration refresh. |
 | 0.9.10 | One-step insertion with placement defaults, quote/list preservation, table escaping and stale-note protection. |
 | 0.9.11 | Searchable model rows, clearer Chinese/English guidance, consistent part controls and light/dark/narrow layouts. |
+| 0.9.12 | Real feature screenshots, expanded bilingual documentation, Obsidian element helpers and reliable sidebar/control styles without important declarations. |
 
-[Download 0.9.11](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11). See [release notes](docs/release-notes/0.9.11.md) and [CHANGELOG.md](CHANGELOG.md) for details.
+[Download 0.9.12](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12). See [release notes](docs/release-notes/0.9.12.md) and [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Platform Support Matrix
 
@@ -173,7 +174,7 @@ The knowledge sidebar can collapse or resize; narrow leaves stack the layout.
 
 ## Quick Start
 
-1. Install the plugin from Obsidian, a [release download](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.11), or a local build.
+1. Install the plugin from Obsidian, a [release download](https://github.com/flash555588/ai-model-workbench/releases/tag/0.9.12), or a local build.
 2. Put a supported model file into your vault, for example `model.glb`.
 3. Place the cursor in a note, then run **Insert a 3D model in note** from the command palette or editor context menu.
 4. Choose a model and press Enter. The picker sets the placement dimensions; choose **Registered parts** on an empty line to keep a saved part presentation.
@@ -720,7 +721,7 @@ ai-model-workbench/
 
 ### Release Publishing
 
-Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.9.7`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.9.11` to install the assets downloaded from GitHub into the temporary Obsidian vault.
+Releases are published by the GitHub Actions `Release` workflow. Push a tag that matches `manifest.json`, for example `0.9.12`, or run the workflow manually. The workflow uploads only `main.js`, `manifest.json`, and `styles.css`, removes unsupported release assets, verifies asset sizes and SHA-256 hashes, includes versioned release notes when available, and generates GitHub artifact attestations for the published files. After a release is published, run `npm run verify:obsidian -- --release-tag 0.9.12` to install the assets downloaded from GitHub into the temporary Obsidian vault.
 
 ### Release Token Safety
 
